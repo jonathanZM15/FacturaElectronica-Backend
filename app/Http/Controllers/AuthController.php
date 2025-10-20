@@ -91,6 +91,12 @@ class AuthController extends Controller
 
     public function me(Request $request)
     {
+        try {
+            \Log::info('Me endpoint', ['bearer' => $request->bearerToken(), 'user_id' => $request->user()?->id]);
+        } catch (\Throwable $e) {
+            \Log::info('Me endpoint error', ['err' => $e->getMessage()]);
+        }
+
         return response()->json($request->user());
     }
 }
