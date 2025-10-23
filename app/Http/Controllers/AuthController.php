@@ -51,7 +51,7 @@ class AuthController extends Controller
         $user = User::where('email', $data['email'])->first();
 
         if (! $user || ! Hash::check($data['password'], $user->password)) {
-            return response()->json(['message' => 'Credenciales inválidas'], Response::HTTP_UNAUTHORIZED);
+            return response()->json(['message' => 'Credenciales invalidas'], Response::HTTP_UNAUTHORIZED);
         }
 
         // Revoke previous tokens (optional)
@@ -98,5 +98,30 @@ class AuthController extends Controller
         }
 
         return response()->json($request->user());
+    }
+
+    public function passwordRecovery(Request $request)
+    {
+        $data = $request->only(['email']);
+
+        $validator = Validator::make($data, [
+            'email' => ['required', 'email']
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $user = User::where('email', $data['email'])->first();
+
+        if (! $user) {
+            return response()->json(['message' => 'Email no registrado'], Response::HTTP_NOT_FOUND);
+        }
+
+        // Aquí normalmente dispararías un email con el link o token.
+        // Para este entorno de desarrollo simulamos el envío.
+        // Puedes integrar Mailables si lo deseas.
+
+        return response()->json(['message' => 'Instrucciones enviadas al correo si existe la cuenta']);
     }
 }
