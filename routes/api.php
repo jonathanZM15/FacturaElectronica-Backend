@@ -12,3 +12,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/user', [AuthController::class, 'me']);
 });
+
+use App\Http\Controllers\LogoController;
+
+// Company logo routes
+Route::get('/companies/{company}/logo', [LogoController::class, 'show']);
+Route::post('/companies/{company}/logo', [LogoController::class, 'store'])->middleware('auth:sanctum');
