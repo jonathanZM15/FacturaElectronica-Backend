@@ -7,6 +7,8 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Log; // Importar Facade de Log
+use Illuminate\Support\Facades\DB;
 
 class AuthController extends Controller
 {
@@ -40,7 +42,7 @@ class AuthController extends Controller
         $data = $request->only(['email', 'password']);
 
         $validator = Validator::make($data, [
-            'email' => ['required','email'],
+            'email' => ['required','string', 'max:255'],
             'password' => ['required','string'],
         ]);
 
@@ -48,9 +50,33 @@ class AuthController extends Controller
             return response()->json(['errors' => $validator->errors()], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $user = User::where('email', $data['email'])->first();
+        $identifier = $data['email']; 
+        $password = $data['password'];
+        
+        Log::info('Login Attempt', ['identifier' => $identifier]);
+        
+        
+        $user = User::where(function ($query) use ($identifier) {
+            // Opción 1: Email (búsqueda normal)
+            $query->where('email', $identifier);
+  
+            $query->orWhere(DB::raw('LOWER(name)'), '=', strtolower($identifier));
+        })->first();
 
-        if (! $user || ! Hash::check($data['password'], $user->password)) {
+
+        if ($user) {
+            Log::info('User Found', ['user_id' => $user->id, 'email' => $user->email, 'name' => $user->name]);
+        } else {
+            Log::warning('User Not Found', ['identifier' => $identifier]);
+        }
+
+        if (! $user) {
+             Log::error('Authentication Failed: User not found.', ['identifier' => $identifier]);
+             return response()->json(['message' => 'Credenciales invalidas'], Response::HTTP_UNAUTHORIZED);
+        }
+        
+        if (! Hash::check($password, $user->password)) {
+            Log::error('Authentication Failed: Invalid password.', ['user_id' => $user->id, 'identifier' => $identifier]);
             return response()->json(['message' => 'Credenciales invalidas'], Response::HTTP_UNAUTHORIZED);
         }
 
@@ -58,6 +84,8 @@ class AuthController extends Controller
         $user->tokens()->delete();
 
         $token = $user->createToken('default')->plainTextToken;
+        
+        Log::info('Login Success', ['user_id' => $user->id]);
 
         return response()->json(['user' => $user, 'token' => $token]);
     }
@@ -70,7 +98,7 @@ class AuthController extends Controller
             try {
                 $patModel = '\\Laravel\\Sanctum\\PersonalAccessToken';
                 $before = $patModel::where('tokenable_id', $user->id)->count();
-                \Log::info('Logout: tokens_before', ['user_id' => $user->id, 'count' => $before]);
+                Log::info('Logout: tokens_before', ['user_id' => $user->id, 'count' => $before]);
 
                 if ($request->user()?->currentAccessToken()) {
                     $request->user()->currentAccessToken()->delete();
@@ -79,9 +107,9 @@ class AuthController extends Controller
                 }
 
                 $after = $patModel::where('tokenable_id', $user->id)->count();
-                \Log::info('Logout: tokens_after', ['user_id' => $user->id, 'count' => $after]);
+                Log::info('Logout: tokens_after', ['user_id' => $user->id, 'count' => $after]);
             } catch (\Throwable $e) {
-                \Log::error('Logout error', ['err' => $e->getMessage()]);
+                Log::error('Logout error', ['err' => $e->getMessage()]);
                 // Fallback: delete all tokens to ensure logout
                 $user->tokens()->delete();
             }
@@ -92,9 +120,9 @@ class AuthController extends Controller
     public function me(Request $request)
     {
         try {
-            \Log::info('Me endpoint', ['bearer' => $request->bearerToken(), 'user_id' => $request->user()?->id]);
+            Log::info('Me endpoint', ['bearer' => $request->bearerToken(), 'user_id' => $request->user()?->id]);
         } catch (\Throwable $e) {
-            \Log::info('Me endpoint error', ['err' => $e->getMessage()]);
+            Log::info('Me endpoint error', ['err' => $e->getMessage()]);
         }
 
         return response()->json($request->user());
