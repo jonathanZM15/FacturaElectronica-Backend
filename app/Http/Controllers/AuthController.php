@@ -152,4 +152,33 @@ class AuthController extends Controller
 
         return response()->json(['message' => 'Instrucciones enviadas al correo si existe la cuenta']);
     }
+
+    public function cambiarPassword(Request $request)
+    {
+        $data = $request->only(['password', 'current_password']);
+
+        $validator = Validator::make($data, [
+            'current_password' => ['required', 'string'],
+            'password' => ['required', 'string', 'min:6'],
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $user = $request->user();
+
+        // Verificar que la contraseña actual sea correcta
+        if (!Hash::check($data['current_password'], $user->password)) {
+            return response()->json(['message' => 'La contraseña actual es incorrecta'], Response::HTTP_UNAUTHORIZED);
+        }
+
+        // Actualizar la contraseña
+        $user->password = Hash::make($data['password']);
+        $user->save();
+
+        Log::info('Password Changed', ['user_id' => $user->id]);
+
+        return response()->json(['message' => 'Contraseña actualizada correctamente']);
+    }
 }
