@@ -12,6 +12,9 @@ use App\Models\Company;
 
 class LogoController extends Controller
 {
+    // Change this constant to adjust server-side saved logo size (square).
+    // Increasing this value will store a larger image on disk.
+    private const LOGO_TARGET_SIZE = 200; // pixels (square)
     // Public getter for a company's logo URL
     public function show($companyId)
     {
@@ -81,7 +84,7 @@ class LogoController extends Controller
             }
         }
 
-        $targetSize = 200;
+    $targetSize = self::LOGO_TARGET_SIZE;
 
         try {
             // Read image with v3 syntax
