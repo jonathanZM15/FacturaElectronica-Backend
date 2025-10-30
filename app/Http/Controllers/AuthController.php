@@ -9,6 +9,11 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log; // Importar Facade de Log
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Str;
+use App\Mail\PasswordRecoveryMail;
+use Illuminate\Auth\Events\PasswordReset;
 
 class AuthController extends Controller
 {
@@ -146,11 +151,65 @@ class AuthController extends Controller
             return response()->json(['message' => 'Email no registrado'], Response::HTTP_NOT_FOUND);
         }
 
-        // Aquí normalmente dispararías un email con el link o token.
-        // Para este entorno de desarrollo simulamos el envío.
-        // Puedes integrar Mailables si lo deseas.
+        // Generar token de restablecimiento usando el broker de password
+        $token = Password::broker()->createToken($user);
+
+        // Construir URL al frontend donde el usuario cambiará su contraseña
+    // El frontend espera recibir al usuario en /cambiarPassword según lo indicado
+    $frontend = env('FRONTEND_URL', config('app.url'));
+    $url = rtrim($frontend, '/') . '/cambiarPassword?token=' . urlencode($token) . '&email=' . urlencode($user->email);
+
+        try {
+            Mail::to($user->email)->send(new PasswordRecoveryMail($url, $user));
+            Log::info('Password recovery email sent', ['user_id' => $user->id, 'email' => $user->email]);
+        } catch (\Throwable $e) {
+            Log::error('Error sending password recovery email', ['err' => $e->getMessage()]);
+            return response()->json(['message' => 'Error al enviar el correo de recuperación'], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
 
         return response()->json(['message' => 'Instrucciones enviadas al correo si existe la cuenta']);
+    }
+
+    /**
+     * Completa el restablecimiento de contraseña usando token + email + password
+     */
+    public function resetPassword(Request $request)
+    {
+        $data = $request->only(['email', 'token', 'password', 'password_confirmation']);
+
+        $validator = Validator::make($data, [
+            'email' => ['required', 'email'],
+            'token' => ['required', 'string'],
+            'password' => ['required', 'string', 'min:6', 'confirmed'],
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $status = Password::broker()->reset(
+            $data,
+            function ($user, $password) {
+                // El modelo User tiene el cast 'password' => 'hashed'
+                // por lo que asignamos la contraseña en texto y el cast se encargará de hashearla.
+                $user->password = $password;
+                $user->setRememberToken(Str::random(60));
+                $user->save();
+                event(new PasswordReset($user));
+                // Revoke existing personal access tokens
+                try {
+                    $user->tokens()->delete();
+                } catch (\Throwable $e) {
+                    Log::warning('Failed to revoke tokens after password reset', ['err' => $e->getMessage()]);
+                }
+            }
+        );
+
+        if ($status == Password::PASSWORD_RESET) {
+            return response()->json(['message' => 'Contraseña restablecida correctamente']);
+        }
+
+        return response()->json(['message' => 'Token inválido o expirado'], Response::HTTP_BAD_REQUEST);
     }
 
     public function cambiarPassword(Request $request)
@@ -173,9 +232,10 @@ class AuthController extends Controller
             return response()->json(['message' => 'La contraseña actual es incorrecta'], Response::HTTP_UNAUTHORIZED);
         }
 
-        // Actualizar la contraseña
-        $user->password = Hash::make($data['password']);
-        $user->save();
+    // Actualizar la contraseña: asignamos texto plano y el cast 'hashed' del modelo
+    // realizará el hash al persistir.
+    $user->password = $data['password'];
+    $user->save();
 
         Log::info('Password Changed', ['user_id' => $user->id]);
 
