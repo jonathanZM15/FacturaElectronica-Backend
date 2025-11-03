@@ -20,3 +20,10 @@ use App\Http\Controllers\LogoController;
 // Company logo routes
 Route::get('/companies/{company}/logo', [LogoController::class, 'show']);
 Route::post('/companies/{company}/logo', [LogoController::class, 'store'])->middleware('auth:sanctum');
+
+use App\Http\Controllers\EmisorController;
+
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/emisores', [EmisorController::class, 'index']);
+    Route::post('/emisores', [EmisorController::class, 'store']);
+});
