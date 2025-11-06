@@ -145,19 +145,41 @@ class AuthController extends Controller
             return response()->json(['errors' => $validator->errors()], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $user = User::where('email', $data['email'])->first();
+        // Normalizar email a minúsculas para búsqueda case-insensitive
+        $email = strtolower(trim($data['email']));
+        $user = User::whereRaw('LOWER(email) = ?', [$email])->first();
 
         if (! $user) {
             return response()->json(['message' => 'Email no registrado'], Response::HTTP_NOT_FOUND);
+        }
+
+        // Verificar si existe un token reciente (throttling manual más informativo)
+        $recentToken = DB::table('password_reset_tokens')
+            ->where('email', $user->email)
+            ->first();
+
+        if ($recentToken) {
+            $createdAt = \Carbon\Carbon::parse($recentToken->created_at);
+            $throttleSeconds = config('auth.passwords.users.throttle', 60);
+            $secondsRemaining = $throttleSeconds - $createdAt->diffInSeconds(now());
+            
+            if ($secondsRemaining > 0) {
+                Log::info('Password recovery throttled', [
+                    'user_id' => $user->id,
+                    'seconds_remaining' => $secondsRemaining
+                ]);
+                return response()->json([
+                    'message' => "Por favor espera {$secondsRemaining} segundos antes de solicitar otro enlace de recuperación"
+                ], Response::HTTP_TOO_MANY_REQUESTS);
+            }
         }
 
         // Generar token de restablecimiento usando el broker de password
         $token = Password::broker()->createToken($user);
 
         // Construir URL al frontend donde el usuario cambiará su contraseña
-    // El frontend espera recibir al usuario en /cambiarPassword según lo indicado
-    $frontend = env('FRONTEND_URL', config('app.url'));
-    $url = rtrim($frontend, '/') . '/cambiarPassword?token=' . urlencode($token) . '&email=' . urlencode($user->email);
+        $frontend = env('FRONTEND_URL', config('app.url'));
+        $url = rtrim($frontend, '/') . '/cambiarPassword?token=' . urlencode($token) . '&email=' . urlencode($user->email);
 
         try {
             Mail::to($user->email)->send(new PasswordRecoveryMail($url, $user));
@@ -196,18 +218,32 @@ class AuthController extends Controller
                 $user->setRememberToken(Str::random(60));
                 $user->save();
                 event(new PasswordReset($user));
+                
                 // Revoke existing personal access tokens
                 try {
                     $user->tokens()->delete();
+                    Log::info('Tokens revoked after password reset', ['user_id' => $user->id]);
                 } catch (\Throwable $e) {
                     Log::warning('Failed to revoke tokens after password reset', ['err' => $e->getMessage()]);
                 }
+                
+                // Log successful password reset
+                Log::info('Password reset successful', [
+                    'user_id' => $user->id,
+                    'email' => $user->email
+                ]);
             }
         );
 
         if ($status == Password::PASSWORD_RESET) {
             return response()->json(['message' => 'Contraseña restablecida correctamente']);
         }
+
+        // Log failed password reset attempt
+        Log::warning('Password reset failed', [
+            'email' => $data['email'],
+            'status' => $status
+        ]);
 
         return response()->json(['message' => 'Token inválido o expirado'], Response::HTTP_BAD_REQUEST);
     }
