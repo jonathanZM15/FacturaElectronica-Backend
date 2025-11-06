@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Hash;
 
 class EmisorController extends Controller
 {
@@ -331,5 +332,88 @@ class EmisorController extends Controller
             return $suffix > 0;
         }
         return true;
+    }
+
+    // Permanent delete of a company (emisor) if it has no history (comprobantes), plans or users.
+    public function destroy(Request $request, $id)
+    {
+        $company = Company::findOrFail($id);
+
+        // Check for related records that would block deletion
+        try {
+            // comprobantes
+            if (Schema::hasTable('comprobantes')) {
+                $exists = DB::table('comprobantes')->where('company_id', $company->id)->exists();
+                if ($exists) {
+                    return response()->json(['message' => 'El emisor tiene historial de comprobantes y no puede ser eliminado.'], 422);
+                }
+            }
+
+            // plans/subscriptions
+            if (Schema::hasTable('plans')) {
+                $exists = DB::table('plans')->where('company_id', $company->id)->exists();
+                if ($exists) {
+                    return response()->json(['message' => 'El emisor tiene planes asociados y no puede ser eliminado.'], 422);
+                }
+            }
+            if (Schema::hasTable('subscriptions')) {
+                $exists = DB::table('subscriptions')->where('company_id', $company->id)->exists();
+                if ($exists) {
+                    return response()->json(['message' => 'El emisor tiene suscripciones asociadas y no puede ser eliminado.'], 422);
+                }
+            }
+
+            // users linked via company_id
+            if (Schema::hasTable('users') && Schema::hasColumn('users', 'company_id')) {
+                $exists = DB::table('users')->where('company_id', $company->id)->exists();
+                if ($exists) {
+                    return response()->json(['message' => 'El emisor tiene usuarios asociados y no puede ser eliminado.'], 422);
+                }
+            }
+        } catch (\Exception $e) {
+            Log::warning('Could not fully verify related records before delete for company '.$company->id.': '.$e->getMessage());
+            // If checks can't be completed, refuse to delete to be safe
+            return response()->json(['message' => 'No se pudo verificar el historial del emisor. Operación cancelada.'], 500);
+        }
+
+        // Verify admin password (current authenticated user must re-enter their password)
+        $password = $request->input('password');
+        if (!Auth::check() || !$password) {
+            return response()->json(['message' => 'Se requiere autenticación y contraseña para eliminar el emisor.'], 403);
+        }
+
+        $user = Auth::user();
+        if (!Hash::check($password, $user->password)) {
+            return response()->json(['message' => 'Contraseña incorrecta.'], 403);
+        }
+
+        // Delete logo file if exists
+        try {
+            if ($company->logo_path && Storage::disk('public')->exists($company->logo_path)) {
+                Storage::disk('public')->delete($company->logo_path);
+            }
+        } catch (\Exception $_) {
+            // continue even if delete fails
+        }
+
+        // Perform permanent delete
+        try {
+            if (method_exists($company, 'forceDelete')) {
+                $company->forceDelete();
+            } else {
+                $company->delete();
+            }
+        } catch (\Exception $e) {
+            Log::error('Failed to delete company '.$company->id.': '.$e->getMessage());
+            return response()->json(['message' => 'Error al eliminar el emisor.'], 500);
+        }
+
+        // Audit log
+        try {
+            $userId = Auth::check() ? Auth::id() : null;
+            Log::info('Emisor permanently deleted', ['company_id' => $company->id, 'deleted_by' => $userId]);
+        } catch (\Exception $_) {}
+
+        return response()->json(['message' => 'Emisor eliminado correctamente.']);
     }
 }

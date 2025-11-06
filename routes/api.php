@@ -23,6 +23,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/emisores', [EmisorController::class, 'store']);
     Route::get('/emisores/{id}', [EmisorController::class, 'show']);
     Route::put('/emisores/{id}', [EmisorController::class, 'update']);
+    Route::delete('/emisores/{id}', [EmisorController::class, 'destroy']);
 });
 
 
