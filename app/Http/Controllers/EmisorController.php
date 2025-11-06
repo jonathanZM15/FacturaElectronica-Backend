@@ -19,18 +19,112 @@ class EmisorController extends Controller
 {
     public function index(Request $request)
     {
-        $q = $request->string('q')->toString();
-        $estado = $request->string('estado')->toString();
-        $desde = $request->date('fecha_inicio');
-        $hasta = $request->date('fecha_fin');
+        // Filters and pagination parameters
+        $params = $request->all();
+        $page = max(1, (int)($request->input('page', 1)));
+        $perPage = max(10, min(200, (int)($request->input('per_page', 20))));
+        $sortBy = $request->input('sort_by', 'id');
+        $sortDir = strtolower($request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
 
-        $query = Company::query();
+        $query = Company::query()->select('companies.*');
 
-        if ($estado !== '') {
-            $query->where('estado', $estado);
+        // Basic text filters
+        if ($request->filled('ruc')) $query->where('ruc', 'like', '%'.$request->input('ruc').'%');
+        if ($request->filled('razon_social')) $query->where('razon_social', 'like', '%'.$request->input('razon_social').'%');
+        if ($request->filled('nombre_comercial')) $query->where('nombre_comercial', 'like', '%'.$request->input('nombre_comercial').'%');
+        if ($request->filled('direccion_matriz')) $query->where('direccion_matriz', 'like', '%'.$request->input('direccion_matriz').'%');
+        if ($request->filled('correo_remitente')) $query->where('correo_remitente', 'like', '%'.$request->input('correo_remitente').'%');
+
+        if ($request->filled('estado')) $query->where('estado', $request->input('estado'));
+        if ($request->filled('regimen_tributario')) $query->where('regimen_tributario', $request->input('regimen_tributario'));
+        if ($request->filled('tipo_persona')) $query->where('tipo_persona', $request->input('tipo_persona'));
+        if ($request->filled('ambiente')) $query->where('ambiente', $request->input('ambiente'));
+        if ($request->filled('tipo_emision')) $query->where('tipo_emision', $request->input('tipo_emision'));
+
+        // Computed fields via subqueries (cantidad_creados, ultimo_comprobante, tipo_plan, plan dates, cantidad_restantes)
+        if (Schema::hasTable('comprobantes')) {
+            $query->selectSub(function ($q) {
+                $q->from('comprobantes')->selectRaw('count(*)')->whereColumn('comprobantes.company_id', 'companies.id');
+            }, 'cantidad_creados');
+
+            $query->selectSub(function ($q) {
+                $q->from('comprobantes')->selectRaw('max(created_at)')->whereColumn('comprobantes.company_id', 'companies.id');
+            }, 'ultimo_comprobante');
+        } else {
+            $query->selectRaw('NULL as cantidad_creados, NULL as ultimo_comprobante');
         }
 
-        if ($q !== '') {
+        if (Schema::hasTable('plans')) {
+            // Latest plan info
+            $query->selectSub(function ($q) {
+                $q->from('plans')->select('tipo_plan')->whereColumn('plans.company_id', 'companies.id')->orderByDesc('id')->limit(1);
+            }, 'tipo_plan');
+            $query->selectSub(function ($q) {
+                $q->from('plans')->select('fecha_inicio')->whereColumn('plans.company_id', 'companies.id')->orderByDesc('id')->limit(1);
+            }, 'fecha_inicio_plan');
+            $query->selectSub(function ($q) {
+                $q->from('plans')->select('fecha_fin')->whereColumn('plans.company_id', 'companies.id')->orderByDesc('id')->limit(1);
+            }, 'fecha_fin_plan');
+
+            // if plans have 'cantidad' column, compute remaining = cantidad - cantidad_creados
+            try {
+                if (Schema::hasColumn('plans', 'cantidad')) {
+                    $query->selectSub(function ($q) {
+                        $q->from('plans as p')->selectRaw("COALESCE(p.cantidad,0) - (
+                            select count(*) from comprobantes c where c.company_id = p.company_id
+                        )")->whereColumn('p.company_id', 'companies.id')->orderByDesc('p.id')->limit(1);
+                    }, 'cantidad_restantes');
+                } else {
+                    $query->selectRaw('NULL as cantidad_restantes');
+                }
+            } catch (\Exception $_) {
+                $query->selectRaw('NULL as cantidad_restantes');
+            }
+        } else {
+            $query->selectRaw('NULL as tipo_plan, NULL as fecha_inicio_plan, NULL as fecha_fin_plan, NULL as cantidad_restantes');
+        }
+
+        // Filter by numeric comparisons
+        if ($request->filled('cantidad_creados_gt') && is_numeric($request->input('cantidad_creados_gt'))) {
+            $query->havingRaw('cantidad_creados > ?', [(int)$request->input('cantidad_creados_gt')]);
+        }
+        if ($request->filled('cantidad_restantes_lt') && is_numeric($request->input('cantidad_restantes_lt'))) {
+            $query->havingRaw('(cantidad_restantes IS NOT NULL AND cantidad_restantes < ?) ', [(int)$request->input('cantidad_restantes_lt')]);
+        }
+
+        // Date filters (multiple fields) - accept *_from and *_to params
+        $dateFields = [
+            'fecha_inicio_plan' => 'fecha_inicio_plan',
+            'fecha_fin_plan' => 'fecha_fin_plan',
+            'created_at' => 'created_at',
+            'updated_at' => 'updated_at',
+            'ultimo_login' => 'ultimo_login',
+            'ultimo_comprobante' => 'ultimo_comprobante',
+        ];
+        foreach ($dateFields as $param => $column) {
+            $from = $request->input($param.'_from');
+            $to = $request->input($param.'_to');
+            if ($from) $query->whereDate($column, '>=', $from);
+            if ($to) $query->whereDate($column, '<=', $to);
+        }
+
+        // Registrador: try to match users.name if such relation exists
+        if ($request->filled('registrador') && Schema::hasTable('users')) {
+            $registrador = $request->input('registrador');
+            // companies may have a registrador column or we try to match via users table
+            if (Schema::hasColumn('companies', 'registrador')) {
+                $query->where('registrador', 'like', '%'.$registrador.'%');
+            } else {
+                // filter companies that have a user with that name
+                $query->whereExists(function ($q) use ($registrador) {
+                    $q->selectRaw('1')->from('users')->whereColumn('users.company_id','companies.id')->where('users.name','like','%'.$registrador.'%');
+                });
+            }
+        }
+
+        // Simple search 'q' affects some text fields
+        if ($request->filled('q')) {
+            $q = $request->input('q');
             $query->where(function ($qq) use ($q) {
                 $qq->where('ruc', 'like', "%{$q}%")
                    ->orWhere('razon_social', 'like', "%{$q}%")
@@ -38,16 +132,39 @@ class EmisorController extends Controller
             });
         }
 
-        if ($desde) $query->whereDate('created_at', '>=', $desde);
-        if ($hasta) $query->whereDate('created_at', '<=', $hasta);
+        // Sorting: allow only known columns
+        $allowedSorts = ['id','ruc','razon_social','estado','tipo_plan','fecha_inicio_plan','fecha_fin_plan','cantidad_creados','cantidad_restantes','created_at','updated_at','registrador','ultimo_login','ultimo_comprobante'];
+        if (!in_array($sortBy, $allowedSorts)) $sortBy = 'id';
+        // apply sorting (if sorting by computed alias, use orderByRaw)
+        if (in_array($sortBy, ['tipo_plan','fecha_inicio_plan','fecha_fin_plan','cantidad_creados','cantidad_restantes','ultimo_comprobante'])) {
+            $query->orderByRaw("\"{$sortBy}\" {$sortDir}");
+        } else {
+            $query->orderBy($sortBy, $sortDir);
+        }
 
-        $items = $query->orderByDesc('id')->get()->map(function ($c) {
-            return array_merge($c->toArray(), [
-                'logo_url' => $c->logo_url, // accessor
-            ]);
+        $paginator = $query->paginate($perPage, ['*'], 'page', $page);
+
+        // Append logo_url for each item
+        $items = $paginator->getCollection()->map(function ($c) {
+            if ($c instanceof Company) return array_merge($c->toArray(), ['logo_url' => $c->logo_url]);
+            $arr = (array) $c;
+            // if model-like, ensure logo_url computed
+            $logo = $arr['logo_path'] ?? null;
+            if ($logo && !isset($arr['logo_url'])) $arr['logo_url'] = Storage::url($logo);
+            return $arr;
         });
 
-        return response()->json(['data' => $items]);
+        $result = [
+            'data' => $items,
+            'meta' => [
+                'current_page' => $paginator->currentPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+                'last_page' => $paginator->lastPage(),
+            ],
+        ];
+
+        return response()->json($result);
     }
 
     public function store(Request $request)
