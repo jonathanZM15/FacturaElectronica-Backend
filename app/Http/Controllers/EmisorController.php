@@ -12,6 +12,8 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
+use Carbon\Carbon;
 
 class EmisorController extends Controller
 {
@@ -415,5 +417,209 @@ class EmisorController extends Controller
         } catch (\Exception $_) {}
 
         return response()->json(['message' => 'Emisor eliminado correctamente.']);
+    }
+
+    /**
+     * Prepare deletion for a company that has been INACTIVO for at least 1 year.
+     * Generates CSV exports, zips them, stores backup and emails the client a copy/notification.
+     */
+    public function prepareDeletion(Request $request, $id)
+    {
+        $company = Company::findOrFail($id);
+
+        // Only allow if company has estado INACTIVO and last updated at least 1 year ago
+        try {
+            $cutoff = Carbon::now()->subYear();
+            $updatedAt = $company->updated_at ?? $company->created_at;
+            if (!($company->estado === 'INACTIVO' && Carbon::parse($updatedAt)->lessThanOrEqualTo($cutoff))) {
+                return response()->json(['message' => 'Solo se pueden preparar para eliminación emisores inactivos por al menos 1 año.'], 422);
+            }
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'No se pudo verificar la antigüedad del emisor.'], 500);
+        }
+
+        // Create a temp dir and CSVs
+        $tmpDir = sys_get_temp_dir().'/emisor_backup_'.$company->id.'_'.time();
+        if (!is_dir($tmpDir)) @mkdir($tmpDir, 0777, true);
+
+        $filesCreated = [];
+        // helper to dump a set of rows to CSV
+        $dumpTable = function ($filename, $rows) use (&$filesCreated, $tmpDir) {
+            $path = $tmpDir.'/'.$filename;
+            $fh = fopen($path, 'w');
+            if ($fh === false) return null;
+            if (!empty($rows)) {
+                $first = (array)$rows[0];
+                fputcsv($fh, array_keys($first));
+                foreach ($rows as $r) {
+                    fputcsv($fh, array_values((array)$r));
+                }
+            } else {
+                // write header placeholder
+                fputcsv($fh, ['empty']);
+            }
+            fclose($fh);
+            $filesCreated[] = $path;
+            return $path;
+        };
+
+        // company single row
+        $dumpTable('company.csv', [ (array) $company->toArray() ]);
+
+        // comprobantes (facturas)
+        try {
+            if (Schema::hasTable('comprobantes')) {
+                $rows = DB::table('comprobantes')->where('company_id', $company->id)->get()->toArray();
+                $dumpTable('comprobantes.csv', $rows);
+            }
+        } catch (\Exception $_) {}
+
+        // productos
+        try {
+            if (Schema::hasTable('productos')) {
+                $rows = DB::table('productos')->where('company_id', $company->id)->get()->toArray();
+                $dumpTable('productos.csv', $rows);
+            }
+        } catch (\Exception $_) {}
+
+        // plans / subscriptions
+        try {
+            if (Schema::hasTable('plans')) {
+                $rows = DB::table('plans')->where('company_id', $company->id)->get()->toArray();
+                $dumpTable('plans.csv', $rows);
+            }
+            if (Schema::hasTable('subscriptions')) {
+                $rows = DB::table('subscriptions')->where('company_id', $company->id)->get()->toArray();
+                $dumpTable('subscriptions.csv', $rows);
+            }
+        } catch (\Exception $_) {}
+
+        // users
+        try {
+            if (Schema::hasTable('users') && Schema::hasColumn('users', 'company_id')) {
+                $rows = DB::table('users')->where('company_id', $company->id)->get()->toArray();
+                $dumpTable('users.csv', $rows);
+            }
+        } catch (\Exception $_) {}
+
+        // create zip
+        $zipName = 'emisor_'.$company->id.'_backup_'.time().'.zip';
+        $zipPath = $tmpDir.'/'.$zipName;
+        $zip = new \ZipArchive();
+        if ($zip->open($zipPath, \ZipArchive::CREATE) === true) {
+            foreach ($filesCreated as $f) {
+                $zip->addFile($f, basename($f));
+            }
+            $zip->close();
+        } else {
+            return response()->json(['message' => 'No se pudo crear el archivo de respaldo.'], 500);
+        }
+
+        // store zip in public backups so admin/client can download
+        try {
+            $storePath = 'backups/'.$zipName;
+            Storage::disk('public')->put($storePath, file_get_contents($zipPath));
+            $publicUrl = Storage::disk('public')->url($storePath);
+        } catch (\Exception $e) {
+            Log::error('Could not store backup zip for company '.$company->id.': '.$e->getMessage());
+            return response()->json(['message' => 'No se pudo almacenar el respaldo.'], 500);
+        }
+
+        // send email notification to company contact (if exists) or to authenticated user
+        try {
+            $to = $company->correo_remitente ?? (Auth::check() ? Auth::user()->email : null);
+            $subject = 'Respaldo y notificación de eliminación de cuenta';
+            $body = "Se ha generado un respaldo de su emisor (RUC: {$company->ruc}). Puede descargarlo desde: {$publicUrl}.\n\nSi desea evitar la eliminación, reactive su cuenta antes de la fecha indicada.";
+            if ($to) {
+                Mail::send([], [], function ($message) use ($to, $subject, $body, $zipPath, $company) {
+                    $message->to($to)
+                        ->subject($subject)
+                        ->setBody($body, 'text/plain')
+                        ->attach($zipPath, ['as' => 'respaldo_emisor_'.$company->ruc.'.zip']);
+                });
+            }
+        } catch (\Exception $e) {
+            Log::warning('Could not send deletion notification for company '.$company->id.': '.$e->getMessage());
+        }
+
+        // cleanup temp files
+        foreach ($filesCreated as $f) { @unlink($f); }
+        @unlink($zipPath);
+        @rmdir($tmpDir);
+
+        return response()->json(['message' => 'Respaldo generado y notificación enviada (si aplica).', 'backup_url' => $publicUrl ?? null]);
+    }
+
+    /**
+     * Permanently delete a company that has history, only after admin confirmation.
+     */
+    public function destroyWithHistory(Request $request, $id)
+    {
+        $company = Company::findOrFail($id);
+
+        // must be inactive for at least 1 year
+        try {
+            $cutoff = Carbon::now()->subYear();
+            $updatedAt = $company->updated_at ?? $company->created_at;
+            if (!($company->estado === 'INACTIVO' && Carbon::parse($updatedAt)->lessThanOrEqualTo($cutoff))) {
+                return response()->json(['message' => 'Solo se pueden eliminar emisores inactivos por al menos 1 año.'], 422);
+            }
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'No se pudo verificar la antigüedad del emisor.'], 500);
+        }
+
+        // verify admin password
+        $password = $request->input('password');
+        if (!Auth::check() || !$password) {
+            return response()->json(['message' => 'Se requiere autenticación y contraseña para eliminar el emisor.'], 403);
+        }
+        $user = Auth::user();
+        if (!Hash::check($password, $user->password)) {
+            return response()->json(['message' => 'Contraseña incorrecta.'], 403);
+        }
+
+        DB::beginTransaction();
+        try {
+            // delete related records permissively
+            if (Schema::hasTable('comprobantes')) {
+                DB::table('comprobantes')->where('company_id', $company->id)->delete();
+            }
+            if (Schema::hasTable('productos')) {
+                DB::table('productos')->where('company_id', $company->id)->delete();
+            }
+            if (Schema::hasTable('plans')) {
+                DB::table('plans')->where('company_id', $company->id)->delete();
+            }
+            if (Schema::hasTable('subscriptions')) {
+                DB::table('subscriptions')->where('company_id', $company->id)->delete();
+            }
+            if (Schema::hasTable('users') && Schema::hasColumn('users', 'company_id')) {
+                DB::table('users')->where('company_id', $company->id)->delete();
+            }
+
+            // delete logo
+            try {
+                if ($company->logo_path && Storage::disk('public')->exists($company->logo_path)) {
+                    Storage::disk('public')->delete($company->logo_path);
+                }
+            } catch (\Exception $_) {}
+
+            // delete company
+            if (method_exists($company, 'forceDelete')) {
+                $company->forceDelete();
+            } else {
+                $company->delete();
+            }
+
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Failed to permanently delete company '.$company->id.': '.$e->getMessage());
+            return response()->json(['message' => 'Error al eliminar el emisor.'], 500);
+        }
+
+        try { Log::info('Emisor permanently deleted with history', ['company_id' => $company->id, 'deleted_by' => Auth::id()]); } catch (\Exception $_) {}
+
+        return response()->json(['message' => 'Emisor eliminado permanentemente.']);
     }
 }

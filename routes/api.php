@@ -24,6 +24,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/emisores/{id}', [EmisorController::class, 'show']);
     Route::put('/emisores/{id}', [EmisorController::class, 'update']);
     Route::delete('/emisores/{id}', [EmisorController::class, 'destroy']);
+    Route::post('/emisores/{id}/prepare-deletion', [EmisorController::class, 'prepareDeletion']);
+    Route::delete('/emisores/{id}/permanent', [EmisorController::class, 'destroyWithHistory']);
 });
 
 
