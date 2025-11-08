@@ -180,7 +180,7 @@ class EmisorController extends Controller
             'ruc' => ['required','string','max:13','min:10','unique:companies,ruc'],
             'razon_social' => ['required','string','max:255'],
             'nombre_comercial' => ['nullable','string','max:255'],
-            'direccion_matriz' => ['nullable','string','max:500'],
+            'direccion_matriz' => ['required','string','max:500'],
 
             'regimen_tributario' => ['required','in:GENERAL,RIMPE_POPULAR,RIMPE_EMPRENDEDOR,MICRO_EMPRESA'],
             'obligado_contabilidad' => ['required','in:SI,NO'],
@@ -213,10 +213,14 @@ class EmisorController extends Controller
 
         $company = new Company($data);
 
-        // Asignar el usuario que está creando el registro
+        // Asignar el usuario que está creando el registro (si la columna existe)
         if (Auth::check()) {
-            $company->created_by = Auth::id();
-            $company->updated_by = Auth::id();
+            if (Schema::hasColumn('companies', 'created_by')) {
+                $company->created_by = Auth::id();
+            }
+            if (Schema::hasColumn('companies', 'updated_by')) {
+                $company->updated_by = Auth::id();
+            }
         }
 
         if ($request->hasFile('logo')) {
@@ -343,9 +347,11 @@ class EmisorController extends Controller
         // Update allowed fields
         $company->fill($data);
 
-        // Actualizar el usuario que está modificando el registro
+        // Actualizar el usuario que está modificando el registro (si la columna existe)
         if (Auth::check()) {
-            $company->updated_by = Auth::id();
+            if (Schema::hasColumn('companies', 'updated_by')) {
+                $company->updated_by = Auth::id();
+            }
         }
 
         if ($request->hasFile('logo')) {
