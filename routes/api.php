@@ -27,6 +27,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/emisores/{id}', [EmisorController::class, 'destroy']);
     Route::post('/emisores/{id}/prepare-deletion', [EmisorController::class, 'prepareDeletion']);
     Route::delete('/emisores/{id}/permanent', [EmisorController::class, 'destroyWithHistory']);
+
+    // Establecimientos (sucursales) relacionados a un emisor
+    Route::get('/emisores/{id}/establecimientos', [App\Http\Controllers\EstablecimientoController::class, 'index']);
+    Route::get('/emisores/{id}/establecimientos/check-code/{code}', [App\Http\Controllers\EstablecimientoController::class, 'checkCode']);
+    Route::post('/emisores/{id}/establecimientos', [App\Http\Controllers\EstablecimientoController::class, 'store']);
+    Route::get('/emisores/{id}/establecimientos/{est}', [App\Http\Controllers\EstablecimientoController::class, 'show']);
+    Route::put('/emisores/{id}/establecimientos/{est}', [App\Http\Controllers\EstablecimientoController::class, 'update']);
+    Route::delete('/emisores/{id}/establecimientos/{est}', [App\Http\Controllers\EstablecimientoController::class, 'destroy']);
 });
 
 
