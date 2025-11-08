@@ -26,7 +26,8 @@ class EmisorController extends Controller
         $sortBy = $request->input('sort_by', 'id');
         $sortDir = strtolower($request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
 
-        $query = Company::query()->select('companies.*');
+        $query = Company::query()->select('companies.*')
+            ->with(['creator:id,name', 'updater:id,name']);
 
         // Basic text filters
         if ($request->filled('ruc')) $query->where('ruc', 'like', '%'.$request->input('ruc').'%');
@@ -146,7 +147,13 @@ class EmisorController extends Controller
 
         // Append logo_url for each item
         $items = $paginator->getCollection()->map(function ($c) {
-            if ($c instanceof Company) return array_merge($c->toArray(), ['logo_url' => $c->logo_url]);
+            if ($c instanceof Company) {
+                return array_merge($c->toArray(), [
+                    'logo_url' => $c->logo_url,
+                    'created_by_name' => $c->created_by_name,
+                    'updated_by_name' => $c->updated_by_name,
+                ]);
+            }
             $arr = (array) $c;
             // if model-like, ensure logo_url computed
             $logo = $arr['logo_path'] ?? null;
@@ -173,7 +180,7 @@ class EmisorController extends Controller
             'ruc' => ['required','string','max:13','min:10','unique:companies,ruc'],
             'razon_social' => ['required','string','max:255'],
             'nombre_comercial' => ['nullable','string','max:255'],
-            'direccion_matriz' => ['required','string','max:500'],
+            'direccion_matriz' => ['nullable','string','max:500'],
 
             'regimen_tributario' => ['required','in:GENERAL,RIMPE_POPULAR,RIMPE_EMPRENDEDOR,MICRO_EMPRESA'],
             'obligado_contabilidad' => ['required','in:SI,NO'],
@@ -206,6 +213,12 @@ class EmisorController extends Controller
 
         $company = new Company($data);
 
+        // Asignar el usuario que está creando el registro
+        if (Auth::check()) {
+            $company->created_by = Auth::id();
+            $company->updated_by = Auth::id();
+        }
+
         if ($request->hasFile('logo')) {
             $path = $request->file('logo')->store('emisores/logos', 'public');
             $company->logo_path = $path;
@@ -215,15 +228,26 @@ class EmisorController extends Controller
 
         $payload = array_merge($company->toArray(), [
             'logo_url' => $company->logo_url,
+            'created_by_name' => $company->created_by_name,
+            'updated_by_name' => $company->updated_by_name,
         ]);
 
         return response()->json(['data' => $payload], 201);
     }
 
+    /**
+     * Check if RUC already exists in the database
+     */
+    public function checkRuc($ruc)
+    {
+        $exists = Company::where('ruc', $ruc)->exists();
+        return response()->json(['exists' => $exists, 'available' => !$exists]);
+    }
+
     // Show a single emisor with editable flags
     public function show($id)
     {
-        $company = Company::findOrFail($id);
+        $company = Company::with(['creator:id,name', 'updater:id,name'])->findOrFail($id);
 
         // Determine if RUC can be edited: if there's a comprobantes table and
         // there are any records with estado = 'AUTORIZADO' for this company, disallow.
@@ -245,6 +269,8 @@ class EmisorController extends Controller
         $payload = array_merge($company->toArray(), [
             'logo_url' => $company->logo_url,
             'ruc_editable' => $rucEditable,
+            'created_by_name' => $company->created_by_name,
+            'updated_by_name' => $company->updated_by_name,
         ]);
 
         return response()->json(['data' => $payload]);
@@ -270,25 +296,26 @@ class EmisorController extends Controller
         }
 
         // Build validation rules (allow same RUC for this record)
+        // En modo edición, todos los campos son opcionales excepto cuando se envían
         $rules = [
-            'ruc' => ['required','string','max:13','min:10', Rule::unique('companies','ruc')->ignore($company->id)],
-            'razon_social' => ['required','string','max:255'],
-            'nombre_comercial' => ['nullable','string','max:255'],
-            'direccion_matriz' => ['nullable','string','max:500'],
+            'ruc' => ['sometimes','required','string','max:13','min:10', Rule::unique('companies','ruc')->ignore($company->id)],
+            'razon_social' => ['sometimes','required','string','max:255'],
+            'nombre_comercial' => ['sometimes','nullable','string','max:255'],
+            'direccion_matriz' => ['sometimes','nullable','string','max:500'],
 
-            'regimen_tributario' => ['nullable','in:GENERAL,RIMPE_POPULAR,RIMPE_EMPRENDEDOR,MICRO_EMPRESA'],
-            'obligado_contabilidad' => ['nullable','in:SI,NO'],
-            'contribuyente_especial' => ['nullable','in:SI,NO'],
-            'agente_retencion' => ['nullable','in:SI,NO'],
-            'tipo_persona' => ['nullable','in:NATURAL,JURIDICA'],
-            'codigo_artesano' => ['nullable','string','max:50'],
+            'regimen_tributario' => ['sometimes','nullable','in:GENERAL,RIMPE_POPULAR,RIMPE_EMPRENDEDOR,MICRO_EMPRESA'],
+            'obligado_contabilidad' => ['sometimes','nullable','in:SI,NO'],
+            'contribuyente_especial' => ['sometimes','nullable','in:SI,NO'],
+            'agente_retencion' => ['sometimes','nullable','in:SI,NO'],
+            'tipo_persona' => ['sometimes','nullable','in:NATURAL,JURIDICA'],
+            'codigo_artesano' => ['sometimes','nullable','string','max:50'],
 
-            'correo_remitente' => ['nullable','email','max:255'],
-            'estado' => ['required','in:ACTIVO,INACTIVO'],
-            'ambiente' => ['required','in:PRODUCCION,PRUEBAS'],
-            'tipo_emision' => ['required','in:NORMAL,INDISPONIBILIDAD'],
+            'correo_remitente' => ['sometimes','nullable','email','max:255'],
+            'estado' => ['sometimes','required','in:ACTIVO,INACTIVO'],
+            'ambiente' => ['sometimes','required','in:PRODUCCION,PRUEBAS'],
+            'tipo_emision' => ['sometimes','required','in:NORMAL,INDISPONIBILIDAD'],
 
-            'logo' => ['nullable','image','mimes:jpg,jpeg,png','max:2048'],
+            'logo' => ['sometimes','nullable','image','mimes:jpg,jpeg,png','max:2048'],
         ];
 
         // use Validator so we can add an after-hook for RUC SRI validation
@@ -316,6 +343,11 @@ class EmisorController extends Controller
         // Update allowed fields
         $company->fill($data);
 
+        // Actualizar el usuario que está modificando el registro
+        if (Auth::check()) {
+            $company->updated_by = Auth::id();
+        }
+
         if ($request->hasFile('logo')) {
             $path = $request->file('logo')->store('emisores/logos', 'public');
             // delete old
@@ -323,15 +355,6 @@ class EmisorController extends Controller
                 try { Storage::disk('public')->delete($company->logo_path); } catch (\Exception $_) {}
             }
             $company->logo_path = $path;
-        }
-
-        // Attempt to set updated_by if column exists and user is authenticated
-        try {
-            if (Schema::hasColumn('companies', 'updated_by') && Auth::check()) {
-                $company->updated_by = Auth::id();
-            }
-        } catch (\Exception $_) {
-            // ignore
         }
 
         $company->save();
@@ -344,6 +367,8 @@ class EmisorController extends Controller
 
         $payload = array_merge($company->toArray(), [
             'logo_url' => $company->logo_url,
+            'created_by_name' => $company->created_by_name,
+            'updated_by_name' => $company->updated_by_name,
         ]);
 
         return response()->json(['data' => $payload]);
@@ -620,7 +645,7 @@ class EmisorController extends Controller
         try {
             $storePath = 'backups/'.$zipName;
             Storage::disk('public')->put($storePath, file_get_contents($zipPath));
-            $publicUrl = Storage::disk('public')->url($storePath);
+            $publicUrl = url(Storage::url($storePath));
         } catch (\Exception $e) {
             Log::error('Could not store backup zip for company '.$company->id.': '.$e->getMessage());
             return response()->json(['message' => 'No se pudo almacenar el respaldo.'], 500);

@@ -21,6 +21,7 @@ Route::middleware('auth:sanctum')->group(function () {
     //Rutas para el emisor
     Route::get('/emisores', [EmisorController::class, 'index']);
     Route::post('/emisores', [EmisorController::class, 'store']);
+    Route::get('/emisores/check-ruc/{ruc}', [EmisorController::class, 'checkRuc']);
     Route::get('/emisores/{id}', [EmisorController::class, 'show']);
     Route::put('/emisores/{id}', [EmisorController::class, 'update']);
     Route::delete('/emisores/{id}', [EmisorController::class, 'destroy']);

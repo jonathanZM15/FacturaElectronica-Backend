@@ -11,9 +11,42 @@ class Company extends Model
         'ruc','razon_social','nombre_comercial','direccion_matriz',
         'regimen_tributario','obligado_contabilidad','contribuyente_especial','agente_retencion',
         'tipo_persona','codigo_artesano','correo_remitente','estado','ambiente','tipo_emision','logo_path',
+        'created_by', 'updated_by',
     ];
 
-    protected $appends = ['logo_url'];
+    protected $appends = ['logo_url', 'created_by_name', 'updated_by_name'];
+
+    /**
+     * Relación con el usuario que creó el registro
+     */
+    public function creator()
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    /**
+     * Relación con el usuario que actualizó el registro
+     */
+    public function updater()
+    {
+        return $this->belongsTo(User::class, 'updated_by');
+    }
+
+    /**
+     * Accessor para obtener el nombre del usuario que creó el registro
+     */
+    public function getCreatedByNameAttribute(): ?string
+    {
+        return $this->creator ? $this->creator->name : null;
+    }
+
+    /**
+     * Accessor para obtener el nombre del usuario que actualizó el registro
+     */
+    public function getUpdatedByNameAttribute(): ?string
+    {
+        return $this->updater ? $this->updater->name : null;
+    }
 
     public function getLogoUrlAttribute(): ?string
     {
