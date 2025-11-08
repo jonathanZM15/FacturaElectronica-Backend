@@ -173,21 +173,21 @@ class EmisorController extends Controller
             'ruc' => ['required','string','max:13','min:10','unique:companies,ruc'],
             'razon_social' => ['required','string','max:255'],
             'nombre_comercial' => ['nullable','string','max:255'],
-            'direccion_matriz' => ['nullable','string','max:500'],
+            'direccion_matriz' => ['required','string','max:500'],
 
-            'regimen_tributario' => ['nullable','in:GENERAL,RIMPE_POPULAR,RIMPE_EMPRENDEDOR,MICRO_EMPRESA'],
-            'obligado_contabilidad' => ['nullable','in:SI,NO'],
-            'contribuyente_especial' => ['nullable','in:SI,NO'],
-            'agente_retencion' => ['nullable','in:SI,NO'],
-            'tipo_persona' => ['nullable','in:NATURAL,JURIDICA'],
-            'codigo_artesano' => ['nullable','string','max:50'],
+            'regimen_tributario' => ['required','in:GENERAL,RIMPE_POPULAR,RIMPE_EMPRENDEDOR,MICRO_EMPRESA'],
+            'obligado_contabilidad' => ['required','in:SI,NO'],
+            'contribuyente_especial' => ['required','in:SI,NO'],
+            'agente_retencion' => ['required','in:SI,NO'],
+            'tipo_persona' => ['required','in:NATURAL,JURIDICA'],
+            'codigo_artesano' => ['required','string','max:50'],
 
-            'correo_remitente' => ['nullable','email','max:255'],
+            'correo_remitente' => ['required','email','max:255'],
             'estado' => ['required','in:ACTIVO,INACTIVO'],
             'ambiente' => ['required','in:PRODUCCION,PRUEBAS'],
             'tipo_emision' => ['required','in:NORMAL,INDISPONIBILIDAD'],
 
-            'logo' => ['nullable','image','mimes:jpg,jpeg,png','max:2048'],
+            'logo' => ['required','image','mimes:jpg,jpeg,png','max:2048'],
         ];
 
         $validator = Validator::make($request->all(), $rules);
@@ -393,7 +393,8 @@ class EmisorController extends Controller
 
         $province = intval(substr($cedula, 0, 2));
         if ($province < 1 || $province > 24) return false;
-
+        // Ecuador cédula algorithm: multiply digits by coefficients, if product>=10 subtract 9,
+        // sum and compute check digit via modulo 10.
         $coeff = [2,1,2,1,2,1,2,1,2];
         $sum = 0;
         for ($i = 0; $i < 9; $i++) {
@@ -402,29 +403,12 @@ class EmisorController extends Controller
             $sum += $v;
         }
         $mod = $sum % 10;
-        $check = $mod == 0 ? 0 : 10 - $mod;
-        return $check === intval($cedula[9]);
-    }
-
-    private function validatePrivateCompany(string $ruc): bool
-    {
-        $ruc = preg_replace('/\D/', '', $ruc);
-        if (strlen($ruc) < 10) return false;
-        if (!ctype_digit($ruc)) return false;
-
-        $coeff = [4,3,2,7,6,5,4,3,2];
-        $sum = 0;
-        for ($i = 0; $i < 9; $i++) {
-            $sum += intval($ruc[$i]) * $coeff[$i];
-        }
-        $mod = $sum % 11;
-        $check = $mod == 0 ? 0 : 11 - $mod;
-        if ($check == 10) return false;
-        if ($check != intval($ruc[9])) return false;
+        $check = $mod === 0 ? 0 : 10 - $mod;
+        if ($check !== intval($cedula[9])) return false;
 
         // if length is 13, last three digits should be > 0
-        if (strlen($ruc) == 13) {
-            $suffix = intval(substr($ruc, 10, 3));
+        if (strlen($cedula) == 13) {
+            $suffix = intval(substr($cedula, 10, 3));
             return $suffix > 0;
         }
         return true;
