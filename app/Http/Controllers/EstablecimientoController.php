@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Hash;
 
 class EstablecimientoController extends Controller
 {
@@ -153,16 +154,72 @@ class EstablecimientoController extends Controller
         return response()->json(['data' => $est]);
     }
 
-    public function destroy($companyId, $id)
+    // Permanent delete of a establecimiento if it has no history (comprobantes)
+    public function destroy(Request $request, $companyId, $id)
     {
         $est = Establecimiento::where('company_id', $companyId)->findOrFail($id);
-        // Optionally validate no dependent records
+
+        // Check for related records that would block deletion
+        try {
+            // comprobantes
+            if (Schema::hasTable('comprobantes')) {
+                $exists = DB::table('comprobantes')->where('establecimiento_id', $est->id)->exists();
+                if ($exists) {
+                    return response()->json(['message' => 'El establecimiento tiene historial de comprobantes y no puede ser eliminado.'], 422);
+                }
+            }
+
+            // puntos_emision
+            if (Schema::hasTable('puntos_emision')) {
+                $exists = DB::table('puntos_emision')->where('establecimiento_id', $est->id)->exists();
+                if ($exists) {
+                    return response()->json(['message' => 'El establecimiento tiene puntos de emisión asociados y no puede ser eliminado.'], 422);
+                }
+            }
+        } catch (\Exception $e) {
+            Log::warning('Could not fully verify related records before delete for establecimiento '.$est->id.': '.$e->getMessage());
+            // If checks can't be completed, refuse to delete to be safe
+            return response()->json(['message' => 'No se pudo verificar el historial del establecimiento. Operación cancelada.'], 500);
+        }
+
+        // Verify admin password (current authenticated user must re-enter their password)
+        $password = $request->input('password');
+        if (!Auth::check() || !$password) {
+            return response()->json(['message' => 'Se requiere autenticación y contraseña para eliminar el establecimiento.'], 403);
+        }
+
+        $user = Auth::user();
+        if (!Hash::check($password, $user->password)) {
+            return response()->json(['message' => 'Contraseña incorrecta.'], 403);
+        }
+
+        // Delete logo file if exists
         try {
             if ($est->logo_path && Storage::disk('public')->exists($est->logo_path)) {
                 Storage::disk('public')->delete($est->logo_path);
             }
+        } catch (\Exception $_) {
+            // continue even if delete fails
+        }
+
+        // Perform permanent delete
+        try {
+            if (method_exists($est, 'forceDelete')) {
+                $est->forceDelete();
+            } else {
+                $est->delete();
+            }
+        } catch (\Exception $e) {
+            Log::error('Failed to delete establecimiento '.$est->id.': '.$e->getMessage());
+            return response()->json(['message' => 'Error al eliminar el establecimiento.'], 500);
+        }
+
+        // Audit log
+        try {
+            $userId = Auth::check() ? Auth::id() : null;
+            Log::info('Establecimiento permanently deleted', ['establecimiento_id' => $est->id, 'company_id' => $companyId, 'deleted_by' => $userId]);
         } catch (\Exception $_) {}
-        $est->delete();
+
         return response()->json(['message' => 'Establecimiento eliminado correctamente.']);
     }
 }
