@@ -40,6 +40,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
 // Company logo routes
 Route::get('/companies/{company}/logo', [LogoController::class, 'show']);
+Route::get('/companies/{company}/logo-file', [LogoController::class, 'file'])->name('companies.logo.file');
 Route::post('/companies/{company}/logo', [LogoController::class, 'store'])->middleware('auth:sanctum');
 
 

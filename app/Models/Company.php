@@ -53,15 +53,25 @@ class Company extends Model
         if (!$this->logo_path) {
             return null;
         }
-        
-        // Generar URL completa con el dominio
+        // If the file exists on the public disk, prefer serving it through
+        // an API route that streams the image. This avoids depending on
+        // the presence of the `public/storage` symlink on the server.
+        try {
+            if (Storage::disk('public')->exists($this->logo_path)) {
+                return url('/api/companies/' . $this->id . '/logo-file');
+            }
+        } catch (\Exception $_) {
+            // ignore and fallback to Storage::url()
+        }
+
+        // Fallback: generate URL using the configured filesystem URL
         $url = Storage::url($this->logo_path);
-        
-        // Si la URL es relativa, agregarle el APP_URL
+
+        // If the URL is relative, prefix with APP_URL
         if (!str_starts_with($url, 'http')) {
             $url = rtrim(config('app.url'), '/') . $url;
         }
-        
+
         return $url;
     }
 }

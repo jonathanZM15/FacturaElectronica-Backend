@@ -64,15 +64,21 @@ class Establecimiento extends Model
         if (!$this->logo_path) {
             return null;
         }
-        
-        // Generar URL completa con el dominio
+        // Prefer serving the file through an API proxy route when possible
+        try {
+            if (Storage::disk('public')->exists($this->logo_path)) {
+                return url('/api/companies/' . $this->company_id . '/logo-file');
+            }
+        } catch (\Exception $_) {
+            // ignore and fallback
+        }
+
+        // Fallback: generate URL using the configured filesystem URL
         $url = Storage::url($this->logo_path);
-        
-        // Si la URL es relativa, agregarle el APP_URL
         if (!str_starts_with($url, 'http')) {
             $url = rtrim(config('app.url'), '/') . $url;
         }
-        
+
         return $url;
     }
 }

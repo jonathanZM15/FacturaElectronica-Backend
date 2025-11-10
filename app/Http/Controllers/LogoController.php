@@ -22,6 +22,15 @@ class LogoController extends Controller
         if (!$company || !$company->logo_path) {
             return response()->json(['url' => null]);
         }
+        // Prefer the API file route if the file exists on the public disk.
+        try {
+            if (Storage::disk('public')->exists($company->logo_path)) {
+                return response()->json(['url' => url('/api/companies/' . $company->id . '/logo-file')]);
+            }
+        } catch (\Exception $_) {
+            // ignore and fallback
+        }
+
         return response()->json(['url' => asset('storage/' . $company->logo_path)]);
     }
 
@@ -125,6 +134,33 @@ class LogoController extends Controller
                 'message' => 'Error processing image',
                 'error' => $e->getMessage(),
             ], 500);
+        }
+    }
+
+    /**
+     * Serve the raw logo image from the public disk.
+     * This allows browsers to request the image through a Laravel route
+     * without relying on the public/storage symlink.
+     */
+    public function file($companyId)
+    {
+        $company = Company::find($companyId);
+        if (!$company || !$company->logo_path) {
+            return response(null, 404);
+        }
+
+        try {
+            $disk = Storage::disk('public');
+            if (!$disk->exists($company->logo_path)) {
+                return response(null, 404);
+            }
+
+            $contents = $disk->get($company->logo_path);
+            $mime = $disk->mimeType($company->logo_path) ?? 'image/png';
+
+            return response($contents, 200)->header('Content-Type', $mime);
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'Could not read logo', 'error' => $e->getMessage()], 500);
         }
     }
 }
