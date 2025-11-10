@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class EstablecimientoController extends Controller
 {
@@ -75,8 +77,32 @@ class EstablecimientoController extends Controller
 
     public function show($companyId, $id)
     {
-        $est = Establecimiento::where('company_id', $companyId)->findOrFail($id);
-        return response()->json(['data' => $est]);
+        $est = Establecimiento::where('company_id', $companyId)->with(['creator:id,name', 'updater:id,name'])->findOrFail($id);
+        
+        // Similar al emisor, verificar si el código puede ser editado
+        // (Si hay comprobantes autorizados asociados al establecimiento, no se puede editar el código)
+        $codigoEditable = true;
+        try {
+            if (Schema::hasTable('comprobantes')) {
+                $exists = DB::table('comprobantes')
+                    ->where('establecimiento_id', $est->id)
+                    ->where('estado', 'AUTORIZADO')
+                    ->exists();
+                if ($exists) $codigoEditable = false;
+            }
+        } catch (\Exception $e) {
+            Log::warning('Could not check comprobantes for establecimiento '.$est->id.': '.$e->getMessage());
+            $codigoEditable = true;
+        }
+
+        $payload = array_merge($est->toArray(), [
+            'logo_url' => $est->logo_url,
+            'codigo_editable' => $codigoEditable,
+            'created_by_name' => $est->created_by_name,
+            'updated_by_name' => $est->updated_by_name,
+        ]);
+
+        return response()->json(['data' => $payload]);
     }
 
     public function update(Request $request, $companyId, $id)
