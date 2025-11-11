@@ -187,7 +187,8 @@ class EmisorController extends Controller
             'contribuyente_especial' => ['required','in:SI,NO'],
             'agente_retencion' => ['required','in:SI,NO'],
             'tipo_persona' => ['required','in:NATURAL,JURIDICA'],
-            'codigo_artesano' => ['required','string','max:50'],
+            // Hacer opcional el código artesano
+            'codigo_artesano' => ['nullable','string','max:50'],
 
             'correo_remitente' => ['required','email','max:255'],
             'estado' => ['required','in:ACTIVO,INACTIVO'],
@@ -465,6 +466,38 @@ class EmisorController extends Controller
             $suffix = intval(substr($ruc, 9, 4));
             return $suffix > 0;
         }
+        return true;
+    }
+
+    /**
+     * Validate RUC for private companies (third digit = 9) using Ecuador SRI rules.
+     * Coefficients applied to first 9 digits, modulo 11; check digit is the 10th digit.
+     * If length = 13, last three digits must be > 0 (establishment code like 001).
+     */
+    private function validatePrivateCompany(string $ruc): bool
+    {
+        $ruc = preg_replace('/\D/', '', $ruc);
+        // Private company RUC must be at least 10 digits (base + check)
+        if (strlen($ruc) < 10) return false;
+        if (!ctype_digit($ruc)) return false;
+
+        // Coefficients for first 9 digits
+        $coeff = [4,3,2,7,6,5,4,3,2];
+        $sum = 0;
+        for ($i = 0; $i < 9; $i++) {
+            $sum += intval($ruc[$i]) * $coeff[$i];
+        }
+        $mod = $sum % 11;
+        $check = $mod == 0 ? 0 : 11 - $mod;
+        if ($check == 10) return false; // invalid check digit scenario
+        if ($check != intval($ruc[9])) return false; // 10th digit must match computed check digit
+
+        // If full 13-digit RUC provided, establishment code (digits 11-13) must be > 0
+        if (strlen($ruc) == 13) {
+            $suffix = intval(substr($ruc, 10, 3));
+            if ($suffix <= 0) return false;
+        }
+
         return true;
     }
 
