@@ -126,10 +126,14 @@ class EmisorController extends Controller
         // Simple search 'q' affects some text fields
         if ($request->filled('q')) {
             $q = $request->input('q');
-            $query->where(function ($qq) use ($q) {
-                $qq->where('ruc', 'like', "%{$q}%")
-                   ->orWhere('razon_social', 'like', "%{$q}%")
-                   ->orWhere('nombre_comercial', 'like', "%{$q}%");
+            // Use case-insensitive and accent-insensitive matching via collation
+            // Apply partial matches on several textual columns
+            $like = "%{$q}%";
+            $query->where(function ($qq) use ($like) {
+                $qq->whereRaw("ruc LIKE ? COLLATE utf8mb4_unicode_ci", [$like])
+                   ->orWhereRaw("razon_social LIKE ? COLLATE utf8mb4_unicode_ci", [$like])
+                   ->orWhereRaw("nombre_comercial LIKE ? COLLATE utf8mb4_unicode_ci", [$like])
+                   ->orWhereRaw("direccion_matriz LIKE ? COLLATE utf8mb4_unicode_ci", [$like]);
             });
         }
 
