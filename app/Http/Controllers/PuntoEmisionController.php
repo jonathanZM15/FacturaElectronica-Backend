@@ -117,9 +117,9 @@ class PuntoEmisionController extends Controller
                 'password' => 'required|string',
             ]);
 
-            // Verificar que el usuario autenticado tiene permisos de administrador
-            if (!auth()->check() || !auth()->user()->isAdmin()) {
-                return response()->json(['message' => 'No tiene permisos para eliminar'], 403);
+            // Verificar que el usuario está autenticado
+            if (!auth()->check()) {
+                return response()->json(['message' => 'Usuario no autenticado'], 401);
             }
 
             // Validar la contraseña del usuario autenticado
