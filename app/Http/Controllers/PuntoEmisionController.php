@@ -15,7 +15,8 @@ class PuntoEmisionController extends Controller
     public function index(string $companyId, string $establecimientoId): JsonResponse
     {
         try {
-            $puntos = PuntoEmision::where('company_id', $companyId)
+            $puntos = PuntoEmision::with('user')
+                ->where('company_id', $companyId)
                 ->where('establecimiento_id', $establecimientoId)
                 ->get();
 
@@ -31,7 +32,8 @@ class PuntoEmisionController extends Controller
     public function show(string $companyId, string $establecimientoId, string $puntoId): JsonResponse
     {
         try {
-            $punto = PuntoEmision::where('company_id', $companyId)
+            $punto = PuntoEmision::with('user')
+                ->where('company_id', $companyId)
                 ->where('establecimiento_id', $establecimientoId)
                 ->findOrFail($puntoId);
 

@@ -14,6 +14,7 @@ class PuntoEmision extends Model
     protected $fillable = [
         'company_id',
         'establecimiento_id',
+        'user_id',
         'codigo',
         'estado',
         'nombre',
@@ -46,5 +47,13 @@ class PuntoEmision extends Model
     public function establecimiento()
     {
         return $this->belongsTo(Establecimiento::class, 'establecimiento_id');
+    }
+
+    /**
+     * Relación: Un punto de emisión está asociado a un usuario
+     */
+    public function user()
+    {
+        return $this->belongsTo(User::class, 'user_id');
     }
 }
