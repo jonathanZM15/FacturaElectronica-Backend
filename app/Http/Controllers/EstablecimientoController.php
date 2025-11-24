@@ -18,7 +18,7 @@ class EstablecimientoController extends Controller
     // List establecimientos for a company
     public function index($companyId)
     {
-        $items = Establecimiento::where('company_id', $companyId)->orderBy('id', 'desc')->get();
+        $items = Establecimiento::where('company_id', $companyId)->with(['puntos_emision'])->orderBy('id', 'desc')->get();
         return response()->json(['data' => $items]);
     }
 
@@ -78,7 +78,7 @@ class EstablecimientoController extends Controller
 
     public function show($companyId, $id)
     {
-        $est = Establecimiento::where('company_id', $companyId)->with(['creator:id,name', 'updater:id,name'])->findOrFail($id);
+        $est = Establecimiento::where('company_id', $companyId)->with(['creator:id,name', 'updater:id,name', 'puntos_emision'])->findOrFail($id);
         
         // Similar al emisor, verificar si el código puede ser editado
         // (Si hay comprobantes autorizados asociados al establecimiento, no se puede editar el código)

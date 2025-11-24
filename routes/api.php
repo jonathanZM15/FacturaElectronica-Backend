@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\EmisorController;
 use App\Http\Controllers\LogoController;
+use App\Http\Controllers\PuntoEmisionController;
 
 //rutas para inicio y registro de sesion
 Route::post('/register', [AuthController::class, 'register']);
@@ -35,6 +36,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/emisores/{id}/establecimientos/{est}', [App\Http\Controllers\EstablecimientoController::class, 'show']);
     Route::put('/emisores/{id}/establecimientos/{est}', [App\Http\Controllers\EstablecimientoController::class, 'update']);
     Route::delete('/emisores/{id}/establecimientos/{est}', [App\Http\Controllers\EstablecimientoController::class, 'destroy']);
+
+    // Puntos de Emisión relacionados a un establecimiento
+    Route::get('/emisores/{id}/establecimientos/{est}/puntos', [PuntoEmisionController::class, 'index']);
+    Route::post('/emisores/{id}/establecimientos/{est}/puntos', [PuntoEmisionController::class, 'store']);
+    Route::get('/emisores/{id}/establecimientos/{est}/puntos/{punto}', [PuntoEmisionController::class, 'show']);
+    Route::put('/emisores/{id}/establecimientos/{est}/puntos/{punto}', [PuntoEmisionController::class, 'update']);
+    Route::delete('/emisores/{id}/establecimientos/{est}/puntos/{punto}', [PuntoEmisionController::class, 'destroy']);
 });
 
 

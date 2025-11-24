@@ -25,6 +25,14 @@ class Establecimiento extends Model
     }
 
     /**
+     * Relación: Un establecimiento tiene muchos puntos de emisión
+     */
+    public function puntos_emision()
+    {
+        return $this->hasMany(PuntoEmision::class, 'establecimiento_id');
+    }
+
+    /**
      * Relación con el usuario que creó el registro
      */
     public function creator()
