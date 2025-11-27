@@ -72,21 +72,11 @@ class Establecimiento extends Model
         if (!$this->logo_path) {
             return null;
         }
-        // Prefer serving the file through an API proxy route when possible
-        try {
-            if (Storage::disk('public')->exists($this->logo_path)) {
-                return url('/api/companies/' . $this->company_id . '/logo-file');
-            }
-        } catch (\Exception $_) {
-            // ignore and fallback
-        }
-
-        // Fallback: generate URL using the configured filesystem URL
-        $url = Storage::url($this->logo_path);
-        if (!str_starts_with($url, 'http')) {
-            $url = rtrim(config('app.url'), '/') . $url;
-        }
-
+        
+        // Generate the direct URL to the stored file using asset()
+        // This works because we store files in storage/app/public and have storage:link
+        $url = asset('storage/' . $this->logo_path);
+        
         return $url;
     }
 }
