@@ -15,7 +15,8 @@ class AddNavbarLogoToCompaniesTable extends Migration
 	{
 		Schema::table('companies', function (Blueprint $table) {
 			// Añade un campo opcional para el logo de la barra de navegación
-			$table->string('navbar_logo')->nullable()->after('logo');
+			//$table->string('navbar_logo')->nullable()->after('logo');
+			$table->string('navbar_logo')->nullable()->after('logo_path');
 		});
 	}
 
