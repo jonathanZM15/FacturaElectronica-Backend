@@ -58,7 +58,9 @@ class Company extends Model
         // the presence of the `public/storage` symlink on the server.
         try {
             if (Storage::disk('public')->exists($this->logo_path)) {
-                return url('/api/companies/' . $this->id . '/logo-file');
+                // Add cache-busting parameter using updated_at timestamp
+                $timestamp = $this->updated_at ? $this->updated_at->getTimestamp() : time();
+                return url('/api/companies/' . $this->id . '/logo-file?v=' . $timestamp);
             }
         } catch (\Exception $_) {
             // ignore and fallback to Storage::url()
@@ -71,6 +73,10 @@ class Company extends Model
         if (!str_starts_with($url, 'http')) {
             $url = rtrim(config('app.url'), '/') . $url;
         }
+
+        // Add cache-busting parameter
+        $timestamp = $this->updated_at ? $this->updated_at->getTimestamp() : time();
+        $url .= (str_contains($url, '?') ? '&' : '?') . 'v=' . $timestamp;
 
         return $url;
     }

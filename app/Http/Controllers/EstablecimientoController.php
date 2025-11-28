@@ -18,8 +18,18 @@ class EstablecimientoController extends Controller
     // List establecimientos for a company
     public function index($companyId)
     {
-        $items = Establecimiento::where('company_id', $companyId)->with(['puntos_emision'])->orderBy('id', 'desc')->get();
-        return response()->json(['data' => $items]);
+        $items = Establecimiento::where('company_id', $companyId)->with(['puntos_emision', 'creator:id,name', 'updater:id,name'])->orderBy('id', 'desc')->get();
+        
+        // Map items to include logo_url and other accessors
+        $data = $items->map(function ($item) {
+            return array_merge($item->toArray(), [
+                'logo_url' => $item->logo_url,
+                'created_by_name' => $item->created_by_name,
+                'updated_by_name' => $item->updated_by_name,
+            ]);
+        });
+        
+        return response()->json(['data' => $data]);
     }
 
     // Check code uniqueness within a company
@@ -73,7 +83,13 @@ class EstablecimientoController extends Controller
 
         $est = Establecimiento::create($data);
 
-        return response()->json(['data' => $est], 201);
+        $payload = array_merge($est->toArray(), [
+            'logo_url' => $est->logo_url,
+            'created_by_name' => $est->created_by_name,
+            'updated_by_name' => $est->updated_by_name,
+        ]);
+
+        return response()->json(['data' => $payload], 201);
     }
 
     public function show($companyId, $id)
@@ -110,6 +126,17 @@ class EstablecimientoController extends Controller
     {
         $est = Establecimiento::where('company_id', $companyId)->findOrFail($id);
 
+        Log::info('=== ESTABLECIMIENTO UPDATE REQUEST ===', [
+            'company_id' => $companyId,
+            'establecimiento_id' => $id,
+            'php_method' => $request->method(),
+            '_method' => $request->input('_method'),
+            'hasFile' => $request->hasFile('logo'),
+            'remove_logo' => $request->boolean('remove_logo'),
+            'files_keys' => array_keys($request->allFiles()),
+            'content_type' => $request->header('Content-Type'),
+        ]);
+
         $rules = [
             'codigo' => ['sometimes','required','string','max:100'],
             'estado' => ['sometimes','required','in:ABIERTO,CERRADO'],
@@ -137,12 +164,20 @@ class EstablecimientoController extends Controller
             }
         }
 
-        if ($request->hasFile('logo')) {
+        // Remove logo if requested explicitly
+        if ($request->boolean('remove_logo')) {
+            if ($est->logo_path && Storage::disk('public')->exists($est->logo_path)) {
+                try { Storage::disk('public')->delete($est->logo_path); } catch (\Exception $_) {}
+            }
+            $data['logo_path'] = null;
+            Log::info('Establecimiento logo removed', ['establecimiento_id' => $est->id]);
+        } elseif ($request->hasFile('logo')) {
             $path = $request->file('logo')->store('establecimientos/logos', 'public');
             if ($est->logo_path && Storage::disk('public')->exists($est->logo_path)) {
                 try { Storage::disk('public')->delete($est->logo_path); } catch (\Exception $_) {}
             }
             $data['logo_path'] = $path;
+            Log::info('Establecimiento logo updated', ['establecimiento_id' => $est->id, 'new_path' => $path]);
         }
 
         if (Auth::check()) {
@@ -151,7 +186,16 @@ class EstablecimientoController extends Controller
 
         $est->update($data);
 
-        return response()->json(['data' => $est]);
+        // Reload the model to get the recalculated attributes
+        $est = $est->fresh();
+
+        $payload = array_merge($est->toArray(), [
+            'logo_url' => $est->logo_url,
+            'created_by_name' => $est->created_by_name,
+            'updated_by_name' => $est->updated_by_name,
+        ]);
+
+        return response()->json(['data' => $payload]);
     }
 
     // Permanent delete of a establecimiento if it has no history (comprobantes)

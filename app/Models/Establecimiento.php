@@ -73,9 +73,23 @@ class Establecimiento extends Model
             return null;
         }
         
-        // Generate the direct URL to the stored file using asset()
-        // This works because we store files in storage/app/public and have storage:link
+        // Use API route to serve the image, which avoids depending on the public/storage symlink
+        try {
+            if (Storage::disk('public')->exists($this->logo_path)) {
+                // Add cache-busting parameter using updated_at timestamp
+                $timestamp = $this->updated_at ? $this->updated_at->getTimestamp() : time();
+                return url('/api/emisores/' . $this->company_id . '/establecimientos/' . $this->id . '/logo-file?v=' . $timestamp);
+            }
+        } catch (\Exception $_) {
+            // ignore and fallback
+        }
+
+        // Fallback: generate URL using asset (for backward compatibility)
         $url = asset('storage/' . $this->logo_path);
+        
+        // Add cache-busting parameter
+        $timestamp = $this->updated_at ? $this->updated_at->getTimestamp() : time();
+        $url .= (str_contains($url, '?') ? '&' : '?') . 'v=' . $timestamp;
         
         return $url;
     }

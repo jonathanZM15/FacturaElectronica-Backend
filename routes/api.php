@@ -51,5 +51,8 @@ Route::get('/companies/{company}/logo', [LogoController::class, 'show']);
 Route::get('/companies/{company}/logo-file', [LogoController::class, 'file'])->name('companies.logo.file');
 Route::post('/companies/{company}/logo', [LogoController::class, 'store'])->middleware('auth:sanctum');
 
+// Establecimiento logo routes
+Route::get('/emisores/{id}/establecimientos/{est}/logo-file', [LogoController::class, 'establecimientos_file'])->name('establecimientos.logo.file');
+
 
 

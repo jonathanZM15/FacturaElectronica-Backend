@@ -288,6 +288,16 @@ class EmisorController extends Controller
     // Update existing emisor
     public function update(Request $request, $id)
     {
+        Log::info('=== EMISOR UPDATE REQUEST ===', [
+            'company_id' => $id,
+            'php_method' => $request->method(),
+            '_method' => $request->input('_method'),
+            'hasFile' => $request->hasFile('logo'),
+            'files_keys' => array_keys($request->allFiles()),
+            'request_all_keys' => array_keys($request->all()),
+            'content_type' => $request->header('Content-Type'),
+        ]);
+        
         $company = Company::findOrFail($id);
 
         // Check if there are authorized comprobantes
@@ -360,12 +370,19 @@ class EmisorController extends Controller
         }
 
         if ($request->hasFile('logo')) {
+            Log::info('Logo file received for update', [
+                'company_id' => $company->id,
+                'filename' => $request->file('logo')->getClientOriginalName(),
+                'size' => $request->file('logo')->getSize(),
+                'mime' => $request->file('logo')->getMimeType(),
+            ]);
             $path = $request->file('logo')->store('emisores/logos', 'public');
             // delete old
             if ($company->logo_path && Storage::disk('public')->exists($company->logo_path)) {
                 try { Storage::disk('public')->delete($company->logo_path); } catch (\Exception $_) {}
             }
             $company->logo_path = $path;
+            Log::info('Logo updated for company', ['company_id' => $company->id, 'new_path' => $path]);
         }
 
         $company->save();

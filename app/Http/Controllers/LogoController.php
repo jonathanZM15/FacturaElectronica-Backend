@@ -156,9 +156,60 @@ class LogoController extends Controller
             }
 
             $contents = $disk->get($company->logo_path);
-            $mime = $disk->mimeType($company->logo_path) ?? 'image/png';
+            $mime = 'image/png';
+            if (function_exists('mime_content_type')) {
+                $mime = mime_content_type($disk->path($company->logo_path)) ?: 'image/png';
+            }
 
-            return response($contents, 200)->header('Content-Type', $mime);
+            // Generate ETag based on file contents and updated_at timestamp
+            $etag = md5($contents . $company->updated_at);
+
+            return response($contents, 200)
+                ->header('Content-Type', $mime)
+                ->header('Cache-Control', 'no-cache, no-store, must-revalidate, private, max-age=0')
+                ->header('Pragma', 'no-cache')
+                ->header('Expires', '-1')
+                ->header('ETag', '"' . $etag . '"')
+                ->header('X-Content-Type-Options', 'nosniff')
+                ->header('Last-Modified', gmdate('D, d M Y H:i:s', $company->updated_at->timestamp) . ' GMT');
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'Could not read logo', 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Serve the raw logo image for an establecimiento
+     */
+    public function establecimientos_file($companyId, $estId)
+    {
+        $est = \App\Models\Establecimiento::where('company_id', $companyId)->find($estId);
+        if (!$est || !$est->logo_path) {
+            return response(null, 404);
+        }
+
+        try {
+            $disk = Storage::disk('public');
+            if (!$disk->exists($est->logo_path)) {
+                return response(null, 404);
+            }
+
+            $contents = $disk->get($est->logo_path);
+            $mime = 'image/png';
+            if (function_exists('mime_content_type')) {
+                $mime = mime_content_type($disk->path($est->logo_path)) ?: 'image/png';
+            }
+
+            // Generate ETag based on file contents and updated_at timestamp
+            $etag = md5($contents . $est->updated_at);
+
+            return response($contents, 200)
+                ->header('Content-Type', $mime)
+                ->header('Cache-Control', 'no-cache, no-store, must-revalidate, private, max-age=0')
+                ->header('Pragma', 'no-cache')
+                ->header('Expires', '-1')
+                ->header('ETag', '"' . $etag . '"')
+                ->header('X-Content-Type-Options', 'nosniff')
+                ->header('Last-Modified', gmdate('D, d M Y H:i:s', $est->updated_at->timestamp) . ' GMT');
         } catch (\Exception $e) {
             return response()->json(['message' => 'Could not read logo', 'error' => $e->getMessage()], 500);
         }
