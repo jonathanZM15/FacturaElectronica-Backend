@@ -6,6 +6,7 @@ use App\Services\PermissionService;
 use App\Enums\UserRole;
 use App\Models\User;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\Auth;
 
 class UpdateUserRequest extends FormRequest
 {
@@ -14,7 +15,8 @@ class UpdateUserRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        $currentUser = auth()->user();
+        /** @var User|null $currentUser */
+        $currentUser = Auth::user();
         $userIdToUpdate = $this->route('usuario');
         $userToUpdate = User::find($userIdToUpdate);
 
@@ -34,7 +36,8 @@ class UpdateUserRequest extends FormRequest
     public function rules(): array
     {
         $userId = $this->route('usuario'); // Obtener ID del usuario a actualizar
-        $currentUser = auth()->user();
+        /** @var User|null $currentUser */
+        $currentUser = Auth::user();
 
         return [
             'cedula' => [
@@ -94,7 +97,7 @@ class UpdateUserRequest extends FormRequest
             'estado' => [
                 'sometimes',
                 'string',
-                'in:activo,inactivo,suspendido'
+                'in:nuevo,activo,pendiente_verificacion,suspendido,retirado'
             ],
             'distribuidor_id' => [
                 'sometimes',
@@ -177,7 +180,7 @@ class UpdateUserRequest extends FormRequest
 
             'estado.sometimes' => 'El estado es opcional',
             'estado.string' => 'El estado debe ser texto',
-            'estado.in' => 'El estado debe ser: activo, inactivo o suspendido',
+            'estado.in' => 'El estado debe ser: nuevo, activo, pendiente_verificacion, suspendido o retirado',
 
             'distribuidor_id.sometimes' => 'El distribuidor es opcional',
             'distribuidor_id.integer' => 'El distribuidor debe ser un número entero',

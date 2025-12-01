@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\Auth;
 use App\Services\PermissionService;
 
 class StoreUserRequest extends FormRequest
@@ -13,11 +14,12 @@ class StoreUserRequest extends FormRequest
     public function authorize(): bool
     {
         // El usuario debe estar autenticado
-        if (!auth()->check()) {
+        if (!Auth::check()) {
             return false;
         }
 
-        $user = auth()->user();
+        /** @var \App\Models\User|null $user */
+        $user = Auth::user();
         
         // Verifica que el rol a crear sea permitido
         $rolACrear = $this->input('role');
@@ -81,7 +83,8 @@ class StoreUserRequest extends FormRequest
                 'required',
                 'in:administrador,distribuidor,emisor,gerente,cajero',
                 function ($attribute, $value, $fail) {
-                    $user = auth()->user();
+                    /** @var \App\Models\User|null $user */
+                    $user = Auth::user();
                     $rolesPermitidos = $user->rolesPuedoCrear();
                     if (!in_array($value, $rolesPermitidos)) {
                         $fail("No tienes permiso para crear usuarios con rol '{$value}'");
@@ -90,7 +93,7 @@ class StoreUserRequest extends FormRequest
             ],
             'distribuidor_id' => 'nullable|exists:users,id',
             'emisor_id' => 'nullable|exists:users,id',
-            'estado' => 'nullable|in:activo,inactivo,suspendido',
+            'estado' => 'nullable|in:nuevo,activo,pendiente_verificacion,suspendido,retirado',
             'establecimientos_ids' => 'nullable|array',
             'establecimientos_ids.*' => 'integer',
             'puntos_emision_ids' => 'nullable|array',

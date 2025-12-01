@@ -9,6 +9,7 @@ use App\Services\PermissionService;
 use App\Enums\UserRole;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
@@ -22,7 +23,8 @@ class UserController extends Controller
     public function index(Request $request)
     {
         try {
-            $currentUser = auth()->user();
+            /** @var User|null $currentUser */
+            $currentUser = Auth::user();
             
             // Parámetros de paginación y filtrado
             $page = max(1, (int)($request->input('page', 1)));
@@ -129,7 +131,8 @@ class UserController extends Controller
                 return response()->json(['message' => 'ID de usuario inválido'], Response::HTTP_BAD_REQUEST);
             }
 
-            $currentUser = auth()->user();
+            /** @var User|null $currentUser */
+            $currentUser = Auth::user();
             $user = User::find($id);
 
             if (!$user) {
@@ -172,7 +175,8 @@ class UserController extends Controller
     public function store(StoreUserRequest $request)
     {
         try {
-            $currentUser = auth()->user();
+            /** @var User|null $currentUser */
+            $currentUser = Auth::user();
             $validated = $request->validated();
 
             // Los permisos fueron validados en StoreUserRequest::authorize()
@@ -221,7 +225,10 @@ class UserController extends Controller
                 'created_by_id' => $currentUser->id,
                 'distribuidor_id' => $distribuidor_id,
                 'emisor_id' => $emisor_id,
-                'estado' => $validated['estado'] ?? 'activo',
+                // Estado por defecto: 'nuevo'. Excepción: admin@factura.local es siempre 'activo'
+                'estado' => ($validated['email'] ?? '') === 'admin@factura.local'
+                    ? 'activo'
+                    : ($validated['estado'] ?? 'nuevo'),
                 'establecimientos_ids' => isset($validated['establecimientos_ids']) 
                     ? json_encode($validated['establecimientos_ids']) 
                     : null,
@@ -254,7 +261,7 @@ class UserController extends Controller
         } catch (\Exception $e) {
             Log::error('Error creando usuario', [
                 'error' => $e->getMessage(),
-                'usuario_id' => auth()->user()->id
+                'usuario_id' => $currentUser->id ?? null
             ]);
             return response()->json([
                 'message' => 'Error al crear usuario'
@@ -274,7 +281,8 @@ class UserController extends Controller
                 return response()->json(['message' => 'ID de usuario inválido'], Response::HTTP_BAD_REQUEST);
             }
 
-            $currentUser = auth()->user();
+            /** @var User|null $currentUser */
+            $currentUser = Auth::user();
             $user = User::find($id);
 
             if (!$user) {
@@ -369,6 +377,12 @@ class UserController extends Controller
 
             // Actualizar estado si se proporciona
             if (isset($validated['estado'])) {
+                // El usuario admin@factura.local no puede cambiar su estado y siempre es 'activo'
+                if ($user->email === 'admin@factura.local' && $validated['estado'] !== 'activo') {
+                    return response()->json([
+                        'message' => 'El estado del usuario admin@factura.local no puede modificarse y siempre es Activo'
+                    ], Response::HTTP_CONFLICT);
+                }
                 $user->estado = $validated['estado'];
                 $cambios['estado'] = $validated['estado'];
             }
@@ -406,7 +420,7 @@ class UserController extends Controller
             Log::error('Error actualizando usuario', [
                 'error' => $e->getMessage(),
                 'usuario_id' => $id,
-                'usuario_actual_id' => auth()->user()->id
+                'usuario_actual_id' => $currentUser->id ?? null
             ]);
             return response()->json([
                 'message' => 'Error al actualizar usuario'
@@ -433,7 +447,8 @@ class UserController extends Controller
                 'password.required' => 'La contraseña del usuario actual es requerida'
             ]);
 
-            $currentUser = auth()->user();
+            /** @var User|null $currentUser */
+            $currentUser = Auth::user();
             $password = $request->input('password');
 
             // Verificar contraseña del usuario actual
@@ -511,7 +526,7 @@ class UserController extends Controller
             Log::error('Error eliminando usuario', [
                 'error' => $e->getMessage(),
                 'usuario_id' => $id,
-                'usuario_actual_id' => auth()->user()->id
+                'usuario_actual_id' => $currentUser->id ?? null
             ]);
             return response()->json([
                 'message' => 'Error al eliminar usuario'
@@ -526,7 +541,8 @@ class UserController extends Controller
     public function indexByEmisor(Request $request, $id)
     {
         try {
-            $currentUser = auth()->user();
+            /** @var User|null $currentUser */
+            $currentUser = Auth::user();
             
             // Validar permisos
             $canView = false;
@@ -611,7 +627,8 @@ class UserController extends Controller
     public function storeByEmisor(StoreUserRequest $request, $id)
     {
         try {
-            $currentUser = auth()->user();
+            /** @var User|null $currentUser */
+            $currentUser = Auth::user();
             
             // Validar permisos: solo Administrador, Distribuidor, Emisor y Gerente pueden crear usuarios
             // Administrador y Distribuidor pueden crear en cualquier emisor
@@ -711,7 +728,8 @@ class UserController extends Controller
     public function showByEmisor(Request $request, $id, $usuario)
     {
         try {
-            $currentUser = auth()->user();
+            /** @var User|null $currentUser */
+            $currentUser = Auth::user();
             
             // Validar permisos
             $canView = false;
@@ -764,7 +782,8 @@ class UserController extends Controller
     public function updateByEmisor(UpdateUserRequest $request, $id, $usuario)
     {
         try {
-            $currentUser = auth()->user();
+            /** @var User|null $currentUser */
+            $currentUser = Auth::user();
             
             // Validar permisos
             $canUpdate = false;
@@ -888,7 +907,8 @@ class UserController extends Controller
     public function destroyByEmisor(Request $request, $id, $usuario)
     {
         try {
-            $currentUser = auth()->user();
+            /** @var User|null $currentUser */
+            $currentUser = Auth::user();
             
             // Validar permisos
             $canDelete = false;
