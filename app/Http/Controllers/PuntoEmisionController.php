@@ -4,21 +4,94 @@ namespace App\Http\Controllers;
 
 use App\Models\PuntoEmision;
 use App\Models\Establecimiento;
+use App\Models\Company;
+use App\Enums\UserRole;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
 class PuntoEmisionController extends Controller
 {
     /**
+     * Validar permisos para acceder a un punto de emisión
+     */
+    private function checkPermissions(string $companyId, array $options = [])
+    {
+        $currentUser = auth()->user();
+        $company = Company::findOrFail($companyId);
+        
+        $isAdmin = $currentUser->role === UserRole::ADMINISTRADOR;
+        $isCreator = $company->created_by === $currentUser->id;
+        $isAssignedEmissor = ($currentUser->role === UserRole::EMISOR && $currentUser->emisor_id === (int)$companyId);
+        $isAssignedGerente = ($currentUser->role === UserRole::GERENTE && $currentUser->emisor_id === (int)$companyId);
+        $isAssignedCajero = ($currentUser->role === UserRole::CAJERO && $currentUser->emisor_id === (int)$companyId);
+        $allowLimitedRoles = $options['allowLimitedRoles'] ?? false;
+        
+        $allowed = $isAdmin || $isCreator || $isAssignedEmissor;
+        if ($allowLimitedRoles) {
+            $allowed = $allowed || $isAssignedGerente || $isAssignedCajero;
+        }
+
+        if (!$allowed) {
+            return response()->json([
+                'message' => 'No tienes permisos para acceder a los puntos de emisión de este emisor'
+            ], 403);
+        }
+
+        if ($allowLimitedRoles && ($isAssignedGerente || $isAssignedCajero)) {
+            $establecimientoId = $options['establecimientoId'] ?? null;
+            $puntoId = $options['puntoId'] ?? null;
+
+            if ($establecimientoId) {
+                $establecimientosIds = $this->normalizeIds($currentUser->establecimientos_ids);
+                if (!empty($establecimientosIds) && !$this->idInArray((int)$establecimientoId, $establecimientosIds)) {
+                    return response()->json([
+                        'message' => 'No tienes permisos para acceder a este establecimiento'
+                    ], 403);
+                }
+            }
+
+            if ($puntoId) {
+                $puntosIds = $this->normalizeIds($currentUser->puntos_emision_ids);
+                if (!empty($puntosIds) && !$this->idInArray((int)$puntoId, $puntosIds)) {
+                    return response()->json([
+                        'message' => 'No tienes permisos para acceder a este punto de emisión'
+                    ], 403);
+                }
+            }
+
+            return [
+                'limited' => true,
+                'puntos_ids' => $this->normalizeIds($currentUser->puntos_emision_ids)
+            ];
+        }
+
+        return ['limited' => false];
+    }
+
+    /**
      * Listar todos los puntos de emisión de un establecimiento
      */
     public function index(string $companyId, string $establecimientoId): JsonResponse
     {
         try {
+            // Validar permisos
+            $permInfo = $this->checkPermissions($companyId, [
+                'allowLimitedRoles' => true,
+                'establecimientoId' => $establecimientoId
+            ]);
+            if ($permInfo instanceof JsonResponse) return $permInfo;
+            
             $puntos = PuntoEmision::with('user')
                 ->where('company_id', $companyId)
                 ->where('establecimiento_id', $establecimientoId)
                 ->get();
+
+            if (($permInfo['limited'] ?? false) && !empty($permInfo['puntos_ids'])) {
+                $assigned = $permInfo['puntos_ids'];
+                $puntos = $puntos->filter(function ($punto) use ($assigned) {
+                    return $this->idInArray($punto->id, $assigned);
+                })->values();
+            }
 
             return response()->json(['data' => $puntos, 'success' => true]);
         } catch (\Exception $e) {
@@ -32,6 +105,14 @@ class PuntoEmisionController extends Controller
     public function show(string $companyId, string $establecimientoId, string $puntoId): JsonResponse
     {
         try {
+            // Validar permisos
+            $permInfo = $this->checkPermissions($companyId, [
+                'allowLimitedRoles' => true,
+                'establecimientoId' => $establecimientoId,
+                'puntoId' => $puntoId
+            ]);
+            if ($permInfo instanceof JsonResponse) return $permInfo;
+            
             $punto = PuntoEmision::with('user')
                 ->where('company_id', $companyId)
                 ->where('establecimiento_id', $establecimientoId)
@@ -49,6 +130,10 @@ class PuntoEmisionController extends Controller
     public function store(string $companyId, string $establecimientoId, Request $request): JsonResponse
     {
         try {
+            // Validar permisos
+            $permInfo = $this->checkPermissions($companyId);
+            if ($permInfo instanceof JsonResponse) return $permInfo;
+            
             // Validar que el establecimiento existe y pertenece a la compañía
             $establecimiento = Establecimiento::where('company_id', $companyId)
                 ->findOrFail($establecimientoId);
@@ -84,6 +169,10 @@ class PuntoEmisionController extends Controller
     public function update(string $companyId, string $establecimientoId, string $puntoId, Request $request): JsonResponse
     {
         try {
+            // Validar permisos
+            $permInfo = $this->checkPermissions($companyId);
+            if ($permInfo instanceof JsonResponse) return $permInfo;
+            
             $punto = PuntoEmision::where('company_id', $companyId)
                 ->where('establecimiento_id', $establecimientoId)
                 ->findOrFail($puntoId);
@@ -115,6 +204,10 @@ class PuntoEmisionController extends Controller
     public function destroy(string $companyId, string $establecimientoId, string $puntoId, Request $request): JsonResponse
     {
         try {
+            // Validar permisos
+            $permInfo = $this->checkPermissions($companyId);
+            if ($permInfo instanceof JsonResponse) return $permInfo;
+            
             $validated = $request->validate([
                 'password' => 'required|string',
             ]);
@@ -139,5 +232,88 @@ class PuntoEmisionController extends Controller
         } catch (\Exception $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
+    }
+
+    /**
+     * Listar todos los puntos de emisión de un emisor (sin agrupar por establecimiento)
+     * HU 2: Needed by the frontend to populate punto selection in user form
+     */
+    public function listByEmisor(string $id): JsonResponse
+    {
+        try {
+            $permInfo = $this->checkPermissions($id, [
+                'allowLimitedRoles' => true
+            ]);
+            if ($permInfo instanceof JsonResponse) return $permInfo;
+
+            // Castear id a integer para la query
+            $emiId = (int) $id;
+            
+            // Obtener todos los puntos que pertenecen a establecimientos del emisor
+            $puntos = PuntoEmision::where('company_id', $emiId)
+                ->select('id', 'company_id', 'establecimiento_id', 'codigo', 'nombre', 'estado')
+                ->get();
+
+            if (($permInfo['limited'] ?? false) && !empty($permInfo['puntos_ids'])) {
+                $assigned = $permInfo['puntos_ids'];
+                $puntos = $puntos->filter(function ($punto) use ($assigned) {
+                    return $this->idInArray($punto->id, $assigned);
+                })->values();
+            }
+
+            \Log::info('Puntos de emisión para emisor', [
+                'emisor_id' => $emiId,
+                'puntos_count' => $puntos->count(),
+                'puntos' => $puntos->toArray()
+            ]);
+
+            return response()->json([
+                'data' => $puntos,
+                'success' => true
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Error al listar puntos de emisión', [
+                'emisor_id' => $id,
+                'error' => $e->getMessage()
+            ]);
+            return response()->json([
+                'message' => 'Error al listar puntos de emisión',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    private function normalizeIds($value): array
+    {
+        if (is_array($value)) {
+            return $value;
+        }
+
+        if (is_string($value)) {
+            $decoded = json_decode($value, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                return $decoded;
+            }
+        }
+
+        if (is_numeric($value)) {
+            return [(int) $value];
+        }
+
+        return [];
+    }
+
+    private function idInArray($id, array $ids): bool
+    {
+        if (in_array($id, $ids, true)) {
+            return true;
+        }
+
+        if (in_array((string) $id, $ids, true)) {
+            return true;
+        }
+
+        $intIds = array_map('intval', $ids);
+        return in_array((int) $id, $intIds, true);
     }
 }

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Company;
+use App\Enums\UserRole;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
@@ -26,8 +27,26 @@ class EmisorController extends Controller
         $sortBy = $request->input('sort_by', 'id');
         $sortDir = strtolower($request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
 
+        $currentUser = auth()->user();
         $query = Company::query()->select('companies.*')
             ->with(['creator:id,name', 'updater:id,name']);
+
+        // Aplicar filtro de permisos según rol del usuario actual
+        if ($currentUser && $currentUser->role !== UserRole::ADMINISTRADOR) {
+            if ($currentUser->role === UserRole::DISTRIBUIDOR) {
+                // Distribuidor solo ve emisores que creó
+                $query->where('created_by', $currentUser->id);
+            } elseif ($currentUser->role === UserRole::EMISOR) {
+                // Emisor ve:
+                // 1. Emisores que creó (si es que creó alguno)
+                // 2. El emisor específico donde está asignado (emisor_id)
+                $query->where(function ($q) use ($currentUser) {
+                    $q->where('created_by', $currentUser->id) // Emisores que creó
+                      ->orWhere('id', $currentUser->emisor_id); // Emisor específico asignado
+                });
+            }
+        }
+        // Admin ve todos los emisores
 
         // Basic text filters
         if ($request->filled('ruc')) $query->where('ruc', 'like', '%'.$request->input('ruc').'%');
@@ -299,6 +318,14 @@ class EmisorController extends Controller
         ]);
         
         $company = Company::findOrFail($id);
+        
+        // Validar permisos: solo admin o el creador del emisor pueden editarlo
+        $currentUser = auth()->user();
+        if ($currentUser->role !== UserRole::ADMINISTRADOR && $company->created_by !== $currentUser->id) {
+            return response()->json([
+                'message' => 'No tienes permisos para editar este emisor'
+            ], 403);
+        }
 
         // Check if there are authorized comprobantes
         $hasAuthorized = false;
@@ -526,6 +553,14 @@ class EmisorController extends Controller
     public function destroy(Request $request, $id)
     {
         $company = Company::findOrFail($id);
+        
+        // Validar permisos: solo admin o el creador del emisor pueden eliminarlo
+        $currentUser = auth()->user();
+        if ($currentUser->role !== UserRole::ADMINISTRADOR && $company->created_by !== $currentUser->id) {
+            return response()->json([
+                'message' => 'No tienes permisos para eliminar este emisor'
+            ], 403);
+        }
 
         // Check for related records that would block deletion
         try {

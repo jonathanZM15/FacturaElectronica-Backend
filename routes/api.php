@@ -6,6 +6,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\EmisorController;
 use App\Http\Controllers\LogoController;
 use App\Http\Controllers\PuntoEmisionController;
+use App\Http\Controllers\UserController;
 
 //rutas para inicio y registro de sesion
 Route::post('/register', [AuthController::class, 'register']);
@@ -18,6 +19,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/user', [AuthController::class, 'me']);
     Route::post('/cambiarClave', [AuthController::class, 'cambiarPassword']);
+
+    // Rutas de Usuarios (solo admins)
+    Route::middleware('admin')->group(function () {
+        Route::get('/usuarios', [UserController::class, 'index']);
+        Route::post('/usuarios', [UserController::class, 'store']);
+        Route::get('/usuarios/{usuario}', [UserController::class, 'show']);
+        Route::put('/usuarios/{usuario}', [UserController::class, 'update']);
+        Route::delete('/usuarios/{usuario}', [UserController::class, 'destroy']);
+    });
 
     //Rutas para el emisor
     Route::get('/emisores', [EmisorController::class, 'index']);
@@ -43,6 +53,16 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/emisores/{id}/establecimientos/{est}/puntos/{punto}', [PuntoEmisionController::class, 'show']);
     Route::put('/emisores/{id}/establecimientos/{est}/puntos/{punto}', [PuntoEmisionController::class, 'update']);
     Route::delete('/emisores/{id}/establecimientos/{est}/puntos/{punto}', [PuntoEmisionController::class, 'destroy']);
+
+    // Puntos de Emisión asociados a un emisor (todos los puntos de todos sus establecimientos)
+    Route::get('/emisores/{id}/puntos-emision', [PuntoEmisionController::class, 'listByEmisor']);
+
+    // Usuarios asociados a un emisor
+    Route::get('/emisores/{id}/usuarios', [UserController::class, 'indexByEmisor']);
+    Route::post('/emisores/{id}/usuarios', [UserController::class, 'storeByEmisor']);
+    Route::get('/emisores/{id}/usuarios/{usuario}', [UserController::class, 'showByEmisor']);
+    Route::put('/emisores/{id}/usuarios/{usuario}', [UserController::class, 'updateByEmisor']);
+    Route::delete('/emisores/{id}/usuarios/{usuario}', [UserController::class, 'destroyByEmisor']);
 });
 
 

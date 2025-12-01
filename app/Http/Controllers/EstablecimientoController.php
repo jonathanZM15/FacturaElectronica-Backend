@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Establecimiento;
 use App\Models\Company;
+use App\Enums\UserRole;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Schema;
@@ -18,6 +19,22 @@ class EstablecimientoController extends Controller
     // List establecimientos for a company
     public function index($companyId)
     {
+        // Validar permisos: solo admin, creador de compañía, o usuario emisor/gerente/cajero asignado
+        $currentUser = auth()->user();
+        $company = Company::findOrFail($companyId);
+        
+        $isAdmin = $currentUser->role === UserRole::ADMINISTRADOR;
+        $isCreator = $company->created_by === $currentUser->id;
+        $isAssignedEmissor = ($currentUser->role === UserRole::EMISOR && $currentUser->emisor_id === (int)$companyId);
+        $isAssignedGerente = ($currentUser->role === UserRole::GERENTE && $currentUser->emisor_id === (int)$companyId);
+        $isAssignedCajero = ($currentUser->role === UserRole::CAJERO && $currentUser->emisor_id === (int)$companyId);
+        
+        if (!$isAdmin && !$isCreator && !$isAssignedEmissor && !$isAssignedGerente && !$isAssignedCajero) {
+            return response()->json([
+                'message' => 'No tienes permisos para ver los establecimientos de este emisor'
+            ], 403);
+        }
+        
         $items = Establecimiento::where('company_id', $companyId)->with(['puntos_emision', 'creator:id,name', 'updater:id,name'])->orderBy('id', 'desc')->get();
         
         // Map items to include logo_url and other accessors
@@ -41,6 +58,20 @@ class EstablecimientoController extends Controller
 
     public function store(Request $request, $companyId)
     {
+        // Validar permisos: solo admin, creador de compañía, o usuario emisor asignado (Gerente NO puede crear)
+        $currentUser = auth()->user();
+        $company = Company::findOrFail($companyId);
+        
+        $isAdmin = $currentUser->role === UserRole::ADMINISTRADOR;
+        $isCreator = $company->created_by === $currentUser->id;
+        $isAssignedEmissor = ($currentUser->role === UserRole::EMISOR && $currentUser->emisor_id === (int)$companyId);
+        
+        if (!$isAdmin && !$isCreator && !$isAssignedEmissor) {
+            return response()->json([
+                'message' => 'No tienes permisos para crear establecimientos en este emisor'
+            ], 403);
+        }
+        
         // Basic validation
         $rules = [
             'codigo' => ['required','string','max:100'],
@@ -94,7 +125,43 @@ class EstablecimientoController extends Controller
 
     public function show($companyId, $id)
     {
-        $est = Establecimiento::where('company_id', $companyId)->with(['creator:id,name', 'updater:id,name', 'puntos_emision'])->findOrFail($id);
+        $currentUser = auth()->user();
+        $company = Company::findOrFail($companyId);
+
+        $isAdmin = $currentUser->role === UserRole::ADMINISTRADOR;
+        $isCreator = $company->created_by === $currentUser->id;
+        $isAssignedEmissor = ($currentUser->role === UserRole::EMISOR && $currentUser->emisor_id === (int) $companyId);
+        $isAssignedGerente = ($currentUser->role === UserRole::GERENTE && $currentUser->emisor_id === (int) $companyId);
+        $isAssignedCajero = ($currentUser->role === UserRole::CAJERO && $currentUser->emisor_id === (int) $companyId);
+
+        if (!$isAdmin && !$isCreator && !$isAssignedEmissor && !$isAssignedGerente && !$isAssignedCajero) {
+            return response()->json([
+                'message' => 'No tienes permisos para ver este establecimiento'
+            ], 403);
+        }
+
+        $est = Establecimiento::where('company_id', $companyId)
+            ->with(['creator:id,name', 'updater:id,name', 'puntos_emision'])
+            ->findOrFail($id);
+
+        if ($currentUser->role === UserRole::GERENTE || $currentUser->role === UserRole::CAJERO) {
+            $establecimientosIds = $this->normalizeIds($currentUser->establecimientos_ids);
+            if (!empty($establecimientosIds) && !$this->idInArray($est->id, $establecimientosIds)) {
+                return response()->json([
+                    'message' => 'No tienes permisos para ver este establecimiento'
+                ], 403);
+            }
+
+            $puntosAsignados = $this->normalizeIds($currentUser->puntos_emision_ids);
+            if (!empty($puntosAsignados)) {
+                $filteredPuntos = $est->puntos_emision
+                    ->filter(function ($punto) use ($puntosAsignados) {
+                        return $this->idInArray($punto->id, $puntosAsignados);
+                    })
+                    ->values();
+                $est->setRelation('puntos_emision', $filteredPuntos);
+            }
+        }
         
         // Similar al emisor, verificar si el código puede ser editado
         // (Si hay comprobantes autorizados asociados al establecimiento, no se puede editar el código)
@@ -122,8 +189,60 @@ class EstablecimientoController extends Controller
         return response()->json(['data' => $payload]);
     }
 
+    private function normalizeIds($value): array
+    {
+        if (is_array($value)) {
+            return $value;
+        }
+
+        if (is_string($value)) {
+            $decoded = json_decode($value, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                return $decoded;
+            }
+        }
+
+        if (is_numeric($value)) {
+            return [(int) $value];
+        }
+
+        return [];
+    }
+
+    private function idInArray($id, array $ids): bool
+    {
+        if (in_array($id, $ids, true)) {
+            return true;
+        }
+
+        if (in_array((string) $id, $ids, true)) {
+            return true;
+        }
+
+        if (in_array((int) $id, array_map('intval', $ids), true)) {
+            return true;
+        }
+
+        return false;
+    }
+
     public function update(Request $request, $companyId, $id)
     {
+        // Validar permisos: admin, creador, emisor asignado o gerente asignado pueden editar (Cajero NO)
+        $currentUser = auth()->user();
+        $company = Company::findOrFail($companyId);
+        
+        $isAdmin = $currentUser->role === UserRole::ADMINISTRADOR;
+        $isCreator = $company->created_by === $currentUser->id;
+        $isAssignedEmissor = ($currentUser->role === UserRole::EMISOR && $currentUser->emisor_id === (int)$companyId);
+        $isAssignedGerente = ($currentUser->role === UserRole::GERENTE && $currentUser->emisor_id === (int)$companyId);
+        
+        if (!$isAdmin && !$isCreator && !$isAssignedEmissor && !$isAssignedGerente) {
+            return response()->json([
+                'message' => 'No tienes permisos para editar establecimientos en este emisor'
+            ], 403);
+        }
+        
         $est = Establecimiento::where('company_id', $companyId)->findOrFail($id);
 
         Log::info('=== ESTABLECIMIENTO UPDATE REQUEST ===', [
@@ -201,6 +320,21 @@ class EstablecimientoController extends Controller
     // Permanent delete of a establecimiento if it has no history (comprobantes)
     public function destroy(Request $request, $companyId, $id)
     {
+        // Validar permisos: admin, creador, emisor asignado o gerente asignado pueden eliminar (Cajero NO)
+        $currentUser = auth()->user();
+        $company = Company::findOrFail($companyId);
+        
+        $isAdmin = $currentUser->role === UserRole::ADMINISTRADOR;
+        $isCreator = $company->created_by === $currentUser->id;
+        $isAssignedEmissor = ($currentUser->role === UserRole::EMISOR && $currentUser->emisor_id === (int)$companyId);
+        $isAssignedGerente = ($currentUser->role === UserRole::GERENTE && $currentUser->emisor_id === (int)$companyId);
+        
+        if (!$isAdmin && !$isCreator && !$isAssignedEmissor && !$isAssignedGerente) {
+            return response()->json([
+                'message' => 'No tienes permisos para eliminar establecimientos en este emisor'
+            ], 403);
+        }
+        
         $est = Establecimiento::where('company_id', $companyId)->findOrFail($id);
 
         // Check for related records that would block deletion
