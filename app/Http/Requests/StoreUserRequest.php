@@ -68,15 +68,16 @@ class StoreUserRequest extends FormRequest
                 'max:255',
                 'unique:users,email' // Email único en la tabla users
             ],
+            // Password es opcional - si no se proporciona, se genera automáticamente
             'password' => [
-                'required',
+                'nullable',
                 'string',
                 'min:8',
                 'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/', // Al menos 1 mayúscula, 1 minúscula, 1 número, 1 carácter especial
                 'confirmed' // Debe coincidir con password_confirmation
             ],
             'password_confirmation' => [
-                'required',
+                'nullable',
                 'string'
             ],
             'role' => [
@@ -130,7 +131,6 @@ class StoreUserRequest extends FormRequest
             'email.email' => 'El email no es válido',
             'email.unique' => 'El email ya está registrado',
             
-            'password.required' => 'La contraseña es obligatoria',
             'password.min' => 'La contraseña debe tener al menos 8 caracteres',
             'password.regex' => 'La contraseña debe contener mayúscula, minúscula, número y carácter especial (@$!%*?&)',
             'password.confirmed' => 'Las contraseñas no coinciden',

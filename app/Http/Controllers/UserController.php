@@ -13,6 +13,10 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Str;
+use App\Mail\EmailVerificationMail;
+use App\Mail\PasswordChangeMail;
 
 class UserController extends Controller
 {
@@ -190,6 +194,9 @@ class UserController extends Controller
                 ], Response::HTTP_CONFLICT);
             }
 
+            // Generar contraseña temporal si no se proporciona
+            $password = $validated['password'] ?? $this->generateTemporaryPassword();
+
             // Determinar la relación según el rol a crear
             $roleACrear = UserRole::from($validated['role']);
             $distribuidor_id = null;
@@ -220,7 +227,7 @@ class UserController extends Controller
                 'apellidos' => $validated['apellidos'],
                 'username' => $validated['username'],
                 'email' => $validated['email'],
-                'password' => Hash::make($validated['password']),
+                'password' => Hash::make($password),
                 'role' => $roleACrear->value, // Usar el valor del Enum
                 'created_by_id' => $currentUser->id,
                 'distribuidor_id' => $distribuidor_id,
@@ -243,6 +250,20 @@ class UserController extends Controller
                 'created_by_id' => $currentUser->id,
                 'rol_creador' => $currentUser->role->value
             ]);
+
+            // Enviar correo de verificación si el usuario no es admin@factura.local
+            if ($user->email !== 'admin@factura.local' && $user->estado === 'nuevo') {
+                try {
+                    $this->sendVerificationEmail($user);
+                    Log::info('Correo de verificación enviado', ['usuario_id' => $user->id, 'email' => $user->email]);
+                } catch (\Exception $emailError) {
+                    Log::error('Error enviando correo de verificación', [
+                        'usuario_id' => $user->id,
+                        'error' => $emailError->getMessage()
+                    ]);
+                    // No fallar la creación del usuario si falla el email
+                }
+            }
 
             return response()->json([
                 'message' => 'Usuario creado exitosamente',
@@ -662,6 +683,9 @@ class UserController extends Controller
 
             DB::beginTransaction();
 
+            // Generar contraseña temporal si no se proporciona
+            $password = $request->input('password') ?? $this->generateTemporaryPassword();
+
             // Crear usuario con datos del emisor
             $user = User::create([
                 'cedula' => $request->input('cedula'),
@@ -669,9 +693,9 @@ class UserController extends Controller
                 'apellidos' => $request->input('apellidos'),
                 'username' => $request->input('username'),
                 'email' => $request->input('email'),
-                'password' => Hash::make($request->input('password')),
+                'password' => Hash::make($password),
                 'role' => UserRole::from($request->input('role')),
-                'estado' => 'activo',
+                'estado' => ($request->input('email') ?? '') === 'admin@factura.local' ? 'activo' : 'nuevo',
                 'created_by_id' => $currentUser->id,
                 'emisor_id' => $id,
                 'establecimientos_ids' => json_encode($request->input('establecimientos_ids', [])),
@@ -697,6 +721,20 @@ class UserController extends Controller
                 'establecimientos' => $request->input('establecimientos_ids', []),
                 'puntos_emision' => $request->input('puntos_emision_ids', [])
             ]);
+
+            // Enviar correo de verificación si el usuario no es admin@factura.local
+            if ($user->email !== 'admin@factura.local' && $user->estado === 'nuevo') {
+                try {
+                    $this->sendVerificationEmail($user);
+                    Log::info('Correo de verificación enviado', ['usuario_id' => $user->id, 'email' => $user->email]);
+                } catch (\Exception $emailError) {
+                    Log::error('Error enviando correo de verificación', [
+                        'usuario_id' => $user->id,
+                        'error' => $emailError->getMessage()
+                    ]);
+                    // No fallar la creación del usuario si falla el email
+                }
+            }
 
             return response()->json([
                 'message' => 'Usuario creado exitosamente',
@@ -975,5 +1013,232 @@ class UserController extends Controller
                 'message' => 'Error al eliminar usuario'
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * Verificar email del usuario con token
+     */
+    public function verifyEmail(Request $request)
+    {
+        try {
+            $request->validate([
+                'token' => 'required|string'
+            ]);
+
+            $token = DB::table('user_verification_tokens')
+                ->where('token', $request->token)
+                ->where('type', 'email_verification')
+                ->where('used', false)
+                ->where('expires_at', '>', now())
+                ->first();
+
+            if (!$token) {
+                return response()->json([
+                    'message' => 'Token inválido o expirado'
+                ], Response::HTTP_BAD_REQUEST);
+            }
+
+            $user = User::find($token->user_id);
+            
+            if (!$user) {
+                return response()->json([
+                    'message' => 'Usuario no encontrado'
+                ], Response::HTTP_NOT_FOUND);
+            }
+
+            DB::beginTransaction();
+
+            // Marcar token como usado
+            DB::table('user_verification_tokens')
+                ->where('id', $token->id)
+                ->update([
+                    'used' => true,
+                    'used_at' => now()
+                ]);
+
+            // Actualizar estado del usuario a activo
+            $user->estado = 'activo';
+            $user->email_verified_at = now();
+            $user->save();
+
+            DB::commit();
+
+            Log::info('Email verificado', [
+                'usuario_id' => $user->id,
+                'email' => $user->email
+            ]);
+
+            // Enviar correo para cambio de contraseña
+            try {
+                $this->sendPasswordChangeEmail($user);
+                Log::info('Correo de cambio de contraseña enviado', ['usuario_id' => $user->id]);
+            } catch (\Exception $emailError) {
+                Log::error('Error enviando correo de cambio de contraseña', [
+                    'usuario_id' => $user->id,
+                    'error' => $emailError->getMessage()
+                ]);
+            }
+
+            return response()->json([
+                'message' => 'Email verificado exitosamente. Revisa tu correo para establecer tu contraseña.',
+                'data' => [
+                    'email' => $user->email,
+                    'estado' => $user->estado
+                ]
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Error verificando email', [
+                'error' => $e->getMessage()
+            ]);
+            return response()->json([
+                'message' => 'Error al verificar email'
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Cambiar contraseña inicial con token
+     */
+    public function changeInitialPassword(Request $request)
+    {
+        try {
+            $request->validate([
+                'token' => 'required|string',
+                'password' => 'required|string|min:8|confirmed'
+            ]);
+
+            $token = DB::table('user_verification_tokens')
+                ->where('token', $request->token)
+                ->where('type', 'password_change')
+                ->where('used', false)
+                ->where('expires_at', '>', now())
+                ->first();
+
+            if (!$token) {
+                return response()->json([
+                    'message' => 'Token inválido o expirado'
+                ], Response::HTTP_BAD_REQUEST);
+            }
+
+            $user = User::find($token->user_id);
+            
+            if (!$user) {
+                return response()->json([
+                    'message' => 'Usuario no encontrado'
+                ], Response::HTTP_NOT_FOUND);
+            }
+
+            DB::beginTransaction();
+
+            // Marcar token como usado
+            DB::table('user_verification_tokens')
+                ->where('id', $token->id)
+                ->update([
+                    'used' => true,
+                    'used_at' => now()
+                ]);
+
+            // Actualizar contraseña
+            $user->password = Hash::make($request->password);
+            $user->save();
+
+            DB::commit();
+
+            Log::info('Contraseña inicial establecida', [
+                'usuario_id' => $user->id,
+                'email' => $user->email
+            ]);
+
+            return response()->json([
+                'message' => 'Contraseña establecida exitosamente. Ya puedes iniciar sesión.',
+                'data' => [
+                    'email' => $user->email,
+                    'username' => $user->username
+                ]
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Error cambiando contraseña inicial', [
+                'error' => $e->getMessage()
+            ]);
+            return response()->json([
+                'message' => 'Error al establecer contraseña'
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Helper: Enviar email de verificación
+     */
+    private function sendVerificationEmail(User $user)
+    {
+        // Crear token de verificación
+        $token = Str::random(60);
+        
+        DB::table('user_verification_tokens')->insert([
+            'user_id' => $user->id,
+            'token' => $token,
+            'type' => 'email_verification',
+            'expires_at' => now()->addHours(24),
+            'created_at' => now(),
+            'updated_at' => now()
+        ]);
+
+        // URL del frontend para verificación
+        $url = config('app.frontend_url', 'http://localhost:3000') . '/verify-email?token=' . $token;
+
+        Mail::to($user->email)->send(new EmailVerificationMail($url, $user));
+    }
+
+    /**
+     * Helper: Enviar email de cambio de contraseña
+     */
+    private function sendPasswordChangeEmail(User $user)
+    {
+        // Crear token para cambio de contraseña
+        $token = Str::random(60);
+        
+        DB::table('user_verification_tokens')->insert([
+            'user_id' => $user->id,
+            'token' => $token,
+            'type' => 'password_change',
+            'expires_at' => now()->addHours(48),
+            'created_at' => now(),
+            'updated_at' => now()
+        ]);
+
+        // URL del frontend para cambio de contraseña
+        $url = config('app.frontend_url', 'http://localhost:3000') . '/change-password?token=' . $token;
+
+        Mail::to($user->email)->send(new PasswordChangeMail($url, $user));
+    }
+
+    /**
+     * Helper: Generar contraseña temporal segura
+     * Genera una contraseña aleatoria que cumple con todos los requisitos
+     */
+    private function generateTemporaryPassword(): string
+    {
+        $uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        $lowercase = 'abcdefghijklmnopqrstuvwxyz';
+        $numbers = '0123456789';
+        $special = '@$!%*?&';
+        
+        // Asegurar al menos un carácter de cada tipo
+        $password = '';
+        $password .= $uppercase[random_int(0, strlen($uppercase) - 1)];
+        $password .= $lowercase[random_int(0, strlen($lowercase) - 1)];
+        $password .= $numbers[random_int(0, strlen($numbers) - 1)];
+        $password .= $special[random_int(0, strlen($special) - 1)];
+        
+        // Completar hasta 12 caracteres con caracteres aleatorios
+        $allChars = $uppercase . $lowercase . $numbers . $special;
+        for ($i = 0; $i < 8; $i++) {
+            $password .= $allChars[random_int(0, strlen($allChars) - 1)];
+        }
+        
+        // Mezclar los caracteres
+        return str_shuffle($password);
     }
 }

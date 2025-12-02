@@ -14,6 +14,10 @@ Route::post('/login', [AuthController::class, 'login']);
 Route::post('/password-recovery', [AuthController::class, 'passwordRecovery']);
 Route::post('/password-reset', [AuthController::class, 'resetPassword']);
 
+// Rutas públicas para verificación de email y cambio de contraseña inicial
+Route::post('/verify-email', [UserController::class, 'verifyEmail']);
+Route::post('/change-initial-password', [UserController::class, 'changeInitialPassword']);
+
 Route::middleware('auth:sanctum')->group(function () {
     //rutas para cierre de sesión y cambiar clave
     Route::post('/logout', [AuthController::class, 'logout']);
