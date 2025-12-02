@@ -98,6 +98,18 @@ class UserController extends Controller
             // Obtener datos paginados
             $users = $query->paginate($perPage, ['*'], 'page', $page);
 
+            // Cargar información del creador para cada usuario
+            $users->load('creador:id,nombres,apellidos');
+            
+            // Agregar nombre del creador a cada usuario
+            $users->getCollection()->each(function ($user) {
+                if ($user->creador) {
+                    $user->created_by_name = trim($user->creador->nombres . ' ' . $user->creador->apellidos);
+                } else {
+                    $user->created_by_name = 'Sistema';
+                }
+            });
+
             Log::info('Usuarios listados', [
                 'usuario_id' => $currentUser->id,
                 'rol_usuario' => $currentUser->role->value,
@@ -158,6 +170,16 @@ class UserController extends Controller
                     'rol_solicitante' => $currentUser->role->value
                 ]);
                 return response()->json(['message' => 'No tienes permiso para ver este usuario'], Response::HTTP_FORBIDDEN);
+            }
+
+            // Cargar el usuario que creó este registro
+            $user->load('creador:id,nombres,apellidos');
+            
+            // Agregar nombre del creador al objeto
+            if ($user->creador) {
+                $user->created_by_name = trim($user->creador->nombres . ' ' . $user->creador->apellidos);
+            } else {
+                $user->created_by_name = 'Sistema';
             }
 
             Log::info('Usuario consultado', [
@@ -1240,5 +1262,65 @@ class UserController extends Controller
         
         // Mezclar los caracteres
         return str_shuffle($password);
+    }
+
+    /**
+     * Verificar si un nombre de usuario ya existe
+     */
+    public function checkUsername(Request $request)
+    {
+        $username = trim($request->input('username', ''));
+        
+        if (empty($username) || strlen($username) < 3) {
+            return response()->json(['available' => false], 400);
+        }
+
+        $exists = User::where('username', $username)->exists();
+        
+        if ($exists) {
+            return response()->json(['available' => false, 'message' => 'Username ya existe'], 200);
+        }
+
+        return response()->json(['available' => true], 404);
+    }
+
+    /**
+     * Verificar si una cédula ya existe
+     */
+    public function checkCedula(Request $request)
+    {
+        $cedula = trim($request->input('cedula', ''));
+        
+        if (empty($cedula) || strlen($cedula) !== 10) {
+            return response()->json(['available' => false], 400);
+        }
+
+        $exists = User::where('cedula', $cedula)->exists();
+        
+        if ($exists) {
+            return response()->json(['available' => false, 'message' => 'Cédula ya existe'], 200);
+        }
+
+        return response()->json(['available' => true], 404);
+    }
+
+    /**
+     * Verificar si un email ya existe
+     */
+    public function checkEmail(Request $request)
+    {
+        $email = trim($request->input('email', ''));
+        
+        if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return response()->json(['available' => false], 400);
+        }
+
+        $exists = User::where('email', $email)->exists();
+        
+        if ($exists) {
+            return response()->json(['available' => false, 'message' => 'Email ya existe'], 200);
+        }
+
+        return response()->json(['available' => true], 404);
     }
 }

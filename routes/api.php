@@ -18,6 +18,11 @@ Route::post('/password-reset', [AuthController::class, 'resetPassword']);
 Route::post('/verify-email', [UserController::class, 'verifyEmail']);
 Route::post('/change-initial-password', [UserController::class, 'changeInitialPassword']);
 
+// Rutas públicas para verificar disponibilidad de usuario, cédula y email
+Route::get('/usuarios/check/username', [UserController::class, 'checkUsername']);
+Route::get('/usuarios/check/cedula', [UserController::class, 'checkCedula']);
+Route::get('/usuarios/check/email', [UserController::class, 'checkEmail']);
+
 Route::middleware('auth:sanctum')->group(function () {
     //rutas para cierre de sesión y cambiar clave
     Route::post('/logout', [AuthController::class, 'logout']);
