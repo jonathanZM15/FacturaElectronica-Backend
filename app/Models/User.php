@@ -167,7 +167,7 @@ class User extends Authenticatable
     public static function getTransicionesPermitidas(): array
     {
         return [
-            'nuevo' => ['activo'],
+            'nuevo' => ['activo', 'pendiente_verificacion'],
             'activo' => ['suspendido', 'pendiente_verificacion', 'retirado'],
             'pendiente_verificacion' => ['activo', 'suspendido'],
             'suspendido' => ['activo', 'retirado'],
@@ -213,7 +213,7 @@ class User extends Authenticatable
     {
         $mensajes = [
             'nuevo' => [
-                'default' => 'Un usuario nuevo solo puede pasar a estado Activo al verificar su correo electrónico',
+                'default' => 'Un usuario nuevo solo puede pasar a estado Activo o Pendiente de Verificación',
             ],
             'activo' => [
                 'nuevo' => 'Un usuario activo no puede volver al estado Nuevo',
