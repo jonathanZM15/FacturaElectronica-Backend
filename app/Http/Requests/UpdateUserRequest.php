@@ -97,7 +97,13 @@ class UpdateUserRequest extends FormRequest
             'estado' => [
                 'sometimes',
                 'string',
-                'in:nuevo,activo,pendiente_verificacion,suspendido,retirado'
+                'in:nuevo,activo,pendiente_verificacion,suspendido,retirado',
+                function ($attribute, $value, $fail) use ($userId) {
+                    $user = User::find($userId);
+                    if ($user && !$user->puedeTransicionarA($value)) {
+                        $fail($user->getMensajeTransicionInvalida($value));
+                    }
+                }
             ],
             'distribuidor_id' => [
                 'sometimes',

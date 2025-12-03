@@ -33,6 +33,11 @@ class User extends Authenticatable
         'emisor_id',
         'establecimientos_ids',
         'puntos_emision_ids',
+        'failed_login_attempts',
+        'locked_until',
+        'last_login_at',
+        'last_login_ip',
+        'last_user_agent',
     ];
 
     /**
@@ -60,6 +65,8 @@ class User extends Authenticatable
         'password' => 'hashed',
         'role' => UserRole::class,
         'establecimientos_ids' => 'json',
+        'locked_until' => 'datetime',
+        'last_login_at' => 'datetime',
     ];
 
     // ==================== Relaciones ====================
@@ -153,5 +160,89 @@ class User extends Authenticatable
     {
         return $this->estado === 'activo';
     }
+
+    /**
+     * Obtiene las transiciones de estado permitidas
+     */
+    public static function getTransicionesPermitidas(): array
+    {
+        return [
+            'nuevo' => ['activo'],
+            'activo' => ['suspendido', 'pendiente_verificacion', 'retirado'],
+            'pendiente_verificacion' => ['activo', 'suspendido'],
+            'suspendido' => ['activo', 'retirado'],
+            'retirado' => ['pendiente_verificacion'],
+        ];
+    }
+
+    /**
+     * Verifica si una transición de estado es válida
+     * 
+     * @param string $estadoDestino El estado al que se quiere cambiar
+     * @return bool
+     */
+    public function puedeTransicionarA(string $estadoDestino): bool
+    {
+        // admin@factura.local siempre debe ser activo
+        if ($this->email === 'admin@factura.local' && $estadoDestino !== 'activo') {
+            return false;
+        }
+
+        // Si es el mismo estado, no hay transición
+        if ($this->estado === $estadoDestino) {
+            return true;
+        }
+
+        $transiciones = self::getTransicionesPermitidas();
+        
+        // Verificar si existe la transición
+        if (!isset($transiciones[$this->estado])) {
+            return false;
+        }
+
+        return in_array($estadoDestino, $transiciones[$this->estado]);
+    }
+
+    /**
+     * Obtiene el mensaje de error para transición inválida
+     * 
+     * @param string $estadoDestino
+     * @return string
+     */
+    public function getMensajeTransicionInvalida(string $estadoDestino): string
+    {
+        $mensajes = [
+            'nuevo' => [
+                'default' => 'Un usuario nuevo solo puede pasar a estado Activo al verificar su correo electrónico',
+            ],
+            'activo' => [
+                'nuevo' => 'Un usuario activo no puede volver al estado Nuevo',
+                'default' => 'Un usuario activo solo puede pasar a: Suspendido, Pendiente de verificación o Retirado',
+            ],
+            'pendiente_verificacion' => [
+                'nuevo' => 'No se puede cambiar a estado Nuevo desde Pendiente de verificación',
+                'retirado' => 'No se puede retirar un usuario que está pendiente de verificación. Primero suspéndelo',
+                'default' => 'Un usuario pendiente de verificación solo puede pasar a: Activo o Suspendido',
+            ],
+            'suspendido' => [
+                'nuevo' => 'No se puede cambiar a estado Nuevo desde Suspendido',
+                'pendiente_verificacion' => 'No se puede cambiar a Pendiente de verificación desde Suspendido. Primero reactívalo',
+                'default' => 'Un usuario suspendido solo puede pasar a: Activo o Retirado',
+            ],
+            'retirado' => [
+                'nuevo' => 'No se puede cambiar a estado Nuevo desde Retirado',
+                'activo' => 'No se puede activar directamente un usuario retirado. Primero debe pasar a Pendiente de verificación',
+                'suspendido' => 'No se puede suspender un usuario retirado',
+                'default' => 'Un usuario retirado solo puede pasar a: Pendiente de verificación (para reactivación)',
+            ],
+        ];
+
+        if (isset($mensajes[$this->estado][$estadoDestino])) {
+            return $mensajes[$this->estado][$estadoDestino];
+        }
+
+        return $mensajes[$this->estado]['default'] ?? 'Transición de estado no permitida';
+    }
 }
+
 

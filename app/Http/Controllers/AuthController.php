@@ -3,17 +3,20 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Models\LoginAttempt;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Facades\Log; // Importar Facade de Log
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use App\Mail\PasswordRecoveryMail;
+use App\Mail\SuspiciousLoginMail;
 use Illuminate\Auth\Events\PasswordReset;
+use Jenssegers\Agent\Agent;
 
 class AuthController extends Controller
 {
@@ -57,40 +60,246 @@ class AuthController extends Controller
 
         $identifier = $data['email']; 
         $password = $data['password'];
+        $ipAddress = $request->ip();
+        $userAgent = $request->header('User-Agent');
         
-        Log::info('Login Attempt', ['identifier' => $identifier]);
+        // Parsear información del dispositivo
+        $agent = new Agent();
+        $agent->setUserAgent($userAgent);
+        $deviceType = $agent->isMobile() ? 'mobile' : ($agent->isTablet() ? 'tablet' : 'desktop');
+        $browser = $agent->browser();
+        $platform = $agent->platform();
+        $deviceInfo = "{$browser} en {$platform} ({$deviceType})";
         
+        Log::info('Login Attempt', ['identifier' => $identifier, 'ip' => $ipAddress]);
         
+        // Buscar usuario por email O username
         $user = User::where(function ($query) use ($identifier) {
-            // Opción 1: Email (búsqueda normal)
-            $query->where('email', $identifier);
-  
-            $query->orWhere(DB::raw('LOWER(name)'), '=', strtolower($identifier));
+            $query->where('email', $identifier)
+                  ->orWhere('username', $identifier);
         })->first();
 
+        // Registrar intento fallido si no se encuentra el usuario
+        if (!$user) {
+            LoginAttempt::create([
+                'user_id' => null,
+                'identifier' => $identifier,
+                'ip_address' => $ipAddress,
+                'user_agent' => $userAgent,
+                'device_type' => $deviceType,
+                'browser' => $browser,
+                'platform' => $platform,
+                'success' => false,
+                'failure_reason' => 'Usuario no encontrado',
+                'attempted_at' => now(),
+            ]);
 
-        if ($user) {
-            Log::info('User Found', ['user_id' => $user->id, 'email' => $user->email, 'name' => $user->name]);
-        } else {
-            Log::warning('User Not Found', ['identifier' => $identifier]);
+            Log::warning('User Not Found', ['identifier' => $identifier, 'ip' => $ipAddress]);
+            return response()->json(['message' => 'Credenciales inválidas'], Response::HTTP_UNAUTHORIZED);
         }
 
-        if (! $user) {
-             Log::error('Authentication Failed: User not found.', ['identifier' => $identifier]);
-             return response()->json(['message' => 'Credenciales invalidas'], Response::HTTP_UNAUTHORIZED);
+        // Verificar si la cuenta está bloqueada
+        if ($user->locked_until && now()->lt($user->locked_until)) {
+            $minutesRemaining = now()->diffInMinutes($user->locked_until);
+            
+            LoginAttempt::create([
+                'user_id' => $user->id,
+                'identifier' => $identifier,
+                'ip_address' => $ipAddress,
+                'user_agent' => $userAgent,
+                'device_type' => $deviceType,
+                'browser' => $browser,
+                'platform' => $platform,
+                'success' => false,
+                'failure_reason' => 'Cuenta bloqueada',
+                'attempted_at' => now(),
+            ]);
+
+            Log::warning('Account Locked', [
+                'user_id' => $user->id,
+                'locked_until' => $user->locked_until,
+                'ip' => $ipAddress
+            ]);
+
+            return response()->json([
+                'message' => "Cuenta bloqueada. Intenta de nuevo en {$minutesRemaining} minutos."
+            ], Response::HTTP_FORBIDDEN);
         }
-        
-        if (! Hash::check($password, $user->password)) {
-            Log::error('Authentication Failed: Invalid password.', ['user_id' => $user->id, 'identifier' => $identifier]);
-            return response()->json(['message' => 'Credenciales invalidas'], Response::HTTP_UNAUTHORIZED);
+
+        // Desbloquear automáticamente si el tiempo ya pasó
+        if ($user->locked_until && now()->gte($user->locked_until)) {
+            $user->locked_until = null;
+            $user->failed_login_attempts = 0;
+            $user->save();
+            Log::info('Account Auto-Unlocked', ['user_id' => $user->id]);
         }
+
+        // Validar estado del usuario (solo "activo" puede hacer login)
+        if ($user->estado !== 'activo') {
+            LoginAttempt::create([
+                'user_id' => $user->id,
+                'identifier' => $identifier,
+                'ip_address' => $ipAddress,
+                'user_agent' => $userAgent,
+                'device_type' => $deviceType,
+                'browser' => $browser,
+                'platform' => $platform,
+                'success' => false,
+                'failure_reason' => "Estado: {$user->estado}",
+                'attempted_at' => now(),
+            ]);
+
+            $mensajes = [
+                'nuevo' => 'Debes verificar tu correo electrónico antes de iniciar sesión.',
+                'pendiente_verificacion' => 'Tu cuenta está pendiente de verificación.',
+                'suspendido' => 'Tu cuenta ha sido suspendida. Contacta al administrador.',
+                'retirado' => 'Tu cuenta ha sido dada de baja.',
+            ];
+
+            $mensaje = $mensajes[$user->estado] ?? 'Tu cuenta no está activa.';
+
+            Log::warning('Login Denied - Account Not Active', [
+                'user_id' => $user->id,
+                'estado' => $user->estado,
+                'ip' => $ipAddress
+            ]);
+
+            return response()->json(['message' => $mensaje], Response::HTTP_FORBIDDEN);
+        }
+
+        // Verificar contraseña
+        if (!Hash::check($password, $user->password)) {
+            // Incrementar intentos fallidos
+            $user->failed_login_attempts = ($user->failed_login_attempts ?? 0) + 1;
+            
+            // Bloquear cuenta después de 5 intentos
+            if ($user->failed_login_attempts >= 5) {
+                $user->locked_until = now()->addMinutes(10);
+                $user->save();
+
+                LoginAttempt::create([
+                    'user_id' => $user->id,
+                    'identifier' => $identifier,
+                    'ip_address' => $ipAddress,
+                    'user_agent' => $userAgent,
+                    'device_type' => $deviceType,
+                    'browser' => $browser,
+                    'platform' => $platform,
+                    'success' => false,
+                    'failure_reason' => 'Contraseña incorrecta - Cuenta bloqueada',
+                    'attempted_at' => now(),
+                ]);
+
+                Log::error('Account Locked After 5 Failed Attempts', [
+                    'user_id' => $user->id,
+                    'ip' => $ipAddress
+                ]);
+
+                // Enviar email de alerta
+                try {
+                    Mail::to($user->email)->send(new SuspiciousLoginMail(
+                        $user,
+                        $ipAddress,
+                        $user->failed_login_attempts,
+                        $deviceInfo,
+                        now()->format('d/m/Y H:i:s')
+                    ));
+                    Log::info('Suspicious login email sent', ['user_id' => $user->id]);
+                } catch (\Exception $e) {
+                    Log::error('Failed to send suspicious login email', [
+                        'user_id' => $user->id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+
+                return response()->json([
+                    'message' => 'Demasiados intentos fallidos. Tu cuenta ha sido bloqueada por 10 minutos. Se ha enviado una notificación a tu correo.'
+                ], Response::HTTP_FORBIDDEN);
+            }
+
+            $user->save();
+
+            LoginAttempt::create([
+                'user_id' => $user->id,
+                'identifier' => $identifier,
+                'ip_address' => $ipAddress,
+                'user_agent' => $userAgent,
+                'device_type' => $deviceType,
+                'browser' => $browser,
+                'platform' => $platform,
+                'success' => false,
+                'failure_reason' => 'Contraseña incorrecta',
+                'attempted_at' => now(),
+            ]);
+
+            // Enviar email de alerta si ya hay 5 intentos (antes de bloquear)
+            if ($user->failed_login_attempts === 5) {
+                try {
+                    Mail::to($user->email)->send(new SuspiciousLoginMail(
+                        $user,
+                        $ipAddress,
+                        $user->failed_login_attempts,
+                        $deviceInfo,
+                        now()->format('d/m/Y H:i:s')
+                    ));
+                    Log::info('Warning email sent after 5 failed attempts', ['user_id' => $user->id]);
+                } catch (\Exception $e) {
+                    Log::error('Failed to send warning email', [
+                        'user_id' => $user->id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+
+            $intentosRestantes = 5 - $user->failed_login_attempts;
+
+            Log::error('Authentication Failed: Invalid password', [
+                'user_id' => $user->id,
+                'identifier' => $identifier,
+                'attempts' => $user->failed_login_attempts,
+                'ip' => $ipAddress
+            ]);
+
+            return response()->json([
+                'message' => $intentosRestantes > 0 
+                    ? "Credenciales inválidas. Te quedan {$intentosRestantes} intentos antes del bloqueo"
+                    : 'Credenciales inválidas',
+                'intentos_restantes' => $intentosRestantes > 0 ? $intentosRestantes : 0
+            ], Response::HTTP_UNAUTHORIZED);
+        }
+
+        // Login exitoso - Resetear intentos fallidos
+        $user->failed_login_attempts = 0;
+        $user->locked_until = null;
+        $user->last_login_at = now();
+        $user->last_login_ip = $ipAddress;
+        $user->last_user_agent = $userAgent;
+        $user->save();
+
+        // Registrar intento exitoso
+        LoginAttempt::create([
+            'user_id' => $user->id,
+            'identifier' => $identifier,
+            'ip_address' => $ipAddress,
+            'user_agent' => $userAgent,
+            'device_type' => $deviceType,
+            'browser' => $browser,
+            'platform' => $platform,
+            'success' => true,
+            'failure_reason' => null,
+            'attempted_at' => now(),
+        ]);
 
         // Revoke previous tokens (optional)
         $user->tokens()->delete();
 
         $token = $user->createToken('default')->plainTextToken;
         
-        Log::info('Login Success', ['user_id' => $user->id]);
+        Log::info('Login Success', [
+            'user_id' => $user->id,
+            'ip' => $ipAddress,
+            'device' => $deviceInfo
+        ]);
 
         return response()->json(['user' => $user, 'token' => $token]);
     }
