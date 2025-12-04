@@ -36,6 +36,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/usuarios/{usuario}', [UserController::class, 'show']);
         Route::put('/usuarios/{usuario}', [UserController::class, 'update']);
         Route::delete('/usuarios/{usuario}', [UserController::class, 'destroy']);
+        Route::post('/usuarios/{usuario}/resend-verification', [UserController::class, 'resendVerificationEmail']);
     });
 
     //Rutas para el emisor
@@ -72,6 +73,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/emisores/{id}/usuarios/{usuario}', [UserController::class, 'showByEmisor']);
     Route::put('/emisores/{id}/usuarios/{usuario}', [UserController::class, 'updateByEmisor']);
     Route::delete('/emisores/{id}/usuarios/{usuario}', [UserController::class, 'destroyByEmisor']);
+    Route::post('/emisores/{id}/usuarios/{usuario}/resend-verification', [UserController::class, 'resendVerificationEmailByEmisor']);
 });
 
 

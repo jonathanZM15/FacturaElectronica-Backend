@@ -1323,4 +1323,162 @@ class UserController extends Controller
 
         return response()->json(['available' => true], 404);
     }
+
+    /**
+     * Reenviar correo de verificación y actualizar estado si es necesario
+     * - nuevo: reenvía verificación, mantiene estado 'nuevo'
+     * - suspendido/retirado: envía correo de reactivación, cambia a 'pendiente_verificacion'
+     */
+    public function resendVerificationEmail(Request $request, string $id)
+    {
+        try {
+            /** @var User|null $currentUser */
+            $currentUser = Auth::user();
+            $user = User::find($id);
+
+            if (!$user) {
+                return response()->json(['message' => 'Usuario no encontrado'], Response::HTTP_NOT_FOUND);
+            }
+
+            // Validar que puede gestionar este usuario
+            if (!PermissionService::puedeGestionarUsuario($currentUser, $user)) {
+                return response()->json(['message' => 'No tienes permiso para gestionar este usuario'], Response::HTTP_FORBIDDEN);
+            }
+
+            // Verificar que el estado es válido para reenvío
+            if (!in_array($user->estado, ['nuevo', 'suspendido', 'retirado'])) {
+                return response()->json([
+                    'message' => 'El correo de verificación solo puede reenviarse a usuarios con estado: nuevo, suspendido o retirado'
+                ], Response::HTTP_BAD_REQUEST);
+            }
+
+            $estadoAnterior = $user->estado;
+            $nuevoEstado = $request->input('estado', $user->estado);
+
+            // Lógica de cambio de estado
+            if (in_array($estadoAnterior, ['suspendido', 'retirado'])) {
+                // Cambiar a pendiente_verificacion para reactivación
+                $user->estado = 'pendiente_verificacion';
+                $user->save();
+
+                Log::info('Usuario cambiado a pendiente_verificacion para reactivación', [
+                    'usuario_id' => $user->id,
+                    'estado_anterior' => $estadoAnterior,
+                    'estado_nuevo' => 'pendiente_verificacion',
+                    'gestionado_por' => $currentUser->id
+                ]);
+            }
+
+            // Enviar correo de verificación
+            $this->sendVerificationEmail($user);
+
+            $mensaje = match($estadoAnterior) {
+                'nuevo' => 'Correo de verificación reenviado exitosamente',
+                'suspendido' => 'Correo de reactivación enviado. Estado cambiado a Pendiente Verificación',
+                'retirado' => 'Correo de reactivación enviado. Estado cambiado a Pendiente Verificación',
+                default => 'Correo enviado exitosamente'
+            };
+
+            Log::info('Correo de verificación reenviado', [
+                'usuario_id' => $user->id,
+                'email' => $user->email,
+                'estado_anterior' => $estadoAnterior,
+                'estado_actual' => $user->estado,
+                'reenviado_por' => $currentUser->id
+            ]);
+
+            return response()->json([
+                'message' => $mensaje,
+                'estado_anterior' => $estadoAnterior,
+                'estado_actual' => $user->estado
+            ], Response::HTTP_OK);
+
+        } catch (\Exception $e) {
+            Log::error('Error reenviando correo de verificación', [
+                'error' => $e->getMessage(),
+                'usuario_id' => $id ?? null,
+                'gestionado_por' => $currentUser->id ?? null
+            ]);
+
+            return response()->json([
+                'message' => 'Error al reenviar el correo de verificación'
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Reenviar correo de verificación para usuarios de emisor
+     */
+    public function resendVerificationEmailByEmisor(Request $request, string $emiId, string $userId)
+    {
+        try {
+            /** @var User|null $currentUser */
+            $currentUser = Auth::user();
+            $user = User::find($userId);
+
+            if (!$user) {
+                return response()->json(['message' => 'Usuario no encontrado'], Response::HTTP_NOT_FOUND);
+            }
+
+            // Validar que puede gestionar este usuario
+            if (!PermissionService::puedeGestionarUsuario($currentUser, $user)) {
+                return response()->json(['message' => 'No tienes permiso para gestionar este usuario'], Response::HTTP_FORBIDDEN);
+            }
+
+            // Verificar que el usuario pertenece al emisor especificado
+            if ($user->emisor_id != $emiId && $user->id != $emiId) {
+                return response()->json(['message' => 'El usuario no pertenece a este emisor'], Response::HTTP_FORBIDDEN);
+            }
+
+            // Verificar que el estado es válido para reenvío
+            if (!in_array($user->estado, ['nuevo', 'suspendido', 'retirado'])) {
+                return response()->json([
+                    'message' => 'El correo de verificación solo puede reenviarse a usuarios con estado: nuevo, suspendido o retirado'
+                ], Response::HTTP_BAD_REQUEST);
+            }
+
+            $estadoAnterior = $user->estado;
+
+            // Cambiar estado si es necesario
+            if (in_array($estadoAnterior, ['suspendido', 'retirado'])) {
+                $user->estado = 'pendiente_verificacion';
+                $user->save();
+            }
+
+            // Enviar correo
+            $this->sendVerificationEmail($user);
+
+            $mensaje = match($estadoAnterior) {
+                'nuevo' => 'Correo de verificación reenviado exitosamente',
+                'suspendido' => 'Correo de reactivación enviado. Estado cambiado a Pendiente Verificación',
+                'retirado' => 'Correo de reactivación enviado. Estado cambiado a Pendiente Verificación',
+                default => 'Correo enviado exitosamente'
+            };
+
+            Log::info('Correo de verificación reenviado (por emisor)', [
+                'usuario_id' => $user->id,
+                'emisor_id' => $emiId,
+                'estado_anterior' => $estadoAnterior,
+                'estado_actual' => $user->estado,
+                'reenviado_por' => $currentUser->id
+            ]);
+
+            return response()->json([
+                'message' => $mensaje,
+                'estado_anterior' => $estadoAnterior,
+                'estado_actual' => $user->estado
+            ], Response::HTTP_OK);
+
+        } catch (\Exception $e) {
+            Log::error('Error reenviando correo de verificación (emisor)', [
+                'error' => $e->getMessage(),
+                'emisor_id' => $emiId ?? null,
+                'usuario_id' => $userId ?? null
+            ]);
+
+            return response()->json([
+                'message' => 'Error al reenviar el correo de verificación'
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
 }
