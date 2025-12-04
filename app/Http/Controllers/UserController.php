@@ -1085,29 +1085,46 @@ class UserController extends Controller
 
             DB::commit();
 
+            // Obtener metadata del token para saber el estado anterior
+            $metadata = json_decode($token->metadata ?? '{}', true);
+            $estadoAnterior = $metadata['estado_anterior'] ?? 'nuevo';
+
             Log::info('Email verificado', [
                 'usuario_id' => $user->id,
-                'email' => $user->email
+                'email' => $user->email,
+                'estado_anterior' => $estadoAnterior
             ]);
 
-            // Enviar correo para cambio de contraseña
-            try {
-                $this->sendPasswordChangeEmail($user);
-                Log::info('Correo de cambio de contraseña enviado', ['usuario_id' => $user->id]);
-            } catch (\Exception $emailError) {
-                Log::error('Error enviando correo de cambio de contraseña', [
-                    'usuario_id' => $user->id,
-                    'error' => $emailError->getMessage()
+            // Solo enviar correo de cambio de contraseña si el usuario era NUEVO
+            // Los usuarios suspendidos/retirados ya tienen contraseña
+            if ($estadoAnterior === 'nuevo') {
+                try {
+                    $this->sendPasswordChangeEmail($user);
+                    Log::info('Correo de cambio de contraseña enviado', ['usuario_id' => $user->id]);
+                } catch (\Exception $emailError) {
+                    Log::error('Error enviando correo de cambio de contraseña', [
+                        'usuario_id' => $user->id,
+                        'error' => $emailError->getMessage()
+                    ]);
+                }
+
+                return response()->json([
+                    'message' => 'Email verificado exitosamente. Revisa tu correo para establecer tu contraseña.',
+                    'data' => [
+                        'email' => $user->email,
+                        'estado' => $user->estado
+                    ]
+                ]);
+            } else {
+                // Usuario reactivado (era suspendido/retirado)
+                return response()->json([
+                    'message' => 'Cuenta reactivada exitosamente. Ya puedes iniciar sesión con tu contraseña anterior.',
+                    'data' => [
+                        'email' => $user->email,
+                        'estado' => $user->estado
+                    ]
                 ]);
             }
-
-            return response()->json([
-                'message' => 'Email verificado exitosamente. Revisa tu correo para establecer tu contraseña.',
-                'data' => [
-                    'email' => $user->email,
-                    'estado' => $user->estado
-                ]
-            ]);
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('Error verificando email', [
@@ -1193,15 +1210,21 @@ class UserController extends Controller
     /**
      * Helper: Enviar email de verificación
      */
-    private function sendVerificationEmail(User $user)
+    private function sendVerificationEmail(User $user, ?string $estadoAnterior = null)
     {
         // Crear token de verificación
         $token = Str::random(60);
+        
+        // Si no se proporciona estado anterior, usar el estado actual del usuario
+        $metadata = [
+            'estado_anterior' => $estadoAnterior ?? $user->estado
+        ];
         
         DB::table('user_verification_tokens')->insert([
             'user_id' => $user->id,
             'token' => $token,
             'type' => 'email_verification',
+            'metadata' => json_encode($metadata),
             'expires_at' => now()->addHours(24),
             'created_at' => now(),
             'updated_at' => now()
@@ -1369,8 +1392,8 @@ class UserController extends Controller
                 ]);
             }
 
-            // Enviar correo de verificación
-            $this->sendVerificationEmail($user);
+            // Enviar correo de verificación con el estado anterior
+            $this->sendVerificationEmail($user, $estadoAnterior);
 
             $mensaje = match($estadoAnterior) {
                 'nuevo' => 'Correo de verificación reenviado exitosamente',
@@ -1445,8 +1468,8 @@ class UserController extends Controller
                 $user->save();
             }
 
-            // Enviar correo
-            $this->sendVerificationEmail($user);
+            // Enviar correo con el estado anterior
+            $this->sendVerificationEmail($user, $estadoAnterior);
 
             $mensaje = match($estadoAnterior) {
                 'nuevo' => 'Correo de verificación reenviado exitosamente',
