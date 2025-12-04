@@ -32,7 +32,7 @@ class UserController extends Controller
             
             // Parámetros de paginación y filtrado
             $page = max(1, (int)($request->input('page', 1)));
-            $perPage = max(10, min(100, (int)($request->input('per_page', 20))));
+            $perPage = max(5, min(100, (int)($request->input('per_page', 20))));
             $search = trim($request->input('search', ''));
             $role = trim($request->input('role', ''));
             $sortBy = $request->input('sort_by', 'created_at');
