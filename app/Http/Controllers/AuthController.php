@@ -290,8 +290,8 @@ class AuthController extends Controller
             'attempted_at' => now(),
         ]);
 
-        // Revoke previous tokens (optional)
-        $user->tokens()->delete();
+        // ⚠️ NO revocar tokens anteriores - permitir múltiples sesiones simultáneas
+        // $user->tokens()->delete();
 
         $token = $user->createToken('default')->plainTextToken;
         
@@ -308,24 +308,42 @@ class AuthController extends Controller
     {
         $user = $request->user();
         if ($user) {
-            // Revoke the token used for this session and log counts for debugging
+            // Revocar SOLO el token de esta sesión, mantener otros dispositivos activos
             try {
                 $patModel = '\\Laravel\\Sanctum\\PersonalAccessToken';
                 $before = $patModel::where('tokenable_id', $user->id)->count();
                 Log::info('Logout: tokens_before', ['user_id' => $user->id, 'count' => $before]);
 
                 if ($request->user()?->currentAccessToken()) {
+                    // Eliminar SOLO el token actual (sesión actual)
                     $request->user()->currentAccessToken()->delete();
+                    Log::info('Logout: current token deleted', ['user_id' => $user->id]);
                 } else {
-                    $user->tokens()->delete();
+                    // Si no hay token actual, buscar por bearer token
+                    $bearerToken = $request->bearerToken();
+                    if ($bearerToken) {
+                        $hashedToken = hash('sha256', $bearerToken);
+                        $patModel::where('tokenable_id', $user->id)
+                                ->where('token', $hashedToken)
+                                ->delete();
+                        Log::info('Logout: bearer token deleted', ['user_id' => $user->id]);
+                    } else {
+                        Log::warning('Logout: no token found to delete', ['user_id' => $user->id]);
+                    }
                 }
 
                 $after = $patModel::where('tokenable_id', $user->id)->count();
                 Log::info('Logout: tokens_after', ['user_id' => $user->id, 'count' => $after]);
             } catch (\Throwable $e) {
                 Log::error('Logout error', ['err' => $e->getMessage()]);
-                // Fallback: delete all tokens to ensure logout
-                $user->tokens()->delete();
+                // Intentar eliminar solo el token actual en el fallback
+                try {
+                    if ($request->user()?->currentAccessToken()) {
+                        $request->user()->currentAccessToken()->delete();
+                    }
+                } catch (\Throwable $e2) {
+                    Log::error('Logout fallback error', ['err' => $e2->getMessage()]);
+                }
             }
         }
         return response()->json(['message' => 'Sesión cerrada']);
