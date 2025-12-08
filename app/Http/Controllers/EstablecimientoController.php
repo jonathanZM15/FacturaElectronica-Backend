@@ -35,7 +35,58 @@ class EstablecimientoController extends Controller
             ], 403);
         }
         
-        $items = Establecimiento::where('company_id', $companyId)->with(['puntos_emision', 'creator:id,name', 'updater:id,name'])->orderBy('id', 'desc')->get();
+        // Construir query base
+        $query = Establecimiento::where('company_id', $companyId)
+            ->with(['puntos_emision', 'creator:id,name', 'updater:id,name']);
+        
+        // Para usuarios emisor, gerente o cajero: filtrar por establecimientos asignados
+        if ($isAssignedEmissor || $isAssignedGerente || $isAssignedCajero) {
+            $establecimientosIds = $currentUser->establecimientos_ids;
+            if (is_string($establecimientosIds)) {
+                $decoded = json_decode($establecimientosIds, true);
+                // Manejar doble codificación JSON
+                if (is_string($decoded)) {
+                    $decoded = json_decode($decoded, true);
+                }
+                $establecimientosIds = is_array($decoded) ? $decoded : [];
+            }
+            if (!is_array($establecimientosIds)) {
+                $establecimientosIds = [];
+            }
+            
+            // Si establecimientos_ids está vacío, intentar inferir desde puntos_emision_ids
+            if (empty($establecimientosIds)) {
+                $puntosEmisionIds = $currentUser->puntos_emision_ids;
+                if (is_string($puntosEmisionIds)) {
+                    $decoded = json_decode($puntosEmisionIds, true);
+                    // Manejar doble codificación JSON
+                    if (is_string($decoded)) {
+                        $decoded = json_decode($decoded, true);
+                    }
+                    $puntosEmisionIds = is_array($decoded) ? $decoded : [];
+                }
+                if (!is_array($puntosEmisionIds)) {
+                    $puntosEmisionIds = [];
+                }
+                
+                // Obtener los establecimientos de los puntos de emisión asignados
+                if (!empty($puntosEmisionIds)) {
+                    $establecimientosIds = \App\Models\PuntoEmision::whereIn('id', $puntosEmisionIds)
+                        ->pluck('establecimiento_id')
+                        ->unique()
+                        ->toArray();
+                }
+            }
+            
+            // Si aún no tiene establecimientos, devolver vacío
+            if (empty($establecimientosIds)) {
+                return response()->json(['data' => []]);
+            }
+            
+            $query->whereIn('id', $establecimientosIds);
+        }
+        
+        $items = $query->orderBy('id', 'desc')->get();
         
         // Map items to include logo_url and other accessors
         $data = $items->map(function ($item) {

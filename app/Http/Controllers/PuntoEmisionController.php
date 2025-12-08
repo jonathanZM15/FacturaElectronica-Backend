@@ -37,12 +37,23 @@ class PuntoEmisionController extends Controller
             ], 403);
         }
 
-        if ($allowLimitedRoles && ($isAssignedGerente || $isAssignedCajero)) {
+        if ($allowLimitedRoles && ($isAssignedEmissor || $isAssignedGerente || $isAssignedCajero)) {
             $establecimientoId = $options['establecimientoId'] ?? null;
             $puntoId = $options['puntoId'] ?? null;
+            
+            // Obtener los IDs de establecimientos y puntos asignados
+            $establecimientosIds = $this->normalizeIds($currentUser->establecimientos_ids);
+            $puntosIds = $this->normalizeIds($currentUser->puntos_emision_ids);
+            
+            // Si no tiene establecimientos directos pero tiene puntos, inferir establecimientos desde puntos
+            if (empty($establecimientosIds) && !empty($puntosIds)) {
+                $establecimientosIds = PuntoEmision::whereIn('id', $puntosIds)
+                    ->pluck('establecimiento_id')
+                    ->unique()
+                    ->toArray();
+            }
 
             if ($establecimientoId) {
-                $establecimientosIds = $this->normalizeIds($currentUser->establecimientos_ids);
                 if (!empty($establecimientosIds) && !$this->idInArray((int)$establecimientoId, $establecimientosIds)) {
                     return response()->json([
                         'message' => 'No tienes permisos para acceder a este establecimiento'
@@ -51,7 +62,6 @@ class PuntoEmisionController extends Controller
             }
 
             if ($puntoId) {
-                $puntosIds = $this->normalizeIds($currentUser->puntos_emision_ids);
                 if (!empty($puntosIds) && !$this->idInArray((int)$puntoId, $puntosIds)) {
                     return response()->json([
                         'message' => 'No tienes permisos para acceder a este punto de emisión'
@@ -59,9 +69,13 @@ class PuntoEmisionController extends Controller
                 }
             }
 
+            // Si tiene puntos específicos asignados, marcar como limitado para filtrar
+            // Si no tiene puntos asignados (array vacío), tiene acceso completo al establecimiento
+            $hasLimitedAccess = !empty($puntosIds);
+
             return [
-                'limited' => true,
-                'puntos_ids' => $this->normalizeIds($currentUser->puntos_emision_ids)
+                'limited' => $hasLimitedAccess,
+                'puntos_ids' => $puntosIds
             ];
         }
 
@@ -291,8 +305,17 @@ class PuntoEmisionController extends Controller
 
         if (is_string($value)) {
             $decoded = json_decode($value, true);
-            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
-                return $decoded;
+            if (json_last_error() === JSON_ERROR_NONE) {
+                // Si el resultado es un string (doble codificación), decodificar de nuevo
+                if (is_string($decoded)) {
+                    $decoded = json_decode($decoded, true);
+                    if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                        return $decoded;
+                    }
+                }
+                if (is_array($decoded)) {
+                    return $decoded;
+                }
             }
         }
 
