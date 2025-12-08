@@ -7,6 +7,8 @@ use Illuminate\Support\Facades\Storage;
 
 class Company extends Model
 {
+    protected $table = 'emisores';
+    
     protected $fillable = [
         'ruc','razon_social','nombre_comercial','direccion_matriz',
         'regimen_tributario','obligado_contabilidad','contribuyente_especial','agente_retencion',
@@ -14,7 +16,7 @@ class Company extends Model
         'created_by', 'updated_by',
     ];
 
-    protected $appends = ['logo_url', 'created_by_name', 'updated_by_name'];
+    protected $appends = ['logo_url', 'created_by_name', 'created_by_username', 'updated_by_name'];
 
     /**
      * Relación con el usuario que creó el registro
@@ -37,7 +39,25 @@ class Company extends Model
      */
     public function getCreatedByNameAttribute(): ?string
     {
-        return $this->creator ? $this->creator->name : null;
+        if (!$this->creator) return null;
+
+        // Prefer nombres+apellidos if present, else username/email
+        $fullName = trim(($this->creator->nombres ?? '') . ' ' . ($this->creator->apellidos ?? ''));
+        if ($fullName !== '') {
+            return $fullName;
+        }
+
+        return $this->creator->username
+            ?? $this->creator->email
+            ?? null;
+    }
+
+    public function getCreatedByUsernameAttribute(): ?string
+    {
+        if (!$this->creator) return null;
+        return $this->creator->username
+            ?? $this->creator->email
+            ?? null;
     }
 
     /**

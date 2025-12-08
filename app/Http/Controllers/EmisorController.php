@@ -27,8 +27,8 @@ class EmisorController extends Controller
         $sortBy = $request->input('sort_by', 'id');
         $sortDir = strtolower($request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
 
-        $currentUser = auth()->user();
-        $query = Company::query()->select('companies.*')
+        $currentUser = Auth::user();
+        $query = Company::query()->select('emisores.*')
             ->with(['creator:id,name', 'updater:id,name']);
 
         // Aplicar filtro de permisos según rol del usuario actual
@@ -64,11 +64,11 @@ class EmisorController extends Controller
         // Computed fields via subqueries (cantidad_creados, ultimo_comprobante, tipo_plan, plan dates, cantidad_restantes)
         if (Schema::hasTable('comprobantes')) {
             $query->selectSub(function ($q) {
-                $q->from('comprobantes')->selectRaw('count(*)')->whereColumn('comprobantes.company_id', 'companies.id');
+                $q->from('comprobantes')->selectRaw('count(*)')->whereColumn('comprobantes.company_id', 'emisores.id');
             }, 'cantidad_creados');
 
             $query->selectSub(function ($q) {
-                $q->from('comprobantes')->selectRaw('max(created_at)')->whereColumn('comprobantes.company_id', 'companies.id');
+                $q->from('comprobantes')->selectRaw('max(created_at)')->whereColumn('comprobantes.company_id', 'emisores.id');
             }, 'ultimo_comprobante');
         } else {
             $query->selectRaw('NULL as cantidad_creados, NULL as ultimo_comprobante');
@@ -77,13 +77,13 @@ class EmisorController extends Controller
         if (Schema::hasTable('plans')) {
             // Latest plan info
             $query->selectSub(function ($q) {
-                $q->from('plans')->select('tipo_plan')->whereColumn('plans.company_id', 'companies.id')->orderByDesc('id')->limit(1);
+                $q->from('plans')->select('tipo_plan')->whereColumn('plans.company_id', 'emisores.id')->orderByDesc('id')->limit(1);
             }, 'tipo_plan');
             $query->selectSub(function ($q) {
-                $q->from('plans')->select('fecha_inicio')->whereColumn('plans.company_id', 'companies.id')->orderByDesc('id')->limit(1);
+                $q->from('plans')->select('fecha_inicio')->whereColumn('plans.company_id', 'emisores.id')->orderByDesc('id')->limit(1);
             }, 'fecha_inicio_plan');
             $query->selectSub(function ($q) {
-                $q->from('plans')->select('fecha_fin')->whereColumn('plans.company_id', 'companies.id')->orderByDesc('id')->limit(1);
+                $q->from('plans')->select('fecha_fin')->whereColumn('plans.company_id', 'emisores.id')->orderByDesc('id')->limit(1);
             }, 'fecha_fin_plan');
 
             // if plans have 'cantidad' column, compute remaining = cantidad - cantidad_creados
@@ -92,7 +92,7 @@ class EmisorController extends Controller
                     $query->selectSub(function ($q) {
                         $q->from('plans as p')->selectRaw("COALESCE(p.cantidad,0) - (
                             select count(*) from comprobantes c where c.company_id = p.company_id
-                        )")->whereColumn('p.company_id', 'companies.id')->orderByDesc('p.id')->limit(1);
+                        )")->whereColumn('p.company_id', 'emisores.id')->orderByDesc('p.id')->limit(1);
                     }, 'cantidad_restantes');
                 } else {
                     $query->selectRaw('NULL as cantidad_restantes');
@@ -131,13 +131,13 @@ class EmisorController extends Controller
         // Registrador: try to match users.name if such relation exists
         if ($request->filled('registrador') && Schema::hasTable('users')) {
             $registrador = $request->input('registrador');
-            // companies may have a registrador column or we try to match via users table
-            if (Schema::hasColumn('companies', 'registrador')) {
+            // emisores may have a registrador column or we try to match via users table
+            if (Schema::hasColumn('emisores', 'registrador')) {
                 $query->where('registrador', 'like', '%'.$registrador.'%');
             } else {
-                // filter companies that have a user with that name
+                // filter emisores that have a user with that name
                 $query->whereExists(function ($q) use ($registrador) {
-                    $q->selectRaw('1')->from('users')->whereColumn('users.company_id','companies.id')->where('users.name','like','%'.$registrador.'%');
+                    $q->selectRaw('1')->from('users')->whereColumn('users.company_id','emisores.id')->where('users.name','like','%'.$registrador.'%');
                 });
             }
         }
@@ -200,7 +200,7 @@ class EmisorController extends Controller
     public function store(Request $request)
     {
         $rules = [
-            'ruc' => ['required','string','max:13','min:10','unique:companies,ruc'],
+            'ruc' => ['required','string','max:13','min:10','unique:emisores,ruc'],
             'razon_social' => ['required','string','max:255'],
             'nombre_comercial' => ['nullable','string','max:255'],
             'direccion_matriz' => ['required','string','max:500'],
@@ -239,10 +239,10 @@ class EmisorController extends Controller
 
         // Asignar el usuario que está creando el registro (si la columna existe)
         if (Auth::check()) {
-            if (Schema::hasColumn('companies', 'created_by')) {
+            if (Schema::hasColumn('emisores', 'created_by')) {
                 $company->created_by = Auth::id();
             }
-            if (Schema::hasColumn('companies', 'updated_by')) {
+            if (Schema::hasColumn('emisores', 'updated_by')) {
                 $company->updated_by = Auth::id();
             }
         }
@@ -275,7 +275,7 @@ class EmisorController extends Controller
     // Show a single emisor with editable flags
     public function show($id)
     {
-        $company = Company::with(['creator:id,name', 'updater:id,name'])->findOrFail($id);
+        $company = Company::with(['creator:id,nombres,apellidos,username,email', 'updater:id,nombres,apellidos,username,email'])->findOrFail($id);
 
         // Determine if RUC can be edited: if there's a comprobantes table and
         // there are any records with estado = 'AUTORIZADO' for this company, disallow.
@@ -298,6 +298,7 @@ class EmisorController extends Controller
             'logo_url' => $company->logo_url,
             'ruc_editable' => $rucEditable,
             'created_by_name' => $company->created_by_name,
+            'created_by_username' => $company->created_by_username,
             'updated_by_name' => $company->updated_by_name,
         ]);
 
@@ -320,7 +321,7 @@ class EmisorController extends Controller
         $company = Company::findOrFail($id);
         
         // Validar permisos: solo admin o el creador del emisor pueden editarlo
-        $currentUser = auth()->user();
+        $currentUser = Auth::user();
         if ($currentUser->role !== UserRole::ADMINISTRADOR && $company->created_by !== $currentUser->id) {
             return response()->json([
                 'message' => 'No tienes permisos para editar este emisor'
@@ -344,7 +345,7 @@ class EmisorController extends Controller
         // Build validation rules (allow same RUC for this record)
         // En modo edición, todos los campos son opcionales excepto cuando se envían
         $rules = [
-            'ruc' => ['sometimes','required','string','max:13','min:10', Rule::unique('companies','ruc')->ignore($company->id)],
+            'ruc' => ['sometimes','required','string','max:13','min:10', Rule::unique('emisores','ruc')->ignore($company->id)],
             'razon_social' => ['sometimes','required','string','max:255'],
             'nombre_comercial' => ['sometimes','nullable','string','max:255'],
             'direccion_matriz' => ['sometimes','nullable','string','max:500'],
@@ -391,7 +392,7 @@ class EmisorController extends Controller
 
         // Actualizar el usuario que está modificando el registro (si la columna existe)
         if (Auth::check()) {
-            if (Schema::hasColumn('companies', 'updated_by')) {
+            if (Schema::hasColumn('emisores', 'updated_by')) {
                 $company->updated_by = Auth::id();
             }
         }
@@ -555,7 +556,7 @@ class EmisorController extends Controller
         $company = Company::findOrFail($id);
         
         // Validar permisos: solo admin o el creador del emisor pueden eliminarlo
-        $currentUser = auth()->user();
+        $currentUser = Auth::user();
         if ($currentUser->role !== UserRole::ADMINISTRADOR && $company->created_by !== $currentUser->id) {
             return response()->json([
                 'message' => 'No tienes permisos para eliminar este emisor'

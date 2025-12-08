@@ -65,9 +65,12 @@ class User extends Authenticatable
         'password' => 'hashed',
         'role' => UserRole::class,
         'establecimientos_ids' => 'json',
+        'puntos_emision_ids' => 'json',
         'locked_until' => 'datetime',
         'last_login_at' => 'datetime',
     ];
+
+    protected $appends = ['establecimientos', 'puntos_emision'];
 
     // ==================== Relaciones ====================
 
@@ -117,6 +120,49 @@ class User extends Authenticatable
     public function usuariosBajoEmisor()
     {
         return $this->hasMany(User::class, 'emisor_id');
+    }
+
+    /**
+     * Obtiene los establecimientos del usuario como objetos completos
+     */
+    public function getEstablecimientosAttribute()
+    {
+        if (!$this->establecimientos_ids) {
+            return [];
+        }
+        $ids = is_array($this->establecimientos_ids) ? $this->establecimientos_ids : json_decode($this->establecimientos_ids, true) ?? [];
+        $establecimientos = Establecimiento::whereIn('id', $ids)->get();
+        
+        return $establecimientos->map(function ($est) {
+            return [
+                'id' => $est->id,
+                'codigo' => $est->codigo,
+                'nombre' => $est->nombre,
+                'estado' => $est->estado,
+            ];
+        });
+    }
+
+    /**
+     * Obtiene los puntos de emisión del usuario como objetos completos
+     */
+    public function getPuntosEmisionAttribute()
+    {
+        if (!$this->puntos_emision_ids) {
+            return [];
+        }
+        $ids = is_array($this->puntos_emision_ids) ? $this->puntos_emision_ids : json_decode($this->puntos_emision_ids, true) ?? [];
+        $puntos = PuntoEmision::whereIn('id', $ids)->get();
+        
+        return $puntos->map(function ($punto) {
+            return [
+                'id' => $punto->id,
+                'codigo' => $punto->codigo,
+                'nombre' => $punto->nombre,
+                'establecimiento_id' => $punto->establecimiento_id,
+                'estado' => $punto->estado,
+            ];
+        });
     }
 
     // ==================== Métodos ====================

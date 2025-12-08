@@ -99,14 +99,22 @@ class UserController extends Controller
             $users = $query->paginate($perPage, ['*'], 'page', $page);
 
             // Cargar información del creador para cada usuario
-            $users->load('creador:id,nombres,apellidos');
+            $users->load('creador:id,nombres,apellidos,username,email,role');
             
-            // Agregar nombre del creador a cada usuario
+            // Normalizar datos del creador en cada usuario
             $users->getCollection()->each(function ($user) {
-                if ($user->creador) {
-                    $user->created_by_name = trim($user->creador->nombres . ' ' . $user->creador->apellidos);
+                $creador = $user->creador;
+                $creadorUsername = $creador?->username
+                    ?: ($creador?->email ?? $creador?->cedula ?? null);
+
+                if ($creador) {
+                    $user->created_by_name = trim(($creador->nombres ?? '') . ' ' . ($creador->apellidos ?? ''));
+                    $user->created_by_username = $creadorUsername;
+                    $user->created_by_role = $creador->role?->value;
                 } else {
                     $user->created_by_name = 'Sistema';
+                    $user->created_by_username = null;
+                    $user->created_by_role = null;
                 }
             });
 
@@ -616,7 +624,8 @@ class UserController extends Controller
             $search = trim($request->input('search', ''));
 
             // Listar usuarios del emisor - solo usuarios con emisor_id coincidente
-            $query = User::where('emisor_id', $id);
+            $query = User::where('emisor_id', $id)
+                ->with('creador:id,cedula,nombres,apellidos,username,email,role');
 
             if ($limitedToSelf) {
                 $query->where('id', $currentUser->id);
@@ -634,6 +643,25 @@ class UserController extends Controller
 
             $users = $query->orderBy('created_at', 'desc')->paginate($perPage, ['*'], 'page', $page);
 
+            // Mapear datos para incluir información del creador y establecimientos/puntos de emisión
+            $data = $users->items();
+            // Normalizamos datos del creador y aplicamos fallback de username/email para evitar campos vacíos
+            $data = array_map(function ($user) {
+                $creador = $user->creador;
+                $creadorUsername = $creador?->username
+                    ?: ($creador?->email ?? $creador?->cedula ?? null);
+
+                return array_merge($user->toArray(), [
+                    'created_by_id' => $user->created_by_id,
+                    'created_by_username' => $creadorUsername,
+                    'created_by_nombres' => $creador?->nombres,
+                    'created_by_apellidos' => $creador?->apellidos,
+                    'created_by_role' => $creador?->role?->value,
+                    'establecimientos' => $user->establecimientos,
+                    'puntos_emision' => $user->puntos_emision,
+                ]);
+            }, $data);
+
             Log::info('Usuarios del emisor listados', [
                 'usuario_actual_id' => $currentUser->id,
                 'rol' => $currentUser->role->value,
@@ -642,7 +670,7 @@ class UserController extends Controller
             ]);
 
             return response()->json([
-                'data' => $users->items(),
+                'data' => $data,
                 'meta' => [
                     'current_page' => $users->currentPage(),
                     'total' => $users->total(),
@@ -732,6 +760,9 @@ class UserController extends Controller
 
             DB::commit();
 
+            // Recargar el usuario con relación del creador
+            $user->load('creador:id,cedula,nombres,apellidos,username,email,role');
+
             Log::info('Usuario del emisor creado', [
                 'nuevo_usuario_id' => $user->id,
                 'cedula' => $user->cedula,
@@ -758,9 +789,24 @@ class UserController extends Controller
                 }
             }
 
+            // Mapear datos con información del creador
+            $creador = $user->creador;
+            $creadorUsername = $creador?->username
+                ?: ($creador?->email ?? $creador?->cedula ?? null);
+
+            $userData = array_merge($user->toArray(), [
+                'created_by_id' => $user->created_by_id,
+                'created_by_username' => $creadorUsername,
+                'created_by_nombres' => $creador?->nombres,
+                'created_by_apellidos' => $creador?->apellidos,
+                'created_by_role' => $creador?->role?->value,
+                'establecimientos' => $user->establecimientos,
+                'puntos_emision' => $user->puntos_emision,
+            ]);
+
             return response()->json([
                 'message' => 'Usuario creado exitosamente',
-                'data' => $user
+                'data' => $userData
             ], Response::HTTP_CREATED);
         } catch (\Illuminate\Validation\ValidationException $e) {
             DB::rollBack();

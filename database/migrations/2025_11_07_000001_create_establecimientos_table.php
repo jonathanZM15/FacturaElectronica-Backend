@@ -32,10 +32,10 @@ return new class extends Migration
 
             $table->unique(['company_id', 'codigo']);
 
-            // If companies table exists, add foreign key constraint if desired
+            // If emisores table exists, add foreign key constraint if desired
             try {
-                if (Schema::hasTable('companies')) {
-                    $table->foreign('company_id')->references('id')->on('companies')->onDelete('cascade');
+                if (Schema::hasTable('emisores')) {
+                    $table->foreign('company_id')->references('id')->on('emisores')->onDelete('cascade');
                 }
             } catch (\Exception $_) {
                 // ignore if running on environments where FK cannot be created

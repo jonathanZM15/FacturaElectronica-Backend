@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('puntos_emision', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('company_id')->constrained('companies')->onDelete('cascade');
+            $table->foreignId('company_id')->constrained('emisores')->onDelete('cascade');
             $table->foreignId('establecimiento_id')->constrained('establecimientos')->onDelete('cascade');
             $table->string('codigo', 3)->unique();
             $table->enum('estado', ['ACTIVO', 'DESACTIVADO'])->default('ACTIVO');

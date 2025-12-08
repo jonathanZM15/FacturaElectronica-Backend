@@ -40,7 +40,7 @@ class LogoController extends Controller
         $company = Company::find($companyId);
         if (!$company) {
             try {
-                DB::table('companies')->insert([
+                DB::table('emisores')->insert([
                     'id' => $companyId,
                     'name' => 'Company ' . $companyId,
                     'created_at' => now(),

@@ -11,7 +11,7 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('companies', function (Blueprint $table) {
+        Schema::table('emisores', function (Blueprint $table) {
             // Agregar campo para el usuario que creó el registro
             $table->unsignedBigInteger('created_by')->nullable()->after('logo_path');
             $table->foreign('created_by')->references('id')->on('users')->onDelete('set null');
@@ -22,10 +22,10 @@ return new class extends Migration
             
             // Los campos created_at y updated_at ya existen por timestamps()
             // pero aseguraremos que estén presentes
-            if (!Schema::hasColumn('companies', 'created_at')) {
+            if (!Schema::hasColumn('emisores', 'created_at')) {
                 $table->timestamp('created_at')->nullable();
             }
-            if (!Schema::hasColumn('companies', 'updated_at')) {
+            if (!Schema::hasColumn('emisores', 'updated_at')) {
                 $table->timestamp('updated_at')->nullable();
             }
         });
@@ -36,7 +36,7 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('companies', function (Blueprint $table) {
+        Schema::table('emisores', function (Blueprint $table) {
             $table->dropForeign(['created_by']);
             $table->dropColumn('created_by');
             $table->dropForeign(['updated_by']);
