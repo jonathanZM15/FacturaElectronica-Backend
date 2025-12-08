@@ -145,6 +145,7 @@ class User extends Authenticatable
 
     /**
      * Obtiene los puntos de emisión del usuario como objetos completos
+     * Incluye información del establecimiento al que pertenece cada punto
      */
     public function getPuntosEmisionAttribute()
     {
@@ -152,7 +153,7 @@ class User extends Authenticatable
             return [];
         }
         $ids = is_array($this->puntos_emision_ids) ? $this->puntos_emision_ids : json_decode($this->puntos_emision_ids, true) ?? [];
-        $puntos = PuntoEmision::whereIn('id', $ids)->get();
+        $puntos = PuntoEmision::whereIn('id', $ids)->with('establecimiento')->get();
         
         return $puntos->map(function ($punto) {
             return [
@@ -160,6 +161,8 @@ class User extends Authenticatable
                 'codigo' => $punto->codigo,
                 'nombre' => $punto->nombre,
                 'establecimiento_id' => $punto->establecimiento_id,
+                'establecimiento_codigo' => $punto->establecimiento?->codigo,
+                'establecimiento_nombre' => $punto->establecimiento?->nombre,
                 'estado' => $punto->estado,
             ];
         });
