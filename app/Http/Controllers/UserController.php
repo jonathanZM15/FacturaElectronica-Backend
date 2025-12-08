@@ -168,26 +168,82 @@ class UserController extends Controller
             }
 
             // Validar permisos: ¿puede ver este usuario?
-            $puedeVer = $currentUser->id === $user->id || // Se ve a sí mismo
-                        PermissionService::puedeGestionarUsuario($currentUser, $user); // O puede gestionarlo
+            $puedeVer = false;
+            
+            // Jerarquía de roles (de mayor a menor)
+            $roleHierarchy = [
+                'administrador' => 5,
+                'distribuidor' => 4,
+                'emisor' => 3,
+                'gerente' => 2,
+                'cajero' => 1
+            ];
+            
+            $currentUserLevel = $roleHierarchy[$currentUser->role->value] ?? 0;
+            $targetUserLevel = $roleHierarchy[$user->role->value] ?? 0;
+            
+            // 1. Puede verse a sí mismo
+            if ($currentUser->id === $user->id) {
+                $puedeVer = true;
+            }
+            // 2. Administrador puede ver a todos
+            elseif ($currentUser->role === UserRole::ADMINISTRADOR) {
+                $puedeVer = true;
+            }
+            // 3. Puede ver usuarios con rol inferior en la jerarquía
+            elseif ($currentUserLevel > $targetUserLevel) {
+                // Distribuidor puede ver emisores, gerentes y cajeros
+                if ($currentUser->role === UserRole::DISTRIBUIDOR) {
+                    $puedeVer = in_array($user->role->value, ['emisor', 'gerente', 'cajero']);
+                }
+                // Emisor puede ver gerentes y cajeros de su organización
+                elseif ($currentUser->role === UserRole::EMISOR) {
+                    $puedeVer = in_array($user->role->value, ['gerente', 'cajero']) &&
+                               $user->emisor_id === $currentUser->id;
+                }
+                // Gerente puede ver cajeros del mismo emisor
+                elseif ($currentUser->role === UserRole::GERENTE) {
+                    $puedeVer = $user->role === UserRole::CAJERO &&
+                               $user->emisor_id === $currentUser->emisor_id;
+                }
+            }
+            // 4. Usuarios del mismo nivel pueden verse entre sí si pertenecen al mismo emisor
+            elseif ($currentUserLevel === $targetUserLevel && $currentUser->emisor_id && $user->emisor_id) {
+                $puedeVer = $currentUser->emisor_id === $user->emisor_id;
+            }
 
             if (!$puedeVer) {
                 Log::warning('Intento de acceso no autorizado a usuario', [
                     'usuario_id' => $id,
                     'solicitante_id' => $currentUser->id,
-                    'rol_solicitante' => $currentUser->role->value
+                    'rol_solicitante' => $currentUser->role->value,
+                    'rol_objetivo' => $user->role->value,
+                    'emisor_actual' => $currentUser->emisor_id,
+                    'emisor_objetivo' => $user->emisor_id
                 ]);
                 return response()->json(['message' => 'No tienes permiso para ver este usuario'], Response::HTTP_FORBIDDEN);
             }
 
             // Cargar el usuario que creó este registro
-            $user->load('creador:id,nombres,apellidos');
+            $user->load('creador:id,nombres,apellidos,username,email,cedula,role');
             
-            // Agregar nombre del creador al objeto
-            if ($user->creador) {
-                $user->created_by_name = trim($user->creador->nombres . ' ' . $user->creador->apellidos);
+            // Agregar información completa del creador al objeto
+            $creador = $user->creador;
+            $creadorUsername = $creador?->username
+                ?: ($creador?->email ?? $creador?->cedula ?? null);
+            
+            if ($creador) {
+                $user->created_by_name = trim($creador->nombres . ' ' . $creador->apellidos);
+                $user->created_by_username = $creadorUsername;
+                $user->created_by_nombres = $creador->nombres;
+                $user->created_by_apellidos = $creador->apellidos;
+                $user->created_by_role = $creador->role?->value;
             } else {
                 $user->created_by_name = 'Sistema';
+                $user->created_by_username = null;
+                $user->created_by_nombres = null;
+                $user->created_by_apellidos = null;
+                $user->created_by_role = null;
             }
 
             Log::info('Usuario consultado', [
@@ -588,6 +644,13 @@ class UserController extends Controller
     /**
      * Listar usuarios asociados a un emisor específico
      * HU 2: Registro de usuarios asociados a un emisor
+     * 
+     * Restricciones de visibilidad:
+     * - Administrador: Puede ver todos los usuarios del emisor
+     * - Distribuidor: Solo puede ver usuarios de emisores que él registró
+     * - Emisor: Solo puede ver gerentes y cajeros de su emisor
+     * - Gerente: Solo puede ver cajeros asociados a sus establecimientos
+     * - Cajero: Solo puede verse a sí mismo
      */
     public function indexByEmisor(Request $request, $id)
     {
@@ -595,19 +658,38 @@ class UserController extends Controller
             /** @var User|null $currentUser */
             $currentUser = Auth::user();
             
-            // Validar permisos
+            // Validar permisos base
             $canView = false;
+            $roleFilter = null; // Filtro de roles permitidos
+            $establishmentFilter = null; // Filtro de establecimientos
             $limitedToSelf = false;
+            $postFilterByEstablishment = false; // Inicializar aquí
             
-            if ($currentUser->role === UserRole::ADMINISTRADOR || $currentUser->role === UserRole::DISTRIBUIDOR) {
-                // Administrador y Distribuidor pueden ver usuarios en cualquier emisor
+            if ($currentUser->role === UserRole::ADMINISTRADOR) {
+                // Administrador puede ver todos los usuarios del emisor
                 $canView = true;
-            } elseif (($currentUser->role === UserRole::EMISOR || $currentUser->role === UserRole::GERENTE) && 
-                      $currentUser->emisor_id == $id) {
-                // Emisor y Gerente solo ven usuarios de su emisor
+            } elseif ($currentUser->role === UserRole::DISTRIBUIDOR) {
+                // Distribuidor: verificar que el emisor fue creado por él
+                $emisor = \App\Models\Company::find($id);
+                if ($emisor && $emisor->created_by == $currentUser->id) {
+                    $canView = true;
+                }
+            } elseif ($currentUser->role === UserRole::EMISOR && $currentUser->emisor_id == $id) {
+                // Emisor solo ve gerentes y cajeros de su emisor
                 $canView = true;
+                $roleFilter = ['gerente', 'cajero'];
+            } elseif ($currentUser->role === UserRole::GERENTE && $currentUser->emisor_id == $id) {
+                // Gerente solo ve cajeros asociados a sus establecimientos
+                $canView = true;
+                $roleFilter = ['cajero'];
+                // Obtener los establecimientos del gerente
+                $gerenteEstablecimientos = $currentUser->establecimientos_ids;
+                if (is_string($gerenteEstablecimientos)) {
+                    $gerenteEstablecimientos = json_decode($gerenteEstablecimientos, true);
+                }
+                $establishmentFilter = $gerenteEstablecimientos ?: [];
             } elseif ($currentUser->role === UserRole::CAJERO && $currentUser->emisor_id == $id) {
-                // Cajero solo puede ver su propio usuario dentro de su emisor
+                // Cajero solo puede verse a sí mismo
                 $canView = true;
                 $limitedToSelf = true;
             }
@@ -623,12 +705,33 @@ class UserController extends Controller
             $perPage = max(10, min(100, (int)($request->input('per_page', 20))));
             $search = trim($request->input('search', ''));
 
-            // Listar usuarios del emisor - solo usuarios con emisor_id coincidente
+            // Listar usuarios del emisor
             $query = User::where('emisor_id', $id)
                 ->with('creador:id,cedula,nombres,apellidos,username,email,role');
 
+            // Excluir al usuario actual para roles emisor, gerente y cajero
+            // (estos usuarios no deben verse a sí mismos en la lista)
+            if (in_array($currentUser->role, [UserRole::EMISOR, UserRole::GERENTE, UserRole::CAJERO])) {
+                $query->where('id', '!=', $currentUser->id);
+            }
+
+            // Aplicar filtro de usuario limitado a sí mismo (ya no aplica porque cajero no ve nada)
             if ($limitedToSelf) {
-                $query->where('id', $currentUser->id);
+                // Cajero no debe ver a nadie (ni a sí mismo)
+                $query->where('id', 0); // Forzar resultado vacío
+            }
+            
+            // Aplicar filtro de roles si existe (excepto para gerentes que tienen filtro especial)
+            if ($roleFilter !== null && $establishmentFilter === null) {
+                $query->whereIn('role', $roleFilter);
+            }
+            
+            // Aplicar filtro de establecimientos para gerentes
+            // Para gerentes: solo cajeros con establecimientos compartidos (ya no se incluye a sí mismo)
+            if ($establishmentFilter !== null && !empty($establishmentFilter)) {
+                $postFilterByEstablishment = true;
+                // Solo cajeros (el filtro fino de establecimientos se hace después)
+                $query->where('role', 'cajero');
             }
 
             if (!empty($search)) {
@@ -645,7 +748,25 @@ class UserController extends Controller
 
             // Mapear datos para incluir información del creador y establecimientos/puntos de emisión
             $data = $users->items();
-            // Normalizamos datos del creador y aplicamos fallback de username/email para evitar campos vacíos
+            
+            // Filtrar cajeros por establecimientos compartidos con el gerente (post-filtrado)
+            if ($postFilterByEstablishment && !empty($establishmentFilter)) {
+                $data = array_filter($data, function ($user) use ($establishmentFilter, $currentUser) {
+                    // Para cajeros, verificar si comparten al menos un establecimiento
+                    $userEstIds = $user->establecimientos_ids;
+                    if (is_string($userEstIds)) {
+                        $userEstIds = json_decode($userEstIds, true) ?? [];
+                    }
+                    if (!is_array($userEstIds)) {
+                        $userEstIds = [];
+                    }
+                    // Verificar intersección
+                    $intersection = array_intersect($userEstIds, $establishmentFilter);
+                    return count($intersection) > 0;
+                });
+                $data = array_values($data); // Re-indexar el array
+            }
+            
             $data = array_map(function ($user) {
                 $creador = $user->creador;
                 $creadorUsername = $creador?->username
@@ -666,18 +787,24 @@ class UserController extends Controller
                 'usuario_actual_id' => $currentUser->id,
                 'rol' => $currentUser->role->value,
                 'emisor_id' => $id,
-                'total' => $users->total()
+                'total' => count($data),
+                'roleFilter' => $roleFilter,
+                'establishmentFilter' => $establishmentFilter,
+                'postFiltered' => $postFilterByEstablishment
             ]);
+
+            // Si hubo post-filtrado, ajustar el total
+            $totalCount = $postFilterByEstablishment ? count($data) : $users->total();
 
             return response()->json([
                 'data' => $data,
                 'meta' => [
                     'current_page' => $users->currentPage(),
-                    'total' => $users->total(),
+                    'total' => $totalCount,
                     'per_page' => $users->perPage(),
-                    'last_page' => $users->lastPage(),
-                    'from' => $users->firstItem() ?? 0,
-                    'to' => $users->lastItem() ?? 0,
+                    'last_page' => $postFilterByEstablishment ? 1 : $users->lastPage(),
+                    'from' => count($data) > 0 ? 1 : 0,
+                    'to' => count($data),
                 ]
             ]);
         } catch (\Exception $e) {
@@ -837,33 +964,81 @@ class UserController extends Controller
             /** @var User|null $currentUser */
             $currentUser = Auth::user();
             
+            // Obtener el usuario objetivo
+            $user = User::find($usuario);
+            
+            if (!$user) {
+                return response()->json([
+                    'message' => 'Usuario no encontrado'
+                ], Response::HTTP_NOT_FOUND);
+            }
+            
             // Validar permisos
             $canView = false;
             
-            if ($currentUser->role === UserRole::ADMINISTRADOR || $currentUser->role === UserRole::DISTRIBUIDOR) {
-                // Administrador y Distribuidor pueden ver cualquier usuario
+            // Un usuario puede verse a sí mismo
+            if ($currentUser->id == $usuario) {
                 $canView = true;
-            } elseif (($currentUser->role === UserRole::EMISOR || $currentUser->role === UserRole::GERENTE) && 
-                      $currentUser->emisor_id == $id) {
-                // Emisor y Gerente solo ven usuarios de su emisor
+            }
+            // Administrador puede ver cualquier usuario
+            elseif ($currentUser->role === UserRole::ADMINISTRADOR) {
                 $canView = true;
-            } elseif ($currentUser->id == $usuario) {
-                // Un usuario puede verse a sí mismo
+            }
+            // Distribuidor puede ver usuarios del emisor
+            elseif ($currentUser->role === UserRole::DISTRIBUIDOR) {
+                $canView = true;
+            }
+            // Emisor puede ver usuarios de su organización (emisor_id == id del emisor en la URL)
+            elseif ($currentUser->role === UserRole::EMISOR && $currentUser->emisor_id == $id) {
+                $canView = true;
+            }
+            // Gerente puede ver usuarios del mismo emisor
+            elseif ($currentUser->role === UserRole::GERENTE && $currentUser->emisor_id == $id) {
+                $canView = true;
+            }
+            // Cajero puede ver otros usuarios del mismo emisor (solo lectura)
+            elseif ($currentUser->role === UserRole::CAJERO && $currentUser->emisor_id == $id) {
                 $canView = true;
             }
             
             if (!$canView) {
+                Log::warning('Intento de acceso no autorizado a usuario del emisor', [
+                    'usuario_objetivo' => $usuario,
+                    'emisor_id' => $id,
+                    'solicitante_id' => $currentUser->id,
+                    'rol_solicitante' => $currentUser->role->value
+                ]);
                 return response()->json([
                     'message' => 'No tienes permisos para ver este usuario'
                 ], Response::HTTP_FORBIDDEN);
             }
 
-            $user = User::find($usuario);
-
-            if (!$user || ($user->emisor_id != $id && $user->id != $id)) {
+            // Verificar que el usuario pertenece al emisor
+            if ($user->emisor_id != $id && $user->id != $id) {
                 return response()->json([
-                    'message' => 'Usuario no encontrado'
+                    'message' => 'Usuario no encontrado en este emisor'
                 ], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Cargar información del creador
+            $user->load('creador:id,nombres,apellidos,username,email,cedula,role');
+            
+            $creador = $user->creador;
+            $creadorUsername = $creador?->username
+                ?: ($creador?->email ?? $creador?->cedula ?? null);
+            
+            if ($creador) {
+                $user->created_by_name = trim($creador->nombres . ' ' . $creador->apellidos);
+                $user->created_by_username = $creadorUsername;
+                $user->created_by_nombres = $creador->nombres;
+                $user->created_by_apellidos = $creador->apellidos;
+                $user->created_by_role = $creador->role?->value;
+            } else {
+                $user->created_by_name = 'Sistema';
+                $user->created_by_username = null;
+                $user->created_by_nombres = null;
+                $user->created_by_apellidos = null;
+                $user->created_by_role = null;
             }
 
             return response()->json([
@@ -884,6 +1059,12 @@ class UserController extends Controller
     /**
      * Actualizar usuario del emisor
      * HU 2: Registro de usuarios asociados a un emisor
+     * 
+     * Restricciones:
+     * - Administrador: Puede actualizar cualquier usuario
+     * - Distribuidor: Solo usuarios de emisores que él registró
+     * - Emisor: Solo gerentes y cajeros de su emisor
+     * - Gerente: Solo cajeros asociados a sus establecimientos (y a sí mismo)
      */
     public function updateByEmisor(UpdateUserRequest $request, $id, $usuario)
     {
@@ -891,33 +1072,48 @@ class UserController extends Controller
             /** @var User|null $currentUser */
             $currentUser = Auth::user();
             
-            // Validar permisos
+            $user = User::find($usuario);
+            
+            if (!$user || ($user->emisor_id != $id && $user->id != $id)) {
+                return response()->json([
+                    'message' => 'Usuario no encontrado'
+                ], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Validar permisos según jerarquía
             $canUpdate = false;
             
-            if ($currentUser->role === UserRole::ADMINISTRADOR || $currentUser->role === UserRole::DISTRIBUIDOR) {
-                // Administrador y Distribuidor pueden actualizar cualquier usuario
+            // Un usuario puede actualizarse a sí mismo
+            if ($currentUser->id == $usuario) {
                 $canUpdate = true;
-            } elseif (($currentUser->role === UserRole::EMISOR || $currentUser->role === UserRole::GERENTE) && 
-                      $currentUser->emisor_id == $id) {
-                // Emisor y Gerente solo actualizan usuarios de su emisor
+            }
+            // Administrador puede actualizar cualquier usuario
+            elseif ($currentUser->role === UserRole::ADMINISTRADOR) {
                 $canUpdate = true;
-            } elseif ($currentUser->id == $usuario) {
-                // Un usuario puede actualizarse a sí mismo
-                $canUpdate = true;
+            }
+            // Distribuidor: verificar que el emisor fue creado por él
+            elseif ($currentUser->role === UserRole::DISTRIBUIDOR) {
+                $emisor = \App\Models\Company::find($id);
+                $canUpdate = $emisor && $emisor->created_by == $currentUser->id;
+            }
+            // Emisor puede actualizar gerentes y cajeros de su emisor
+            elseif ($currentUser->role === UserRole::EMISOR && $currentUser->emisor_id == $id) {
+                $canUpdate = in_array($user->role->value, ['gerente', 'cajero']);
+            }
+            // Gerente puede actualizar cajeros asociados a sus establecimientos
+            elseif ($currentUser->role === UserRole::GERENTE && $currentUser->emisor_id == $id) {
+                if ($user->role === UserRole::CAJERO) {
+                    // Verificar establecimientos en común
+                    $gerenteEsts = json_decode($currentUser->establecimientos_ids ?? '[]', true);
+                    $cajeroEsts = json_decode($user->establecimientos_ids ?? '[]', true);
+                    $canUpdate = !empty(array_intersect($gerenteEsts, $cajeroEsts));
+                }
             }
             
             if (!$canUpdate) {
                 return response()->json([
                     'message' => 'No tienes permisos para actualizar este usuario'
                 ], Response::HTTP_FORBIDDEN);
-            }
-
-            $user = User::find($usuario);
-
-            if (!$user || ($user->emisor_id != $id && $user->id != $id)) {
-                return response()->json([
-                    'message' => 'Usuario no encontrado'
-                ], Response::HTTP_NOT_FOUND);
             }
 
             DB::beginTransaction();
@@ -1009,6 +1205,12 @@ class UserController extends Controller
     /**
      * Eliminar usuario del emisor
      * HU 2: Registro de usuarios asociados a un emisor
+     * 
+     * Restricciones:
+     * - Administrador: Puede eliminar cualquier usuario
+     * - Distribuidor: Solo usuarios de emisores que él registró
+     * - Emisor: Solo gerentes y cajeros de su emisor
+     * - Gerente: Solo cajeros asociados a sus establecimientos
      */
     public function destroyByEmisor(Request $request, $id, $usuario)
     {
@@ -1016,30 +1218,51 @@ class UserController extends Controller
             /** @var User|null $currentUser */
             $currentUser = Auth::user();
             
-            // Validar permisos
-            $canDelete = false;
-            
-            if ($currentUser->role === UserRole::ADMINISTRADOR || $currentUser->role === UserRole::DISTRIBUIDOR) {
-                // Administrador y Distribuidor pueden eliminar cualquier usuario
-                $canDelete = true;
-            } elseif (($currentUser->role === UserRole::EMISOR || $currentUser->role === UserRole::GERENTE) && 
-                      $currentUser->emisor_id == $id) {
-                // Emisor y Gerente solo eliminan usuarios de su emisor
-                $canDelete = true;
-            }
-            
-            if (!$canDelete) {
-                return response()->json([
-                    'message' => 'No tienes permisos para eliminar usuarios en este emisor'
-                ], Response::HTTP_FORBIDDEN);
-            }
-
             $user = User::find($usuario);
 
             if (!$user || ($user->emisor_id != $id && $user->id != $id)) {
                 return response()->json([
                     'message' => 'Usuario no encontrado'
                 ], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Validar permisos según jerarquía
+            $canDelete = false;
+            
+            // Un usuario no puede eliminarse a sí mismo
+            if ($currentUser->id == $usuario) {
+                return response()->json([
+                    'message' => 'No puedes eliminarte a ti mismo'
+                ], Response::HTTP_FORBIDDEN);
+            }
+            
+            // Administrador puede eliminar cualquier usuario
+            if ($currentUser->role === UserRole::ADMINISTRADOR) {
+                $canDelete = true;
+            }
+            // Distribuidor: verificar que el emisor fue creado por él
+            elseif ($currentUser->role === UserRole::DISTRIBUIDOR) {
+                $emisor = \App\Models\Company::find($id);
+                $canDelete = $emisor && $emisor->created_by == $currentUser->id;
+            }
+            // Emisor puede eliminar gerentes y cajeros de su emisor
+            elseif ($currentUser->role === UserRole::EMISOR && $currentUser->emisor_id == $id) {
+                $canDelete = in_array($user->role->value, ['gerente', 'cajero']);
+            }
+            // Gerente puede eliminar cajeros asociados a sus establecimientos
+            elseif ($currentUser->role === UserRole::GERENTE && $currentUser->emisor_id == $id) {
+                if ($user->role === UserRole::CAJERO) {
+                    // Verificar establecimientos en común
+                    $gerenteEsts = json_decode($currentUser->establecimientos_ids ?? '[]', true);
+                    $cajeroEsts = json_decode($user->establecimientos_ids ?? '[]', true);
+                    $canDelete = !empty(array_intersect($gerenteEsts, $cajeroEsts));
+                }
+            }
+            
+            if (!$canDelete) {
+                return response()->json([
+                    'message' => 'No tienes permisos para eliminar este usuario'
+                ], Response::HTTP_FORBIDDEN);
             }
 
             // Validar contraseña del usuario actual
