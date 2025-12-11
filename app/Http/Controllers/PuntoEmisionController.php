@@ -251,8 +251,12 @@ class PuntoEmisionController extends Controller
     /**
      * Listar todos los puntos de emisión de un emisor (sin agrupar por establecimiento)
      * HU 2: Needed by the frontend to populate punto selection in user form
+     * 
+     * Query params:
+     * - for_assignment=true: Lista todos los puntos de establecimientos accesibles (para asignar a otros usuarios)
+     * - for_assignment=false (default): Filtra por puntos asignados al usuario actual
      */
-    public function listByEmisor(string $id): JsonResponse
+    public function listByEmisor(string $id, Request $request): JsonResponse
     {
         try {
             $permInfo = $this->checkPermissions($id, [
@@ -262,18 +266,42 @@ class PuntoEmisionController extends Controller
 
             // Castear id a integer para la query
             $emiId = (int) $id;
+            $currentUser = auth()->user();
+            $forAssignment = $request->query('for_assignment') === 'true';
             
             // Obtener todos los puntos que pertenecen a establecimientos del emisor
-            $puntos = PuntoEmision::where('company_id', $emiId)
-                ->select('id', 'company_id', 'establecimiento_id', 'codigo', 'nombre', 'estado')
-                ->get();
+            $query = PuntoEmision::where('company_id', $emiId)
+                ->select('id', 'company_id', 'establecimiento_id', 'codigo', 'nombre', 'estado');
 
-            if (($permInfo['limited'] ?? false) && !empty($permInfo['puntos_ids'])) {
-                $assigned = $permInfo['puntos_ids'];
-                $puntos = $puntos->filter(function ($punto) use ($assigned) {
-                    return $this->idInArray($punto->id, $assigned);
-                })->values();
+            // Si el usuario es limitado (emisor/gerente/cajero con asignaciones específicas)
+            if (($permInfo['limited'] ?? false)) {
+                if ($forAssignment) {
+                    // Para asignación: mostrar todos los puntos de los establecimientos accesibles
+                    $establecimientosIds = $this->normalizeIds($currentUser->establecimientos_ids);
+                    $puntosIds = $this->normalizeIds($currentUser->puntos_emision_ids);
+                    
+                    // Si no tiene establecimientos directos, inferir desde puntos
+                    if (empty($establecimientosIds) && !empty($puntosIds)) {
+                        $establecimientosIds = PuntoEmision::whereIn('id', $puntosIds)
+                            ->pluck('establecimiento_id')
+                            ->unique()
+                            ->toArray();
+                    }
+                    
+                    // Filtrar solo por establecimientos accesibles, no por puntos específicos
+                    if (!empty($establecimientosIds)) {
+                        $query->whereIn('establecimiento_id', $establecimientosIds);
+                    }
+                } else {
+                    // Para uso propio: filtrar por puntos específicamente asignados
+                    $puntosIds = $permInfo['puntos_ids'] ?? [];
+                    if (!empty($puntosIds)) {
+                        $query->whereIn('id', $puntosIds);
+                    }
+                }
             }
+            
+            $puntos = $query->get();
 
             \Log::info('Puntos de emisión para emisor', [
                 'emisor_id' => $emiId,
