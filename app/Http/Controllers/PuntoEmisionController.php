@@ -8,6 +8,7 @@ use App\Models\Company;
 use App\Enums\UserRole;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Validation\Rule;
 
 class PuntoEmisionController extends Controller
 {
@@ -152,8 +153,16 @@ class PuntoEmisionController extends Controller
             $establecimiento = Establecimiento::where('company_id', $companyId)
                 ->findOrFail($establecimientoId);
 
+            // Validar que el código sea único dentro del mismo establecimiento
             $validated = $request->validate([
-                'codigo' => 'required|string|size:3|unique:puntos_emision,codigo',
+                'codigo' => [
+                    'required',
+                    'string',
+                    'size:3',
+                    Rule::unique('puntos_emision', 'codigo')
+                        ->where('establecimiento_id', $establecimientoId)
+                        ->where('company_id', $companyId)
+                ],
                 'estado' => 'required|in:ACTIVO,DESACTIVADO',
                 'nombre' => 'required|string|max:255',
                 'secuencial_factura' => 'required|integer|min:1',
@@ -191,8 +200,17 @@ class PuntoEmisionController extends Controller
                 ->where('establecimiento_id', $establecimientoId)
                 ->findOrFail($puntoId);
 
+            // Validar que el código sea único dentro del mismo establecimiento (excepto el punto actual)
             $validated = $request->validate([
-                'codigo' => 'sometimes|string|size:3|unique:puntos_emision,codigo,' . $puntoId,
+                'codigo' => [
+                    'sometimes',
+                    'string',
+                    'size:3',
+                    Rule::unique('puntos_emision', 'codigo')
+                        ->where('establecimiento_id', $establecimientoId)
+                        ->where('company_id', $companyId)
+                        ->ignore($puntoId)
+                ],
                 'estado' => 'sometimes|in:ACTIVO,DESACTIVADO',
                 'nombre' => 'sometimes|string|max:255',
                 'secuencial_factura' => 'sometimes|integer|min:1',
