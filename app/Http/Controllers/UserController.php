@@ -390,6 +390,19 @@ class UserController extends Controller
 
             /** @var User|null $currentUser */
             $currentUser = Auth::user();
+            
+            // Verificar que el usuario actual sea administrador o distribuidor
+            if (!in_array($currentUser->role->value, ['administrador', 'distribuidor'])) {
+                Log::warning('Intento de edición sin permisos (rol no permitido)', [
+                    'usuario_a_editar' => $id,
+                    'usuario_actual_id' => $currentUser->id,
+                    'rol_actual' => $currentUser->role->value
+                ]);
+                return response()->json([
+                    'message' => 'Solo administrador o distribuidor pueden editar usuarios'
+                ], Response::HTTP_FORBIDDEN);
+            }
+
             $user = User::find($id);
 
             if (!$user) {
@@ -558,6 +571,18 @@ class UserController extends Controller
             $currentUser = Auth::user();
             $password = $request->input('password');
 
+            // Verificar que el usuario actual sea administrador o distribuidor
+            if (!in_array($currentUser->role->value, ['administrador', 'distribuidor'])) {
+                Log::warning('Intento de eliminación sin permisos (rol no permitido)', [
+                    'usuario_a_eliminar' => $id,
+                    'usuario_actual_id' => $currentUser->id,
+                    'rol_actual' => $currentUser->role->value
+                ]);
+                return response()->json([
+                    'message' => 'Solo administrador o distribuidor pueden eliminar usuarios'
+                ], Response::HTTP_FORBIDDEN);
+            }
+
             // Verificar contraseña del usuario actual
             if (!Hash::check($password, $currentUser->password)) {
                 Log::warning('Intento de eliminación con contraseña incorrecta', [
@@ -577,6 +602,18 @@ class UserController extends Controller
                     'usuario_actual_id' => $currentUser->id
                 ]);
                 return response()->json(['message' => 'Usuario no encontrado'], Response::HTTP_NOT_FOUND);
+            }
+
+            // Validar que el usuario esté en estado "Nuevo"
+            if ($user->estado !== 'nuevo') {
+                Log::warning('Intento de eliminación de usuario no nuevo', [
+                    'usuario_id' => $id,
+                    'estado' => $user->estado,
+                    'usuario_actual_id' => $currentUser->id
+                ]);
+                return response()->json([
+                    'message' => 'Solo se pueden eliminar usuarios en estado "Nuevo". Este usuario está en estado "' . $user->estado . '". Para cambiar su estado, utiliza la opción editar.'
+                ], Response::HTTP_BAD_REQUEST);
             }
 
             // Validar que puede gestionar este usuario
@@ -617,6 +654,7 @@ class UserController extends Controller
                 'usuario_eliminado_id' => $id,
                 'usuario_eliminado_email' => $user->email,
                 'usuario_eliminado_role' => $user->role->value,
+                'estado_eliminado' => $user->estado,
                 'usuario_actual_id' => $currentUser->id,
                 'rol_actual' => $currentUser->role->value
             ]);
@@ -1226,6 +1264,13 @@ class UserController extends Controller
                 ], Response::HTTP_NOT_FOUND);
             }
             
+            // Validar que el usuario esté en estado "Nuevo"
+            if ($user->estado !== 'nuevo') {
+                return response()->json([
+                    'message' => 'Solo se pueden eliminar usuarios en estado "Nuevo". Este usuario está en estado "' . $user->estado . '". Para cambiar su estado, utiliza la opción editar.'
+                ], Response::HTTP_BAD_REQUEST);
+            }
+            
             // Validar permisos según jerarquía
             $canDelete = false;
             
@@ -1282,6 +1327,7 @@ class UserController extends Controller
                 'emisor_id' => $id,
                 'eliminado_por_id' => $currentUser->id,
                 'rol_eliminador' => $currentUser->role->value,
+                'estado' => $user->estado,
                 'timestamp' => now()
             ]);
 
