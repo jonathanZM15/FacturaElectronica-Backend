@@ -299,7 +299,7 @@ class PlanController extends Controller
      * Eliminar un plan (soft delete).
      * Solo accesible para administradores.
      */
-    public function destroy($id)
+    public function destroy(\Illuminate\Http\Request $request, $id)
     {
         try {
             /** @var \App\Models\User|null $currentUser */
@@ -313,12 +313,40 @@ class PlanController extends Controller
                 ], Response::HTTP_FORBIDDEN);
             }
 
+            // Confirmar contraseña del administrador
+            $password = $request->input('password');
+            if (empty($password)) {
+                return response()->json([
+                    'message' => 'Se requiere la contraseña del administrador para confirmar la eliminación.'
+                ], Response::HTTP_BAD_REQUEST);
+            }
+
+            if (!\Illuminate\Support\Facades\Hash::check($password, $currentUser->password)) {
+                return response()->json([
+                    'message' => 'Autenticación fallida. Contraseña incorrecta.'
+                ], Response::HTTP_UNAUTHORIZED);
+            }
+
             DB::beginTransaction();
 
             $plan = Plan::findOrFail($id);
-            
-            // Soft delete
-            $plan->delete();
+
+            // No permitir eliminar si existen suscripciones asociadas
+            $tablesToCheck = ['subscriptions', 'suscripciones', 'plan_subscriptions'];
+            foreach ($tablesToCheck as $tbl) {
+                if (\Illuminate\Support\Facades\Schema::hasTable($tbl)) {
+                    $count = DB::table($tbl)->where('plan_id', $id)->count();
+                    if ($count > 0) {
+                        DB::rollBack();
+                        return response()->json([
+                            'message' => 'No se puede eliminar el plan porque tiene suscripciones asociadas.'
+                        ], Response::HTTP_CONFLICT);
+                    }
+                }
+            }
+
+            // Eliminar de forma permanente
+            $plan->forceDelete();
 
             DB::commit();
 
