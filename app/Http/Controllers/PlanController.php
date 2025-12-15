@@ -34,14 +34,21 @@ class PlanController extends Controller
             // Parámetros de paginación y filtrado
             $page = max(1, (int)($request->input('page', 1)));
             $perPage = max(5, min(100, (int)($request->input('per_page', 20))));
-            $search = trim($request->input('search', ''));
+            $nombre = trim($request->input('nombre', ''));
+            $cantidadComprobantesGte = $request->input('cantidad_comprobantes_gte');
+            $precio = $request->input('precio');
+            $observacion = trim($request->input('observacion', ''));
             $estado = trim($request->input('estado', ''));
             $periodo = trim($request->input('periodo', ''));
+            $createdFrom = $request->input('created_at_from');
+            $createdTo = $request->input('created_at_to');
+            $updatedFrom = $request->input('updated_at_from');
+            $updatedTo = $request->input('updated_at_to');
             $sortBy = $request->input('sort_by', 'created_at');
             $sortDir = strtolower($request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
 
             // Validar parámetros de ordenamiento
-            $validSortColumns = ['id', 'nombre', 'precio', 'periodo', 'estado', 'created_at'];
+            $validSortColumns = ['id', 'nombre', 'cantidad_comprobantes', 'precio', 'periodo', 'observacion', 'estado', 'comprobantes_minimos', 'dias_minimos', 'created_at', 'updated_at'];
             if (!in_array($sortBy, $validSortColumns)) {
                 $sortBy = 'created_at';
             }
@@ -49,22 +56,56 @@ class PlanController extends Controller
             // Construir query
             $query = Plan::query()->with(['createdBy:id,nombres,apellidos', 'updatedBy:id,nombres,apellidos']);
 
-            // Aplicar búsqueda
-            if (!empty($search)) {
-                $query->where(function ($q) use ($search) {
-                    $q->where('nombre', 'like', "%{$search}%")
-                      ->orWhere('observacion', 'like', "%{$search}%");
-                });
+            // Filtrar por nombre
+            if (!empty($nombre)) {
+                $query->where('nombre', 'like', "%{$nombre}%");
             }
 
-            // Filtrar por estado
-            if (!empty($estado) && in_array($estado, ['Activo', 'Desactivado'])) {
-                $query->where('estado', $estado);
+            // Filtrar por cantidad de comprobantes (mayor o igual)
+            if (!empty($cantidadComprobantesGte) && is_numeric($cantidadComprobantesGte)) {
+                $query->where('cantidad_comprobantes', '>=', (int)$cantidadComprobantesGte);
+            }
+
+            // Filtrar por precio
+            if (!empty($precio) && is_numeric($precio)) {
+                $query->where('precio', '=', (float)$precio);
+            }
+
+            // Filtrar por observación
+            if (!empty($observacion)) {
+                $query->where('observacion', 'like', "%{$observacion}%");
+            }
+
+            // Filtrar por estado (puede ser múltiple separado por comas)
+            if (!empty($estado)) {
+                $estados = explode(',', $estado);
+                $estadosValidos = array_filter($estados, function($e) {
+                    return in_array(trim($e), ['Activo', 'Desactivado']);
+                });
+                if (count($estadosValidos) > 0) {
+                    $query->whereIn('estado', $estadosValidos);
+                }
             }
 
             // Filtrar por período
             if (!empty($periodo) && in_array($periodo, ['Mensual', 'Trimestral', 'Semestral', 'Anual', 'Bianual', 'Trianual'])) {
                 $query->where('periodo', $periodo);
+            }
+
+            // Filtrar por rango de fechas de creación
+            if (!empty($createdFrom)) {
+                $query->whereDate('created_at', '>=', $createdFrom);
+            }
+            if (!empty($createdTo)) {
+                $query->whereDate('created_at', '<=', $createdTo);
+            }
+
+            // Filtrar por rango de fechas de actualización
+            if (!empty($updatedFrom)) {
+                $query->whereDate('updated_at', '>=', $updatedFrom);
+            }
+            if (!empty($updatedTo)) {
+                $query->whereDate('updated_at', '<=', $updatedTo);
             }
 
             // Ordenar

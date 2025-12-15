@@ -1,0 +1,17 @@
+{
+  "files": {
+    "main.css": "/static/css/main.ae7cc136.css",
+    "main.js": "/static/js/main.3dc09b42.js",
+    "static/js/453.8aaf327e.chunk.js": "/static/js/453.8aaf327e.chunk.js",
+    "static/media/maximofactura.png": "/static/media/maximofactura.02ceda47f39c1cda3b64.png",
+    "static/media/factura-inicio.png": "/static/media/factura-inicio.b4c90e2cf9f3e7027810.png",
+    "index.html": "/index.html",
+    "main.ae7cc136.css.map": "/static/css/main.ae7cc136.css.map",
+    "main.3dc09b42.js.map": "/static/js/main.3dc09b42.js.map",
+    "453.8aaf327e.chunk.js.map": "/static/js/453.8aaf327e.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.ae7cc136.css",
+    "static/js/main.3dc09b42.js"
+  ]
+}
