@@ -20,7 +20,7 @@ class EstablecimientoController extends Controller
     public function index($companyId)
     {
         // Validar permisos: solo admin, creador de compañía, o usuario emisor/gerente/cajero asignado
-        $currentUser = auth()->user();
+        $currentUser = Auth::user();
         $company = Company::findOrFail($companyId);
         
         $isAdmin = $currentUser->role === UserRole::ADMINISTRADOR;
@@ -88,12 +88,42 @@ class EstablecimientoController extends Controller
         
         $items = $query->orderBy('id', 'desc')->get();
         
-        // Map items to include logo_url and other accessors
+        // Map items to include logo_url, other accessors, and associated users
         $data = $items->map(function ($item) {
+            // Get users associated with this establecimiento
+            $usuarios = \App\Models\User::whereNotNull('establecimientos_ids')
+                ->get()
+                ->filter(function ($user) use ($item) {
+                    $estIds = $user->establecimientos_ids;
+                    if (is_string($estIds)) {
+                        // Handle double JSON encoding
+                        $estIds = json_decode($estIds, true);
+                        if (is_string($estIds)) {
+                            $estIds = json_decode($estIds, true);
+                        }
+                    }
+                    if (!is_array($estIds)) {
+                        return false;
+                    }
+                    return in_array($item->id, $estIds) || in_array((string)$item->id, $estIds);
+                })
+                ->map(function ($user) {
+                    return [
+                        'id' => $user->id,
+                        'username' => $user->username,
+                        'role' => $user->role,
+                        'nombres' => $user->nombres,
+                        'apellidos' => $user->apellidos,
+                    ];
+                })
+                ->values()
+                ->all();
+            
             return array_merge($item->toArray(), [
                 'logo_url' => $item->logo_url,
                 'created_by_name' => $item->created_by_name,
                 'updated_by_name' => $item->updated_by_name,
+                'usuarios' => $usuarios,
             ]);
         });
         
@@ -110,7 +140,7 @@ class EstablecimientoController extends Controller
     public function store(Request $request, $companyId)
     {
         // Validar permisos: solo admin, creador de compañía, o usuario emisor asignado (Gerente NO puede crear)
-        $currentUser = auth()->user();
+        $currentUser = Auth::user();
         $company = Company::findOrFail($companyId);
         
         $isAdmin = $currentUser->role === UserRole::ADMINISTRADOR;
@@ -176,7 +206,7 @@ class EstablecimientoController extends Controller
 
     public function show($companyId, $id)
     {
-        $currentUser = auth()->user();
+        $currentUser = Auth::user();
         $company = Company::findOrFail($companyId);
 
         $isAdmin = $currentUser->role === UserRole::ADMINISTRADOR;
@@ -235,6 +265,7 @@ class EstablecimientoController extends Controller
             'codigo_editable' => $codigoEditable,
             'created_by_name' => $est->created_by_name,
             'updated_by_name' => $est->updated_by_name,
+            'usuarios' => $this->getUsuariosAsociados($est->id),
         ]);
 
         return response()->json(['data' => $payload]);
@@ -280,7 +311,7 @@ class EstablecimientoController extends Controller
     public function update(Request $request, $companyId, $id)
     {
         // Validar permisos: admin, creador, emisor asignado o gerente asignado pueden editar (Cajero NO)
-        $currentUser = auth()->user();
+        $currentUser = Auth::user();
         $company = Company::findOrFail($companyId);
         
         $isAdmin = $currentUser->role === UserRole::ADMINISTRADOR;
@@ -372,7 +403,7 @@ class EstablecimientoController extends Controller
     public function destroy(Request $request, $companyId, $id)
     {
         // Validar permisos: admin, creador, emisor asignado o gerente asignado pueden eliminar (Cajero NO)
-        $currentUser = auth()->user();
+        $currentUser = Auth::user();
         $company = Company::findOrFail($companyId);
         
         $isAdmin = $currentUser->role === UserRole::ADMINISTRADOR;
@@ -450,5 +481,41 @@ class EstablecimientoController extends Controller
         } catch (\Exception $_) {}
 
         return response()->json(['message' => 'Establecimiento eliminado correctamente.']);
+    }
+
+    /**
+     * Get users associated with an establecimiento
+     */
+    private function getUsuariosAsociados($establecimientoId): array
+    {
+        $usuarios = \App\Models\User::whereNotNull('establecimientos_ids')
+            ->get()
+            ->filter(function ($user) use ($establecimientoId) {
+                $estIds = $user->establecimientos_ids;
+                if (is_string($estIds)) {
+                    // Handle double JSON encoding
+                    $estIds = json_decode($estIds, true);
+                    if (is_string($estIds)) {
+                        $estIds = json_decode($estIds, true);
+                    }
+                }
+                if (!is_array($estIds)) {
+                    return false;
+                }
+                return in_array($establecimientoId, $estIds) || in_array((string)$establecimientoId, $estIds);
+            })
+            ->map(function ($user) {
+                return [
+                    'id' => $user->id,
+                    'username' => $user->username,
+                    'role' => $user->role,
+                    'nombres' => $user->nombres,
+                    'apellidos' => $user->apellidos,
+                ];
+            })
+            ->values()
+            ->all();
+
+        return $usuarios;
     }
 }
