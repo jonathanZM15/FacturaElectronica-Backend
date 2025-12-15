@@ -7,6 +7,7 @@ use App\Http\Controllers\EmisorController;
 use App\Http\Controllers\LogoController;
 use App\Http\Controllers\PuntoEmisionController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\PlanController;
 
 //rutas para inicio y registro de sesion
 Route::post('/register', [AuthController::class, 'register']);
@@ -37,6 +38,15 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/usuarios/{usuario}', [UserController::class, 'update']);
         Route::delete('/usuarios/{usuario}', [UserController::class, 'destroy']);
         Route::post('/usuarios/{usuario}/resend-verification', [UserController::class, 'resendVerificationEmail']);
+        
+        // Rutas de Planes (solo admins)
+        Route::get('/planes', [PlanController::class, 'index']);
+        Route::post('/planes', [PlanController::class, 'store']);
+        Route::get('/planes/periodos', [PlanController::class, 'periodos']);
+        Route::get('/planes/estados', [PlanController::class, 'estados']);
+        Route::get('/planes/{id}', [PlanController::class, 'show']);
+        Route::put('/planes/{id}', [PlanController::class, 'update']);
+        Route::delete('/planes/{id}', [PlanController::class, 'destroy']);
     });
 
     //Rutas para el emisor
