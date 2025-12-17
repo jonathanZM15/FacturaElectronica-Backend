@@ -66,9 +66,9 @@ class PlanController extends Controller
                 $query->where('cantidad_comprobantes', '>=', (int)$cantidadComprobantesGte);
             }
 
-            // Filtrar por precio
+            // Filtrar por precio (menor o igual)
             if (!empty($precio) && is_numeric($precio)) {
-                $query->where('precio', '=', (float)$precio);
+                $query->where('precio', '<=', (float)$precio);
             }
 
             // Filtrar por observación
@@ -323,7 +323,7 @@ class PlanController extends Controller
 
             if (!\Illuminate\Support\Facades\Hash::check($password, $currentUser->password)) {
                 return response()->json([
-                    'message' => 'Autenticación fallida. Contraseña incorrecta.'
+                    'message' => '❌ Autenticación fallida. Contraseña incorrecta.'
                 ], Response::HTTP_UNAUTHORIZED);
             }
 
@@ -356,7 +356,7 @@ class PlanController extends Controller
             ]);
 
             return response()->json([
-                'message' => 'Plan eliminado exitosamente'
+                'message' => '✅ Plan eliminado exitosamente.'
             ], Response::HTTP_OK);
 
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {

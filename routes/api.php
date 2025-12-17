@@ -8,6 +8,7 @@ use App\Http\Controllers\LogoController;
 use App\Http\Controllers\PuntoEmisionController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\PlanController;
+use App\Http\Controllers\SuscripcionController;
 
 //rutas para inicio y registro de sesion
 Route::post('/register', [AuthController::class, 'register']);
@@ -84,6 +85,22 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/emisores/{id}/usuarios/{usuario}', [UserController::class, 'updateByEmisor']);
     Route::delete('/emisores/{id}/usuarios/{usuario}', [UserController::class, 'destroyByEmisor']);
     Route::post('/emisores/{id}/usuarios/{usuario}/resend-verification', [UserController::class, 'resendVerificationEmailByEmisor']);
+
+    // Suscripciones de un emisor (Admin y Distribuidor)
+    Route::get('/suscripciones/planes-activos', [SuscripcionController::class, 'planesActivos']);
+    Route::get('/suscripciones/estados', [SuscripcionController::class, 'estados']);
+    Route::post('/suscripciones/calcular-fecha-fin', [SuscripcionController::class, 'calcularFechaFin']);
+    Route::get('/emisores/{emisorId}/suscripciones', [SuscripcionController::class, 'index']);
+    Route::post('/emisores/{emisorId}/suscripciones', [SuscripcionController::class, 'store']);
+    Route::get('/emisores/{emisorId}/suscripciones/{id}', [SuscripcionController::class, 'show']);
+    Route::put('/emisores/{emisorId}/suscripciones/{id}', [SuscripcionController::class, 'update']);
+    Route::get('/emisores/{emisorId}/suscripciones/{id}/campos-editables', [SuscripcionController::class, 'camposEditables']);
+    
+    // Gestión de estados de suscripción (HU9)
+    Route::post('/emisores/{emisorId}/suscripciones/{id}/cambiar-estado', [SuscripcionController::class, 'cambiarEstado']);
+    Route::get('/emisores/{emisorId}/suscripciones/{id}/transiciones-disponibles', [SuscripcionController::class, 'transicionesDisponibles']);
+    Route::get('/emisores/{emisorId}/suscripciones/{id}/historial-estados', [SuscripcionController::class, 'historialEstados']);
+    Route::post('/emisores/{emisorId}/suscripciones/evaluar-estados', [SuscripcionController::class, 'evaluarEstados']);
 });
 
 
