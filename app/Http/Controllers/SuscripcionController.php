@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Suscripcion;
 use App\Models\SuscripcionComisionAudit;
+use App\Models\SuscripcionEstadoAudit;
 use App\Models\Plan;
 use App\Models\Company;
 use App\Models\User;
@@ -1113,6 +1114,145 @@ class SuscripcionController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Error al obtener transiciones disponibles',
+                'error' => $e->getMessage()
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Eliminar una suscripción.
+     * Solo se permite si:
+     * - Estado de transacción es "Pendiente"
+     * - Estado de suscripción es "Pendiente" o "Programado"
+     * - No existen comprobantes emitidos asociados
+     * 
+     * HU8: Eliminación de Suscripción
+     */
+    public function destroy(Request $request, $emisorId, $id)
+    {
+        try {
+            /** @var \App\Models\User|null $currentUser */
+            $currentUser = Auth::user();
+
+            if (!$currentUser) {
+                return response()->json([
+                    'message' => 'No autenticado'
+                ], Response::HTTP_UNAUTHORIZED);
+            }
+
+            // Verificar permisos (Admin o Distribuidor)
+            if (!in_array($currentUser->role, [UserRole::ADMINISTRADOR, UserRole::DISTRIBUIDOR])) {
+                return response()->json([
+                    'message' => 'No tienes permiso para eliminar suscripciones'
+                ], Response::HTTP_FORBIDDEN);
+            }
+
+            // Verificar que el emisor existe
+            $emisor = Company::findOrFail($emisorId);
+
+            // Si es distribuidor, verificar que el emisor le pertenece
+            if ($currentUser->role === UserRole::DISTRIBUIDOR) {
+                if ($emisor->created_by_id !== $currentUser->id) {
+                    return response()->json([
+                        'message' => 'No tienes acceso a este emisor'
+                    ], Response::HTTP_FORBIDDEN);
+                }
+            }
+
+            // Obtener la suscripción
+            $suscripcion = Suscripcion::where('emisor_id', $emisorId)
+                ->where('id', $id)
+                ->firstOrFail();
+
+            // === VALIDACIONES PARA PERMITIR ELIMINACIÓN ===
+            
+            // 1. Verificar que el estado de transacción sea "Pendiente"
+            if ($suscripcion->estado_transaccion !== 'Pendiente') {
+                return response()->json([
+                    'message' => 'No se puede eliminar la suscripción porque la transacción ya ha sido confirmada.'
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+
+            // 2. Verificar que el estado de suscripción sea "Pendiente" o "Programado"
+            $estadosPermitidos = ['Pendiente', 'Programado'];
+            if (!in_array($suscripcion->estado_suscripcion, $estadosPermitidos)) {
+                return response()->json([
+                    'message' => 'No se puede eliminar la suscripción porque no cumple las condiciones requeridas. Solo se pueden eliminar suscripciones en estado Pendiente o Programado.'
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+
+            // 3. Verificar que no existan comprobantes emitidos asociados
+            if ($suscripcion->comprobantes_usados > 0) {
+                return response()->json([
+                    'message' => 'No se puede eliminar la suscripción porque ya tiene comprobantes emitidos asociados.'
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+
+            // Iniciar transacción para garantizar integridad
+            DB::beginTransaction();
+
+            try {
+                // Registrar en auditoría antes de eliminar (usando la tabla de estado_audit)
+                SuscripcionEstadoAudit::create([
+                    'suscripcion_id' => $suscripcion->id,
+                    'estado_anterior' => $suscripcion->estado_suscripcion,
+                    'estado_nuevo' => 'ELIMINADO',
+                    'tipo_transicion' => 'Manual',
+                    'motivo' => 'Suscripción eliminada por usuario',
+                    'user_id' => $currentUser->id,
+                    'user_role' => $currentUser->role->value ?? $currentUser->role,
+                    'ip_address' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                    'created_at' => now(),
+                ]);
+
+                // Eliminar archivos asociados si existen
+                if ($suscripcion->comprobante_pago) {
+                    Storage::disk('public')->delete($suscripcion->comprobante_pago);
+                }
+                if ($suscripcion->factura) {
+                    Storage::disk('public')->delete($suscripcion->factura);
+                }
+                if ($suscripcion->comprobante_comision) {
+                    Storage::disk('public')->delete($suscripcion->comprobante_comision);
+                }
+
+                // Eliminar físicamente la suscripción (forceDelete para evitar soft delete)
+                $suscripcion->forceDelete();
+
+                DB::commit();
+
+                Log::info('Suscripción eliminada', [
+                    'suscripcion_id' => $id,
+                    'emisor_id' => $emisorId,
+                    'eliminado_por' => $currentUser->id,
+                    'rol' => $currentUser->role,
+                    'ip' => $request->ip(),
+                ]);
+
+                return response()->json([
+                    'message' => '✅ Suscripción eliminada correctamente.'
+                ], Response::HTTP_OK);
+
+            } catch (\Exception $e) {
+                DB::rollBack();
+                throw $e;
+            }
+
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'message' => 'Suscripción no encontrada'
+            ], Response::HTTP_NOT_FOUND);
+        } catch (\Exception $e) {
+            Log::error('Error al eliminar suscripción', [
+                'suscripcion_id' => $id,
+                'emisor_id' => $emisorId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'message' => '❌ Error al intentar eliminar la suscripción. Intente nuevamente.',
                 'error' => $e->getMessage()
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }

@@ -9,6 +9,8 @@ use App\Http\Controllers\PuntoEmisionController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\PlanController;
 use App\Http\Controllers\SuscripcionController;
+use App\Http\Controllers\TipoImpuestoController;
+use App\Http\Controllers\TipoRetencionController;
 
 //rutas para inicio y registro de sesion
 Route::post('/register', [AuthController::class, 'register']);
@@ -48,6 +50,26 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/planes/{id}', [PlanController::class, 'show']);
         Route::put('/planes/{id}', [PlanController::class, 'update']);
         Route::delete('/planes/{id}', [PlanController::class, 'destroy']);
+        
+        // Rutas de Tipos de Impuesto (solo admins) - Módulo 7
+        Route::get('/tipos-impuesto', [TipoImpuestoController::class, 'index']);
+        Route::post('/tipos-impuesto', [TipoImpuestoController::class, 'store']);
+        Route::get('/tipos-impuesto/opciones', [TipoImpuestoController::class, 'opciones']);
+        Route::get('/tipos-impuesto/activos', [TipoImpuestoController::class, 'activos']);
+        Route::get('/tipos-impuesto/check-codigo', [TipoImpuestoController::class, 'checkCodigo']);
+        Route::get('/tipos-impuesto/check-nombre', [TipoImpuestoController::class, 'checkNombre']);
+        Route::get('/tipos-impuesto/{id}', [TipoImpuestoController::class, 'show']);
+        Route::put('/tipos-impuesto/{id}', [TipoImpuestoController::class, 'update']);
+        Route::delete('/tipos-impuesto/{id}', [TipoImpuestoController::class, 'destroy']);
+        
+        // Rutas de Tipos de Retención (solo admins) - Módulo 7
+        Route::get('/tipos-retencion', [TipoRetencionController::class, 'index']);
+        Route::post('/tipos-retencion', [TipoRetencionController::class, 'store']);
+        Route::get('/tipos-retencion/opciones', [TipoRetencionController::class, 'getOpciones']);
+        Route::get('/tipos-retencion/check-codigo', [TipoRetencionController::class, 'checkCodigo']);
+        Route::get('/tipos-retencion/{id}', [TipoRetencionController::class, 'show']);
+        Route::put('/tipos-retencion/{id}', [TipoRetencionController::class, 'update']);
+        Route::delete('/tipos-retencion/{id}', [TipoRetencionController::class, 'destroy']);
     });
 
     //Rutas para el emisor
@@ -94,6 +116,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/emisores/{emisorId}/suscripciones', [SuscripcionController::class, 'store']);
     Route::get('/emisores/{emisorId}/suscripciones/{id}', [SuscripcionController::class, 'show']);
     Route::put('/emisores/{emisorId}/suscripciones/{id}', [SuscripcionController::class, 'update']);
+    Route::delete('/emisores/{emisorId}/suscripciones/{id}', [SuscripcionController::class, 'destroy']);
     Route::get('/emisores/{emisorId}/suscripciones/{id}/campos-editables', [SuscripcionController::class, 'camposEditables']);
     
     // Gestión de estados de suscripción (HU9)
