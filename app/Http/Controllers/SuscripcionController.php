@@ -187,11 +187,9 @@ class SuscripcionController extends Controller
 
             // Actualizar estados automáticos y formatear datos
             $items = collect($suscripciones->items())->map(function ($suscripcion) {
-                $suscripcion->actualizarEstadoAutomatico();
-                
-                // Añadir campos calculados
+                // Recalcular en memoria sin escribir en la base para evitar presión en lecturas concurrentes
+                $suscripcion->actualizarEstadoAutomatico(false);
                 $suscripcion->comprobantes_restantes = $suscripcion->cantidad_comprobantes - $suscripcion->comprobantes_usados;
-                
                 return $suscripcion;
             });
 

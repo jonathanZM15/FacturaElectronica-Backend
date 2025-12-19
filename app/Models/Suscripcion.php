@@ -142,56 +142,50 @@ class Suscripcion extends Model
     /**
      * Actualiza el estado automático de la suscripción.
      */
-    public function actualizarEstadoAutomatico(): void
+    public function actualizarEstadoAutomatico(bool $persist = true): string
     {
-        // Si está suspendido o pendiente, no cambiar automáticamente
+        // Estados protegidos no se recalculan automáticamente en la fuente de datos
         if (in_array($this->estado_suscripcion, ['Suspendido', 'Pendiente'])) {
-            return;
+            return $this->estado_suscripcion;
         }
 
         $plan = $this->plan;
         $hoy = Carbon::today();
         $fechaInicio = Carbon::parse($this->fecha_inicio);
         $fechaFin = Carbon::parse($this->fecha_fin);
-        
-        // Verificar si está programado (fecha inicio futura)
+        $nuevoEstado = $this->estado_suscripcion;
+
         if ($fechaInicio->greaterThan($hoy)) {
-            $this->estado_suscripcion = 'Programado';
-            $this->save();
-            return;
-        }
-
-        // Verificar si está caducado
-        if ($hoy->greaterThan($fechaFin)) {
-            $this->estado_suscripcion = 'Caducado';
-            $this->save();
-            return;
-        }
-
-        // Verificar si no tiene comprobantes
-        if ($this->comprobantes_restantes <= 0) {
-            $this->estado_suscripcion = 'Sin comprobantes';
-            $this->save();
-            return;
-        }
-
-        // Verificar condiciones de alerta
-        $diasRestantes = $this->dias_restantes;
-        $comprobantesRestantes = $this->comprobantes_restantes;
-        $proximoACaducar = $plan && $diasRestantes <= $plan->dias_minimos;
-        $pocosComprobantes = $plan && $comprobantesRestantes <= $plan->comprobantes_minimos;
-
-        if ($proximoACaducar && $pocosComprobantes) {
-            $this->estado_suscripcion = 'Proximo a caducar y con pocos comprobantes';
-        } elseif ($proximoACaducar) {
-            $this->estado_suscripcion = 'Proximo a caducar';
-        } elseif ($pocosComprobantes) {
-            $this->estado_suscripcion = 'Pocos comprobantes';
+            $nuevoEstado = 'Programado';
+        } elseif ($hoy->greaterThan($fechaFin)) {
+            $nuevoEstado = 'Caducado';
+        } elseif ($this->comprobantes_restantes <= 0) {
+            $nuevoEstado = 'Sin comprobantes';
         } else {
-            $this->estado_suscripcion = 'Vigente';
+            $diasRestantes = $this->dias_restantes;
+            $comprobantesRestantes = $this->comprobantes_restantes;
+            $proximoACaducar = $plan && $diasRestantes <= $plan->dias_minimos;
+            $pocosComprobantes = $plan && $comprobantesRestantes <= $plan->comprobantes_minimos;
+
+            if ($proximoACaducar && $pocosComprobantes) {
+                $nuevoEstado = 'Proximo a caducar y con pocos comprobantes';
+            } elseif ($proximoACaducar) {
+                $nuevoEstado = 'Proximo a caducar';
+            } elseif ($pocosComprobantes) {
+                $nuevoEstado = 'Pocos comprobantes';
+            } else {
+                $nuevoEstado = 'Vigente';
+            }
         }
 
-        $this->save();
+        // Actualizar el modelo en memoria para reflejar el estado calculado
+        $this->estado_suscripcion = $nuevoEstado;
+
+        if ($persist && $this->isDirty('estado_suscripcion')) {
+            $this->save();
+        }
+
+        return $this->estado_suscripcion;
     }
 
     /**
