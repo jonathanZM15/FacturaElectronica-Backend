@@ -485,14 +485,7 @@ class EmisorController extends Controller
         }
         $mod = $sum % 10;
         $check = $mod === 0 ? 0 : 10 - $mod;
-        if ($check !== intval($cedula[9])) return false;
-
-        // if length is 13, last three digits should be > 0
-        if (strlen($cedula) == 13) {
-            $suffix = intval(substr($cedula, 10, 3));
-            return $suffix > 0;
-        }
-        return true;
+        return $check === intval($cedula[9]);
     }
 
     private function validatePublicCompany(string $ruc): bool
