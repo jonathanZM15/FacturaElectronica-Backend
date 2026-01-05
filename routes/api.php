@@ -76,12 +76,20 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/emisores', [EmisorController::class, 'index']);
     Route::post('/emisores', [EmisorController::class, 'store']);
     Route::get('/emisores/check-ruc/{ruc}', [EmisorController::class, 'checkRuc']);
-    Route::get('/emisores/{id}', [EmisorController::class, 'show']);
-    Route::put('/emisores/{id}', [EmisorController::class, 'update']);
-    Route::delete('/emisores/{id}', [EmisorController::class, 'destroy']);
+    
+    // Rutas anidadas específicas (deben estar ANTES de /{id})
+    Route::get('/emisores/{id}/validate-delete', [EmisorController::class, 'validateDelete']);
     Route::post('/emisores/{id}/prepare-deletion', [EmisorController::class, 'prepareDeletion']);
     Route::delete('/emisores/{id}/permanent', [EmisorController::class, 'destroyWithHistory']);
-
+    
+    // Usuarios asociados a un emisor
+    Route::get('/emisores/{id}/usuarios', [UserController::class, 'indexByEmisor']);
+    Route::post('/emisores/{id}/usuarios', [UserController::class, 'storeByEmisor']);
+    Route::get('/emisores/{id}/usuarios/{usuario}', [UserController::class, 'showByEmisor']);
+    Route::put('/emisores/{id}/usuarios/{usuario}', [UserController::class, 'updateByEmisor']);
+    Route::delete('/emisores/{id}/usuarios/{usuario}', [UserController::class, 'destroyByEmisor']);
+    Route::post('/emisores/{id}/usuarios/{usuario}/resend-verification', [UserController::class, 'resendVerificationEmailByEmisor']);
+    
     // Establecimientos (sucursales) relacionados a un emisor
     Route::get('/emisores/{id}/establecimientos', [App\Http\Controllers\EstablecimientoController::class, 'index']);
     Route::get('/emisores/{id}/establecimientos/check-code/{code}', [App\Http\Controllers\EstablecimientoController::class, 'checkCode']);
@@ -99,14 +107,11 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Puntos de Emisión asociados a un emisor (todos los puntos de todos sus establecimientos)
     Route::get('/emisores/{id}/puntos-emision', [PuntoEmisionController::class, 'listByEmisor']);
-
-    // Usuarios asociados a un emisor
-    Route::get('/emisores/{id}/usuarios', [UserController::class, 'indexByEmisor']);
-    Route::post('/emisores/{id}/usuarios', [UserController::class, 'storeByEmisor']);
-    Route::get('/emisores/{id}/usuarios/{usuario}', [UserController::class, 'showByEmisor']);
-    Route::put('/emisores/{id}/usuarios/{usuario}', [UserController::class, 'updateByEmisor']);
-    Route::delete('/emisores/{id}/usuarios/{usuario}', [UserController::class, 'destroyByEmisor']);
-    Route::post('/emisores/{id}/usuarios/{usuario}/resend-verification', [UserController::class, 'resendVerificationEmailByEmisor']);
+    
+    // Rutas genéricas (DESPUÉS de todas las anidadas)
+    Route::get('/emisores/{id}', [EmisorController::class, 'show']);
+    Route::put('/emisores/{id}', [EmisorController::class, 'update']);
+    Route::delete('/emisores/{id}', [EmisorController::class, 'destroy']);
 
     // Suscripciones de un emisor (Admin y Distribuidor)
     Route::get('/suscripciones/planes-activos', [SuscripcionController::class, 'planesActivos']);

@@ -863,6 +863,9 @@ class UserController extends Controller
     public function storeByEmisor(StoreUserRequest $request, $id)
     {
         try {
+            // Asegurar que $id es un entero
+            $id = (int) $id;
+            
             /** @var User|null $currentUser */
             $currentUser = Auth::user();
             

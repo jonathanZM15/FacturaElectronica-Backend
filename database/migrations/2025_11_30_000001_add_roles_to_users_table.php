@@ -29,7 +29,7 @@ return new class extends Migration
 
             // Relación con emisor (para gerentes y cajeros)
             if (!Schema::hasColumn('users', 'emisor_id')) {
-                $table->foreignId('emisor_id')->nullable()->constrained('users')->onDelete('set null')->after('distribuidor_id');
+                $table->foreignId('emisor_id')->nullable()->constrained('emisores')->onDelete('set null')->after('distribuidor_id');
             }
 
             // Establecimientos asignados (para gerentes)

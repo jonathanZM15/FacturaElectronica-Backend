@@ -543,6 +543,70 @@ class EmisorController extends Controller
         return true;
     }
 
+    /**
+     * Validate if a company can be deleted (no suscripciones, no usuarios asociados).
+     * This endpoint is used by the frontend to check before opening the delete modal.
+     */
+    public function validateDelete($id)
+    {
+        $company = Company::findOrFail($id);
+
+        $canDelete = true;
+        $blockers = [];
+
+        try {
+            // Check for suscripciones (subscriptions)
+            if (Schema::hasTable('subscriptions')) {
+                $hasSubscriptions = DB::table('subscriptions')->where('company_id', $company->id)->exists();
+                if ($hasSubscriptions) {
+                    $canDelete = false;
+                    $blockers[] = 'El emisor tiene suscripciones registradas';
+                }
+            }
+
+            // Check for usuarios asociados (users with emisor_id, not company_id)
+            if (Schema::hasTable('users') && Schema::hasColumn('users', 'emisor_id')) {
+                $hasUsers = DB::table('users')->where('emisor_id', $company->id)->exists();
+                if ($hasUsers) {
+                    $canDelete = false;
+                    $blockers[] = 'El emisor tiene usuarios asociados';
+                }
+            }
+
+            // Check for comprobantes
+            if (Schema::hasTable('comprobantes')) {
+                $hasComprobantes = DB::table('comprobantes')->where('company_id', $company->id)->exists();
+                if ($hasComprobantes) {
+                    $canDelete = false;
+                    $blockers[] = 'El emisor tiene historial de comprobantes';
+                }
+            }
+
+            // Check for planes
+            if (Schema::hasTable('plans')) {
+                $hasPlans = DB::table('plans')->where('company_id', $company->id)->exists();
+                if ($hasPlans) {
+                    $canDelete = false;
+                    $blockers[] = 'El emisor tiene planes asociados';
+                }
+            }
+        } catch (\Exception $e) {
+            Log::warning('Could not fully verify if company '.$company->id.' can be deleted: '.$e->getMessage());
+            // If checks fail, return error to be safe
+            return response()->json([
+                'can_delete' => false,
+                'message' => 'No se pudo verificar si el emisor puede ser eliminado',
+                'blockers' => []
+            ], 500);
+        }
+
+        return response()->json([
+            'can_delete' => $canDelete,
+            'message' => $canDelete ? 'El emisor puede ser eliminado' : 'No se puede eliminar este emisor',
+            'blockers' => $blockers
+        ]);
+    }
+
     // Permanent delete of a company (emisor) if it has no history (comprobantes), plans or users.
     public function destroy(Request $request, $id)
     {
@@ -580,9 +644,9 @@ class EmisorController extends Controller
                 }
             }
 
-            // users linked via company_id
-            if (Schema::hasTable('users') && Schema::hasColumn('users', 'company_id')) {
-                $exists = DB::table('users')->where('company_id', $company->id)->exists();
+            // users linked via emisor_id (not company_id)
+            if (Schema::hasTable('users') && Schema::hasColumn('users', 'emisor_id')) {
+                $exists = DB::table('users')->where('emisor_id', $company->id)->exists();
                 if ($exists) {
                     return response()->json(['message' => 'El emisor tiene usuarios asociados y no puede ser eliminado.'], 422);
                 }

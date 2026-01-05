@@ -83,14 +83,6 @@ class StoreUserRequest extends FormRequest
             'role' => [
                 'required',
                 'in:administrador,distribuidor,emisor,gerente,cajero',
-                function ($attribute, $value, $fail) {
-                    /** @var \App\Models\User|null $user */
-                    $user = Auth::user();
-                    $rolesPermitidos = $user->rolesPuedoCrear();
-                    if (!in_array($value, $rolesPermitidos)) {
-                        $fail("No tienes permiso para crear usuarios con rol '{$value}'");
-                    }
-                },
             ],
             'distribuidor_id' => 'nullable|exists:users,id',
             'emisor_id' => 'nullable|exists:users,id',
