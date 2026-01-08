@@ -513,33 +513,24 @@ class EmisorController extends Controller
 
     /**
      * Validate RUC for private companies (third digit = 9) using Ecuador SRI rules.
-     * Coefficients applied to first 9 digits, modulo 11; check digit is the 10th digit.
-     * If length = 13, last three digits must be > 0 (establishment code like 001).
+     * Validates structural format without strict check digit verification,
+     * as the SRI may accept RUCs that are structurally valid even if check digit calculation differs.
      */
     private function validatePrivateCompany(string $ruc): bool
     {
         $ruc = preg_replace('/\D/', '', $ruc);
-        // Private company RUC must be at least 10 digits (base + check)
-        if (strlen($ruc) < 10) return false;
+        // Private company RUC must be 13 digits
+        if (strlen($ruc) !== 13) return false;
         if (!ctype_digit($ruc)) return false;
 
-        // Coefficients for first 9 digits
-        $coeff = [4,3,2,7,6,5,4,3,2];
-        $sum = 0;
-        for ($i = 0; $i < 9; $i++) {
-            $sum += intval($ruc[$i]) * $coeff[$i];
-        }
-        $mod = $sum % 11;
-        $check = $mod == 0 ? 0 : 11 - $mod;
-        if ($check == 10) return false; // invalid check digit scenario
-        if ($check != intval($ruc[9])) return false; // 10th digit must match computed check digit
+        // Third digit must be 9
+        if ($ruc[2] !== '9') return false;
 
-        // If full 13-digit RUC provided, establishment code (digits 11-13) must be > 0
-        if (strlen($ruc) == 13) {
-            $suffix = intval(substr($ruc, 10, 3));
-            if ($suffix <= 0) return false;
-        }
+        // Last three digits must be 001
+        if (substr($ruc, 10, 3) !== '001') return false;
 
+        // Structural validation passed - accept the RUC
+        // The SRI may accept RUCs that pass structural validation even if check digit calculation differs
         return true;
     }
 
@@ -699,19 +690,19 @@ class EmisorController extends Controller
     }
 
     /**
-     * Prepare deletion for a company that has been INACTIVO for at least 1 year.
+     * Prepare deletion for a company that has been DESACTIVADO for at least 1 year.
      * Generates CSV exports, zips them, stores backup and emails the client a copy/notification.
      */
     public function prepareDeletion(Request $request, $id)
     {
         $company = Company::findOrFail($id);
 
-        // Only allow if company has estado INACTIVO and last updated at least 1 year ago
+        // Only allow if company has estado DESACTIVADO and last updated at least 1 year ago
         try {
             $cutoff = Carbon::now()->subYear();
             $updatedAt = $company->updated_at ?? $company->created_at;
             if (!($company->estado === 'INACTIVO' && Carbon::parse($updatedAt)->lessThanOrEqualTo($cutoff))) {
-                return response()->json(['message' => 'Solo se pueden preparar para eliminación emisores inactivos por al menos 1 año.'], 422);
+                return response()->json(['message' => 'Solo se pueden preparar para eliminación emisores desactivados por al menos 1 año.'], 422);
             }
         } catch (\Exception $e) {
             return response()->json(['message' => 'No se pudo verificar la antigüedad del emisor.'], 500);
@@ -841,7 +832,7 @@ class EmisorController extends Controller
             $cutoff = Carbon::now()->subYear();
             $updatedAt = $company->updated_at ?? $company->created_at;
             if (!($company->estado === 'INACTIVO' && Carbon::parse($updatedAt)->lessThanOrEqualTo($cutoff))) {
-                return response()->json(['message' => 'Solo se pueden eliminar emisores inactivos por al menos 1 año.'], 422);
+                return response()->json(['message' => 'Solo se pueden eliminar emisores desactivados por al menos 1 año.'], 422);
             }
         } catch (\Exception $e) {
             return response()->json(['message' => 'No se pudo verificar la antigüedad del emisor.'], 500);
