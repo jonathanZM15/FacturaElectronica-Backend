@@ -29,7 +29,15 @@ class EmisorController extends Controller
 
         $currentUser = Auth::user();
         $query = Company::query()->select('emisores.*')
-            ->with(['creator:id,name', 'updater:id,name']);
+            ->with(['creator:id,name'])
+            ->with([
+                'suscripcionesVigentes' => function ($q) {
+                    $q->with(['plan:id,nombre,periodo,cantidad_comprobantes,precio'])
+                      ->where('estado_suscripcion', 'Vigente')
+                      ->orderByDesc('id')
+                      ->limit(1);
+                }
+            ]);
 
         // Aplicar filtro de permisos según rol del usuario actual
         if ($currentUser && $currentUser->role !== UserRole::ADMINISTRADOR) {

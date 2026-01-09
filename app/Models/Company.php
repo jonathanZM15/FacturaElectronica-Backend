@@ -35,6 +35,22 @@ class Company extends Model
     }
 
     /**
+     * Relación con las suscripciones del emisor
+     */
+    public function suscripciones()
+    {
+        return $this->hasMany(Suscripcion::class, 'emisor_id');
+    }
+
+    /**
+     * Relación con las suscripciones vigentes del emisor
+     */
+    public function suscripcionesVigentes()
+    {
+        return $this->suscripciones()->where('estado_suscripcion', 'Vigente');
+    }
+
+    /**
      * Accessor para obtener el nombre del usuario que creó el registro
      */
     public function getCreatedByNameAttribute(): ?string
