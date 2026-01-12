@@ -86,6 +86,15 @@ class EmisorController extends Controller
             $query->selectRaw('NULL as cantidad_creados, NULL as ultimo_comprobante');
         }
 
+        // Obtener el último login de usuarios asociados al emisor
+        if (Schema::hasTable('users') && Schema::hasColumn('users', 'last_login_at') && Schema::hasColumn('users', 'emisor_id')) {
+            $query->selectSub(function ($q) {
+                $q->from('users')->selectRaw('max(last_login_at)')->whereColumn('users.emisor_id', 'emisores.id');
+            }, 'ultimo_login');
+        } else {
+            $query->selectRaw('NULL as ultimo_login');
+        }
+
         if (Schema::hasTable('plans')) {
             // Latest plan info
             $query->selectSub(function ($q) {
@@ -228,7 +237,7 @@ class EmisorController extends Controller
             'codigo_artesano' => ['nullable','string','max:50'],
 
             'correo_remitente' => ['required','email','max:255'],
-            'estado' => ['required','in:ACTIVO,INACTIVO'],
+            'estado' => ['required','in:ACTIVO,INACTIVO,DESACTIVADO'],
             'ambiente' => ['required','in:PRODUCCION,PRUEBAS'],
             'tipo_emision' => ['required','in:NORMAL,INDISPONIBILIDAD'],
 
@@ -289,7 +298,7 @@ class EmisorController extends Controller
     // Show a single emisor with editable flags
     public function show($id)
     {
-        $company = Company::with(['creator:id,nombres,apellidos,username,email', 'updater:id,nombres,apellidos,username,email'])->findOrFail($id);
+        $company = Company::with(['creator:id,name,nombres,apellidos,username,email,role', 'updater:id,name,nombres,apellidos,username,email,role'])->findOrFail($id);
 
         // Determine if RUC can be edited: if there's a comprobantes table and
         // there are any records with estado = 'AUTORIZADO' for this company, disallow.
@@ -308,12 +317,29 @@ class EmisorController extends Controller
             $rucEditable = true;
         }
 
+        // Build creator object for frontend
+        $creatorData = null;
+        if ($company->creator) {
+            $creatorData = [
+                'id' => $company->creator->id,
+                'role' => $company->creator->role instanceof \App\Enums\UserRole 
+                    ? $company->creator->role->value 
+                    : $company->creator->role,
+                'username' => $company->creator->username,
+                'email' => $company->creator->email,
+                'name' => $company->creator->name,
+                'nombres' => $company->creator->nombres,
+                'apellidos' => $company->creator->apellidos,
+            ];
+        }
+
         $payload = array_merge($company->toArray(), [
             'logo_url' => $company->logo_url,
             'ruc_editable' => $rucEditable,
             'created_by_name' => $company->created_by_name,
             'created_by_username' => $company->created_by_username,
             'updated_by_name' => $company->updated_by_name,
+            'creator' => $creatorData,
         ]);
 
         return response()->json(['data' => $payload]);
@@ -374,7 +400,7 @@ class EmisorController extends Controller
             'codigo_artesano' => ['sometimes','nullable','string','max:50'],
 
             'correo_remitente' => ['sometimes','nullable','email','max:255'],
-            'estado' => ['sometimes','required','in:ACTIVO,INACTIVO'],
+            'estado' => ['sometimes','required','in:ACTIVO,INACTIVO,DESACTIVADO'],
             'ambiente' => ['sometimes','required','in:PRODUCCION,PRUEBAS'],
             'tipo_emision' => ['sometimes','required','in:NORMAL,INDISPONIBILIDAD'],
 
