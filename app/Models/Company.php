@@ -11,7 +11,9 @@ class Company extends Model
     
     protected $fillable = [
         'ruc','razon_social','nombre_comercial','direccion_matriz',
-        'regimen_tributario','obligado_contabilidad','contribuyente_especial','agente_retencion',
+        'regimen_tributario','obligado_contabilidad',
+        'contribuyente_especial','numero_resolucion_contribuyente_especial',
+        'agente_retencion','numero_resolucion_agente_retencion',
         'tipo_persona','codigo_artesano','correo_remitente','estado','ambiente','tipo_emision','logo_path',
         'created_by', 'updated_by',
     ];

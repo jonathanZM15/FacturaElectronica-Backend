@@ -29,7 +29,7 @@ class EmisorController extends Controller
 
         $currentUser = Auth::user();
         $query = Company::query()->select('emisores.*')
-            ->with(['creator:id,name'])
+            ->with(['creator:id,name,username,nombres,apellidos,role'])
             ->with([
                 'suscripcionesVigentes' => function ($q) {
                     $q->with(['plan:id,nombre,periodo,cantidad_comprobantes,precio'])
@@ -62,9 +62,13 @@ class EmisorController extends Controller
         if ($request->filled('nombre_comercial')) $query->where('nombre_comercial', 'like', '%'.$request->input('nombre_comercial').'%');
         if ($request->filled('direccion_matriz')) $query->where('direccion_matriz', 'like', '%'.$request->input('direccion_matriz').'%');
         if ($request->filled('correo_remitente')) $query->where('correo_remitente', 'like', '%'.$request->input('correo_remitente').'%');
+        if ($request->filled('codigo_artesano')) $query->where('codigo_artesano', 'like', '%'.$request->input('codigo_artesano').'%');
 
         if ($request->filled('estado')) $query->where('estado', $request->input('estado'));
         if ($request->filled('regimen_tributario')) $query->where('regimen_tributario', $request->input('regimen_tributario'));
+        if ($request->filled('obligado_contabilidad')) $query->where('obligado_contabilidad', $request->input('obligado_contabilidad'));
+        if ($request->filled('contribuyente_especial')) $query->where('contribuyente_especial', 'like', '%'.$request->input('contribuyente_especial').'%');
+        if ($request->filled('agente_retencion')) $query->where('agente_retencion', 'like', '%'.$request->input('agente_retencion').'%');
         if ($request->filled('tipo_persona')) $query->where('tipo_persona', $request->input('tipo_persona'));
         if ($request->filled('ambiente')) $query->where('ambiente', $request->input('ambiente'));
         if ($request->filled('tipo_emision')) $query->where('tipo_emision', $request->input('tipo_emision'));
@@ -216,7 +220,9 @@ class EmisorController extends Controller
             'regimen_tributario' => ['required','in:GENERAL,RIMPE_POPULAR,RIMPE_EMPRENDEDOR,MICRO_EMPRESA'],
             'obligado_contabilidad' => ['required','in:SI,NO'],
             'contribuyente_especial' => ['required','in:SI,NO'],
+            'numero_resolucion_contribuyente_especial' => ['nullable','string','max:50'],
             'agente_retencion' => ['required','in:SI,NO'],
+            'numero_resolucion_agente_retencion' => ['nullable','string','max:50'],
             'tipo_persona' => ['required','in:NATURAL,JURIDICA'],
             // Hacer opcional el código artesano
             'codigo_artesano' => ['nullable','string','max:50'],
@@ -361,7 +367,9 @@ class EmisorController extends Controller
             'regimen_tributario' => ['sometimes','nullable','in:GENERAL,RIMPE_POPULAR,RIMPE_EMPRENDEDOR,MICRO_EMPRESA'],
             'obligado_contabilidad' => ['sometimes','nullable','in:SI,NO'],
             'contribuyente_especial' => ['sometimes','nullable','in:SI,NO'],
+            'numero_resolucion_contribuyente_especial' => ['sometimes','nullable','string','max:50'],
             'agente_retencion' => ['sometimes','nullable','in:SI,NO'],
+            'numero_resolucion_agente_retencion' => ['sometimes','nullable','string','max:50'],
             'tipo_persona' => ['sometimes','nullable','in:NATURAL,JURIDICA'],
             'codigo_artesano' => ['sometimes','nullable','string','max:50'],
 
