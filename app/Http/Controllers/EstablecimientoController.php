@@ -37,7 +37,7 @@ class EstablecimientoController extends Controller
         
         // Construir query base
         $query = Establecimiento::where('company_id', $companyId)
-            ->with(['puntos_emision', 'creator:id,name', 'updater:id,name']);
+            ->with(['puntos_emision', 'creator', 'updater']);
         
         // Para usuarios emisor, gerente o cajero: filtrar por establecimientos asignados
         if ($isAssignedEmissor || $isAssignedGerente || $isAssignedCajero) {
@@ -123,6 +123,8 @@ class EstablecimientoController extends Controller
                 'logo_url' => $item->logo_url,
                 'created_by_name' => $item->created_by_name,
                 'updated_by_name' => $item->updated_by_name,
+                'created_by_info' => $item->created_by_info,
+                'updated_by_info' => $item->updated_by_info,
                 'usuarios' => $usuarios,
             ]);
         });
@@ -195,10 +197,15 @@ class EstablecimientoController extends Controller
 
         $est = Establecimiento::create($data);
 
+        // Reload with relations
+        $est = $est->fresh(['creator', 'updater']);
+
         $payload = array_merge($est->toArray(), [
             'logo_url' => $est->logo_url,
             'created_by_name' => $est->created_by_name,
             'updated_by_name' => $est->updated_by_name,
+            'created_by_info' => $est->created_by_info,
+            'updated_by_info' => $est->updated_by_info,
         ]);
 
         return response()->json(['data' => $payload], 201);
@@ -222,7 +229,7 @@ class EstablecimientoController extends Controller
         }
 
         $est = Establecimiento::where('company_id', $companyId)
-            ->with(['creator:id,name', 'updater:id,name', 'puntos_emision'])
+            ->with(['creator', 'updater', 'puntos_emision'])
             ->findOrFail($id);
 
         if ($currentUser->role === UserRole::GERENTE || $currentUser->role === UserRole::CAJERO) {
@@ -265,6 +272,8 @@ class EstablecimientoController extends Controller
             'codigo_editable' => $codigoEditable,
             'created_by_name' => $est->created_by_name,
             'updated_by_name' => $est->updated_by_name,
+            'created_by_info' => $est->created_by_info,
+            'updated_by_info' => $est->updated_by_info,
             'usuarios' => $this->getUsuariosAsociados($est->id),
         ]);
 
@@ -387,13 +396,15 @@ class EstablecimientoController extends Controller
 
         $est->update($data);
 
-        // Reload the model to get the recalculated attributes
-        $est = $est->fresh();
+        // Reload the model with relations to get the recalculated attributes
+        $est = $est->fresh(['creator', 'updater']);
 
         $payload = array_merge($est->toArray(), [
             'logo_url' => $est->logo_url,
             'created_by_name' => $est->created_by_name,
             'updated_by_name' => $est->updated_by_name,
+            'created_by_info' => $est->created_by_info,
+            'updated_by_info' => $est->updated_by_info,
         ]);
 
         return response()->json(['data' => $payload]);

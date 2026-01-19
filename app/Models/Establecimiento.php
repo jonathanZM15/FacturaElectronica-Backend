@@ -17,7 +17,7 @@ class Establecimiento extends Model
         'actividades_economicas' => 'string'
     ];
 
-    protected $appends = ['logo_url', 'created_by_name', 'updated_by_name'];
+    protected $appends = ['logo_url', 'created_by_name', 'updated_by_name', 'created_by_info', 'updated_by_info'];
 
     public function company()
     {
@@ -62,6 +62,70 @@ class Establecimiento extends Model
     public function getUpdatedByNameAttribute(): ?string
     {
         return $this->updater ? $this->updater->name : null;
+    }
+
+    /**
+     * Accessor para obtener información completa del usuario que creó el registro
+     * Formato: { id, role, username, nombres, apellidos, full_display }
+     */
+    public function getCreatedByInfoAttribute(): ?array
+    {
+        if (!$this->creator) {
+            return null;
+        }
+        $user = $this->creator;
+        // Handle role as enum or string
+        $roleValue = $user->role instanceof \App\Enums\UserRole ? $user->role->value : ($user->role ?? '');
+        // Use username or fallback to name
+        $usernameDisplay = $user->username ?? $user->name ?? '';
+        // Use nombres/apellidos or fallback to name
+        $nombresDisplay = $user->nombres ?? '';
+        $apellidosDisplay = $user->apellidos ?? '';
+        // If no nombres/apellidos, use name as full name
+        $fullNameDisplay = trim($nombresDisplay . ' ' . $apellidosDisplay);
+        if (empty($fullNameDisplay) && $user->name) {
+            $fullNameDisplay = $user->name;
+        }
+        return [
+            'id' => $user->id,
+            'role' => strtoupper($roleValue),
+            'username' => $usernameDisplay,
+            'nombres' => $nombresDisplay ?: ($user->name ?? ''),
+            'apellidos' => $apellidosDisplay,
+            'full_display' => strtoupper($roleValue) . ' - ' . $usernameDisplay . ' - ' . $fullNameDisplay
+        ];
+    }
+
+    /**
+     * Accessor para obtener información completa del usuario que actualizó el registro
+     * Formato: { id, role, username, nombres, apellidos, full_display }
+     */
+    public function getUpdatedByInfoAttribute(): ?array
+    {
+        if (!$this->updater) {
+            return null;
+        }
+        $user = $this->updater;
+        // Handle role as enum or string
+        $roleValue = $user->role instanceof \App\Enums\UserRole ? $user->role->value : ($user->role ?? '');
+        // Use username or fallback to name
+        $usernameDisplay = $user->username ?? $user->name ?? '';
+        // Use nombres/apellidos or fallback to name
+        $nombresDisplay = $user->nombres ?? '';
+        $apellidosDisplay = $user->apellidos ?? '';
+        // If no nombres/apellidos, use name as full name
+        $fullNameDisplay = trim($nombresDisplay . ' ' . $apellidosDisplay);
+        if (empty($fullNameDisplay) && $user->name) {
+            $fullNameDisplay = $user->name;
+        }
+        return [
+            'id' => $user->id,
+            'role' => strtoupper($roleValue),
+            'username' => $usernameDisplay,
+            'nombres' => $nombresDisplay ?: ($user->name ?? ''),
+            'apellidos' => $apellidosDisplay,
+            'full_display' => strtoupper($roleValue) . ' - ' . $usernameDisplay . ' - ' . $fullNameDisplay
+        ];
     }
 
     /**
