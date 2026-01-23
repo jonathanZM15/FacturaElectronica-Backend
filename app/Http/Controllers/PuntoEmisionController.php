@@ -12,6 +12,7 @@ use Illuminate\Validation\Rule;
 
 class PuntoEmisionController extends Controller
 {
+    private const MAX_SECUENCIAL = 999999999;
     /**
      * Validar permisos para acceder a un punto de emisión
      */
@@ -159,19 +160,20 @@ class PuntoEmisionController extends Controller
                     'required',
                     'string',
                     'size:3',
+                    Rule::notIn(['000']),
                     Rule::unique('puntos_emision', 'codigo')
                         ->where('establecimiento_id', $establecimientoId)
                         ->where('company_id', $companyId)
                 ],
                 'estado' => 'required|in:ACTIVO,DESACTIVADO',
                 'nombre' => 'required|string|max:255',
-                'secuencial_factura' => 'required|integer|min:1',
-                'secuencial_liquidacion_compra' => 'required|integer|min:1',
-                'secuencial_nota_credito' => 'required|integer|min:1',
-                'secuencial_nota_debito' => 'required|integer|min:1',
-                'secuencial_guia_remision' => 'required|integer|min:1',
-                'secuencial_retencion' => 'required|integer|min:1',
-                'secuencial_proforma' => 'required|integer|min:1',
+                'secuencial_factura' => 'required|integer|min:1|max:' . self::MAX_SECUENCIAL,
+                'secuencial_liquidacion_compra' => 'required|integer|min:1|max:' . self::MAX_SECUENCIAL,
+                'secuencial_nota_credito' => 'required|integer|min:1|max:' . self::MAX_SECUENCIAL,
+                'secuencial_nota_debito' => 'required|integer|min:1|max:' . self::MAX_SECUENCIAL,
+                'secuencial_guia_remision' => 'required|integer|min:1|max:' . self::MAX_SECUENCIAL,
+                'secuencial_retencion' => 'required|integer|min:1|max:' . self::MAX_SECUENCIAL,
+                'secuencial_proforma' => 'required|integer|min:1|max:' . self::MAX_SECUENCIAL,
             ]);
 
             $punto = PuntoEmision::create([
@@ -179,6 +181,11 @@ class PuntoEmisionController extends Controller
                 'establecimiento_id' => $establecimientoId,
                 ...$validated
             ]);
+
+            // Estado de disponibilidad: gestión interna del sistema
+            // En el registro siempre inicia como LIBRE
+            $punto->estado_disponibilidad = 'LIBRE';
+            $punto->save();
 
             return response()->json(['data' => $punto, 'success' => true, 'message' => 'Punto de emisión creado exitosamente'], 201);
         } catch (\Exception $e) {
@@ -206,6 +213,7 @@ class PuntoEmisionController extends Controller
                     'sometimes',
                     'string',
                     'size:3',
+                    Rule::notIn(['000']),
                     Rule::unique('puntos_emision', 'codigo')
                         ->where('establecimiento_id', $establecimientoId)
                         ->where('company_id', $companyId)
@@ -213,13 +221,13 @@ class PuntoEmisionController extends Controller
                 ],
                 'estado' => 'sometimes|in:ACTIVO,DESACTIVADO',
                 'nombre' => 'sometimes|string|max:255',
-                'secuencial_factura' => 'sometimes|integer|min:1',
-                'secuencial_liquidacion_compra' => 'sometimes|integer|min:1',
-                'secuencial_nota_credito' => 'sometimes|integer|min:1',
-                'secuencial_nota_debito' => 'sometimes|integer|min:1',
-                'secuencial_guia_remision' => 'sometimes|integer|min:1',
-                'secuencial_retencion' => 'sometimes|integer|min:1',
-                'secuencial_proforma' => 'sometimes|integer|min:1',
+                'secuencial_factura' => 'sometimes|integer|min:1|max:' . self::MAX_SECUENCIAL,
+                'secuencial_liquidacion_compra' => 'sometimes|integer|min:1|max:' . self::MAX_SECUENCIAL,
+                'secuencial_nota_credito' => 'sometimes|integer|min:1|max:' . self::MAX_SECUENCIAL,
+                'secuencial_nota_debito' => 'sometimes|integer|min:1|max:' . self::MAX_SECUENCIAL,
+                'secuencial_guia_remision' => 'sometimes|integer|min:1|max:' . self::MAX_SECUENCIAL,
+                'secuencial_retencion' => 'sometimes|integer|min:1|max:' . self::MAX_SECUENCIAL,
+                'secuencial_proforma' => 'sometimes|integer|min:1|max:' . self::MAX_SECUENCIAL,
             ]);
 
             $punto->update($validated);

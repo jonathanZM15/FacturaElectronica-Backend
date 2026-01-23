@@ -7,6 +7,7 @@ use App\Http\Requests\StoreUserRequest;
 use App\Http\Requests\UpdateUserRequest;
 use App\Services\PermissionService;
 use App\Enums\UserRole;
+use App\Services\PuntoEmisionDisponibilidadService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Auth;
@@ -921,9 +922,12 @@ class UserController extends Controller
 
             // Si proporciona puntos de emisión, almacenarlos
             if ($request->has('puntos_emision_ids')) {
-                $user->update([
-                    'puntos_emision_ids' => json_encode($request->input('puntos_emision_ids', []))
-                ]);
+                $puntos = $request->input('puntos_emision_ids', []);
+                $user->puntos_emision_ids = $puntos;
+                $user->save();
+
+                // Gestión interna: marcar OCUPADO los puntos asociados
+                (new PuntoEmisionDisponibilidadService())->markOcupado((int) $id, $puntos);
             }
 
             DB::commit();
@@ -1196,13 +1200,42 @@ class UserController extends Controller
             // Actualizar puntos de emisión si se proporcionan
             if ($request->has('puntos_emision_ids')) {
                 $nuevos = $request->input('puntos_emision_ids', []);
-                $antiguos = json_decode($user->puntos_emision_ids ?? '[]', true);
+
+                $antiguos = $user->puntos_emision_ids ?? [];
+                if (is_string($antiguos)) {
+                    $decoded = json_decode($antiguos, true);
+                    if (json_last_error() === JSON_ERROR_NONE) {
+                        $antiguos = $decoded;
+                        if (is_string($antiguos)) {
+                            $decoded2 = json_decode($antiguos, true);
+                            if (json_last_error() === JSON_ERROR_NONE) {
+                                $antiguos = $decoded2;
+                            }
+                        }
+                    } else {
+                        $antiguos = [];
+                    }
+                }
+
+                $nuevos = array_values(array_unique(array_map('intval', is_array($nuevos) ? $nuevos : [])));
+                $antiguos = array_values(array_unique(array_map('intval', is_array($antiguos) ? $antiguos : [])));
+
                 if ($nuevos != $antiguos) {
                     $cambios['puntos_emision_ids'] = [
                         'anterior' => $antiguos,
                         'nuevo' => $nuevos
                     ];
-                    $user->puntos_emision_ids = json_encode($nuevos);
+
+                    $added = array_values(array_diff($nuevos, $antiguos));
+                    $removed = array_values(array_diff($antiguos, $nuevos));
+
+                    // Guardar como JSON real (array) para evitar doble codificación
+                    $user->puntos_emision_ids = $nuevos;
+
+                    // Gestión interna: disponibilidad
+                    $disp = new PuntoEmisionDisponibilidadService();
+                    $disp->markOcupado((int) $id, $added);
+                    $disp->recalculate((int) $id, $removed, (int) $user->id);
                 }
             }
 
