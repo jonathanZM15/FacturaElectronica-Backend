@@ -37,7 +37,7 @@ class EstablecimientoController extends Controller
         
         // Construir query base
         $query = Establecimiento::where('company_id', $companyId)
-            ->with(['puntos_emision', 'creator', 'updater']);
+            ->with(['puntos_emision.user', 'creator', 'updater']);
         
         // Para usuarios emisor, gerente o cajero: filtrar por establecimientos asignados
         if ($isAssignedEmissor || $isAssignedGerente || $isAssignedCajero) {
@@ -229,7 +229,7 @@ class EstablecimientoController extends Controller
         }
 
         $est = Establecimiento::where('company_id', $companyId)
-            ->with(['creator', 'updater', 'puntos_emision'])
+            ->with(['creator', 'updater', 'puntos_emision.user'])
             ->findOrFail($id);
 
         if ($currentUser->role === UserRole::GERENTE || $currentUser->role === UserRole::CAJERO) {

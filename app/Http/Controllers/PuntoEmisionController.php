@@ -9,10 +9,139 @@ use App\Enums\UserRole;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Log;
 
 class PuntoEmisionController extends Controller
 {
     private const MAX_SECUENCIAL = 999999999;
+
+    private const RESTRICTED_FIELDS_WHEN_PROD_LOCKED = [
+        'codigo',
+        'secuencial_factura',
+        'secuencial_liquidacion_compra',
+        'secuencial_nota_credito',
+        'secuencial_nota_debito',
+        'secuencial_guia_remision',
+        'secuencial_retencion',
+        'secuencial_proforma',
+    ];
+
+    private function ensureBloqueoEdicionProduccion(PuntoEmision $punto): bool
+    {
+        if ((bool) ($punto->bloqueo_edicion_produccion ?? false)) {
+            return true;
+        }
+
+        try {
+            if ($this->hasProductionComprobantesForPunto($punto)) {
+                $punto->bloqueo_edicion_produccion = true;
+                if (Schema::hasColumn('puntos_emision', 'bloqueo_edicion_produccion_at')) {
+                    $punto->bloqueo_edicion_produccion_at = now();
+                }
+                $punto->save();
+                return true;
+            }
+        } catch (\Exception $e) {
+            Log::warning('Could not ensure bloqueo_edicion_produccion for punto '.$punto->id.': '.$e->getMessage());
+        }
+
+        return false;
+    }
+
+    private function hasProductionComprobantesForPunto(PuntoEmision $punto): bool
+    {
+        if (!Schema::hasTable('comprobantes')) {
+            return false;
+        }
+
+        $query = DB::table('comprobantes');
+
+        // Asociación al punto
+        if (Schema::hasColumn('comprobantes', 'punto_emision_id')) {
+            $query->where('punto_emision_id', $punto->id);
+        } elseif (Schema::hasColumn('comprobantes', 'punto_id')) {
+            $query->where('punto_id', $punto->id);
+        } elseif (Schema::hasColumn('comprobantes', 'puntos_emision_id')) {
+            $query->where('puntos_emision_id', $punto->id);
+        } else {
+            // Fallback por establecimiento + código
+            if (Schema::hasColumn('comprobantes', 'establecimiento_id')) {
+                $query->where('establecimiento_id', $punto->establecimiento_id);
+            }
+
+            if (Schema::hasColumn('comprobantes', 'punto_emision')) {
+                $query->where('punto_emision', $punto->codigo);
+            } elseif (Schema::hasColumn('comprobantes', 'pto_emision')) {
+                $query->where('pto_emision', $punto->codigo);
+            } elseif (Schema::hasColumn('comprobantes', 'punto_emision_codigo')) {
+                $query->where('punto_emision_codigo', $punto->codigo);
+            } else {
+                // Si no hay forma confiable de asociar al punto, no bloqueamos por seguridad.
+                return false;
+            }
+        }
+
+        // Solo comprobantes "finales" si existe la columna estado (mismo criterio que emisor/establecimiento)
+        if (Schema::hasColumn('comprobantes', 'estado')) {
+            $query->where('estado', 'AUTORIZADO');
+        }
+
+        // Filtro de ambiente producción
+        if (Schema::hasColumn('comprobantes', 'ambiente')) {
+            $query->whereIn('ambiente', ['PRODUCCION', 'PRODUCCIÓN', 2, '2']);
+        } elseif (Schema::hasColumn('comprobantes', 'tipo_ambiente')) {
+            $query->whereIn('tipo_ambiente', [2, '2', 'PRODUCCION', 'PRODUCCIÓN']);
+        } elseif (Schema::hasColumn('comprobantes', 'ambiente_emision')) {
+            $query->whereIn('ambiente_emision', ['PRODUCCION', 'PRODUCCIÓN', 2, '2']);
+        } else {
+            // Si la tabla no guarda ambiente, usamos el ambiente actual del emisor como aproximación.
+            // El flag persistente garantiza que, una vez detectado en PROD, no se revierte.
+            $company = Company::find($punto->company_id);
+            if (!$company || ($company->ambiente ?? null) !== 'PRODUCCION') {
+                return false;
+            }
+        }
+
+        return $query->exists();
+    }
+
+    private function hasAnyComprobantesForPunto(PuntoEmision $punto): bool
+    {
+        if (!Schema::hasTable('comprobantes')) {
+            return false;
+        }
+
+        $query = DB::table('comprobantes');
+
+        // Asociación al punto
+        if (Schema::hasColumn('comprobantes', 'punto_emision_id')) {
+            $query->where('punto_emision_id', $punto->id);
+        } elseif (Schema::hasColumn('comprobantes', 'punto_id')) {
+            $query->where('punto_id', $punto->id);
+        } elseif (Schema::hasColumn('comprobantes', 'puntos_emision_id')) {
+            $query->where('puntos_emision_id', $punto->id);
+        } else {
+            // Fallback por establecimiento + código
+            if (Schema::hasColumn('comprobantes', 'establecimiento_id')) {
+                $query->where('establecimiento_id', $punto->establecimiento_id);
+            }
+
+            if (Schema::hasColumn('comprobantes', 'punto_emision')) {
+                $query->where('punto_emision', $punto->codigo);
+            } elseif (Schema::hasColumn('comprobantes', 'pto_emision')) {
+                $query->where('pto_emision', $punto->codigo);
+            } elseif (Schema::hasColumn('comprobantes', 'punto_emision_codigo')) {
+                $query->where('punto_emision_codigo', $punto->codigo);
+            } else {
+                // Si no hay forma confiable de asociar al punto, no bloqueamos.
+                return false;
+            }
+        }
+
+        return $query->exists();
+    }
     /**
      * Validar permisos para acceder a un punto de emisión
      */
@@ -134,6 +263,8 @@ class PuntoEmisionController extends Controller
                 ->where('establecimiento_id', $establecimientoId)
                 ->findOrFail($puntoId);
 
+            $this->ensureBloqueoEdicionProduccion($punto);
+
             return response()->json(['data' => $punto, 'success' => true]);
         } catch (\Exception $e) {
             return response()->json(['message' => 'Punto de emisión no encontrado'], 404);
@@ -207,6 +338,8 @@ class PuntoEmisionController extends Controller
                 ->where('establecimiento_id', $establecimientoId)
                 ->findOrFail($puntoId);
 
+            $locked = $this->ensureBloqueoEdicionProduccion($punto);
+
             // Validar que el código sea único dentro del mismo establecimiento (excepto el punto actual)
             $validated = $request->validate([
                 'codigo' => [
@@ -229,6 +362,16 @@ class PuntoEmisionController extends Controller
                 'secuencial_retencion' => 'sometimes|integer|min:1|max:' . self::MAX_SECUENCIAL,
                 'secuencial_proforma' => 'sometimes|integer|min:1|max:' . self::MAX_SECUENCIAL,
             ]);
+
+            if ($locked) {
+                foreach (self::RESTRICTED_FIELDS_WHEN_PROD_LOCKED as $field) {
+                    if (array_key_exists($field, $validated) && (string) $validated[$field] !== (string) $punto->{$field}) {
+                        return response()->json([
+                            'message' => 'Este punto de emisión ya registra comprobantes en producción, por lo que no es posible modificar el código ni los secuenciales. Los campos administrativos, como el nombre, y el estado de operatividad sí pueden modificarse.'
+                        ], 422);
+                    }
+                }
+            }
 
             $punto->update($validated);
 
@@ -266,7 +409,19 @@ class PuntoEmisionController extends Controller
                 ->where('establecimiento_id', $establecimientoId)
                 ->findOrFail($puntoId);
 
-            $punto->delete();
+            // Si hay comprobantes asociados, no permitir eliminar.
+            try {
+                if ($this->hasAnyComprobantesForPunto($punto)) {
+                    return response()->json([
+                        'message' => 'El punto de emisión tiene historial de comprobantes y no puede ser eliminado.'
+                    ], 422);
+                }
+            } catch (\Exception $e) {
+                Log::warning('Could not check comprobantes for punto '.$punto->id.': '.$e->getMessage());
+            }
+
+            // Eliminación física (no soft-delete)
+            $punto->forceDelete();
 
             return response()->json(['success' => true, 'message' => 'Punto de emisión eliminado exitosamente']);
         } catch (\Exception $e) {

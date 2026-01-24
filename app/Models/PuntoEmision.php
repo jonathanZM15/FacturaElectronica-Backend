@@ -25,9 +25,13 @@ class PuntoEmision extends Model
         'secuencial_guia_remision',
         'secuencial_retencion',
         'secuencial_proforma',
+        'bloqueo_edicion_produccion',
+        'bloqueo_edicion_produccion_at',
     ];
 
     protected $casts = [
+        'bloqueo_edicion_produccion' => 'boolean',
+        'bloqueo_edicion_produccion_at' => 'datetime',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
         'deleted_at' => 'datetime',
