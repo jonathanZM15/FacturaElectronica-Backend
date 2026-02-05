@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Models\Establecimiento;
+use App\Models\PuntoEmision;
 use App\Http\Requests\StoreUserRequest;
 use App\Http\Requests\UpdateUserRequest;
 use App\Services\PermissionService;
@@ -16,6 +18,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use App\Mail\EmailVerificationMail;
 use App\Mail\PasswordChangeMail;
 
@@ -651,6 +654,23 @@ class UserController extends Controller
 
             $user->delete();
 
+            // Si el usuario tenía puntos asociados, recalcular disponibilidad
+            try {
+                $companyId = (int) ($user->emisor_id ?? 0);
+                $puntos = $user->puntos_emision_ids;
+                if (is_string($puntos)) {
+                    $puntos = json_decode($puntos, true) ?? [];
+                }
+                if ($companyId > 0 && is_array($puntos) && !empty($puntos)) {
+                    (new PuntoEmisionDisponibilidadService())->recalculate($companyId, $puntos, (int) $user->id);
+                }
+            } catch (\Exception $e) {
+                Log::warning('No se pudo recalcular disponibilidad de puntos al eliminar usuario', [
+                    'usuario_id' => $id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
             Log::info('Usuario eliminado', [
                 'usuario_eliminado_id' => $id,
                 'usuario_eliminado_email' => $user->email,
@@ -898,6 +918,113 @@ class UserController extends Controller
                 return response()->json([
                     'message' => 'No tienes permisos para crear usuarios con este rol'
                 ], Response::HTTP_FORBIDDEN);
+            }
+
+            // Reglas de negocio: para EMISOR/GERENTE/CAJERO es obligatorio
+            // seleccionar 1 punto de emisión por cada establecimiento asignado.
+            if (in_array($roleToCreate, [UserRole::EMISOR, UserRole::GERENTE, UserRole::CAJERO], true)) {
+                $establecimientosIds = $request->input('establecimientos_ids', []);
+                $establecimientosIds = is_array($establecimientosIds) ? $establecimientosIds : [];
+                $establecimientosIds = array_values(array_unique(array_map('intval', $establecimientosIds)));
+
+                // Para EMISOR, si no llegan establecimientos_ids, asociar a todos los ABIERTO del emisor.
+                if ($roleToCreate === UserRole::EMISOR && empty($establecimientosIds)) {
+                    $establecimientosIds = Establecimiento::query()
+                        ->where('company_id', (int) $id)
+                        ->where('estado', 'ABIERTO')
+                        ->pluck('id')
+                        ->map(fn ($v) => (int) $v)
+                        ->values()
+                        ->all();
+                }
+
+                if (empty($establecimientosIds)) {
+                    throw ValidationException::withMessages([
+                        'establecimientos_ids' => ['Debe seleccionar al menos un establecimiento.'],
+                    ]);
+                }
+
+                // Validar que los establecimientos pertenezcan al emisor y estén ABIERTO
+                $validEstIds = Establecimiento::query()
+                    ->where('company_id', (int) $id)
+                    ->where('estado', 'ABIERTO')
+                    ->whereIn('id', $establecimientosIds)
+                    ->pluck('id')
+                    ->map(fn ($v) => (int) $v)
+                    ->values()
+                    ->all();
+
+                if (count($validEstIds) !== count($establecimientosIds)) {
+                    throw ValidationException::withMessages([
+                        'establecimientos_ids' => ['Hay establecimientos inválidos o no disponibles (deben estar ABIERTO).'],
+                    ]);
+                }
+
+                // Solo exigir punto si el establecimiento tiene al menos uno disponible (ACTIVO + LIBRE)
+                $requiredEstIds = PuntoEmision::query()
+                    ->where('company_id', (int) $id)
+                    ->whereIn('establecimiento_id', $establecimientosIds)
+                    ->where('estado', 'ACTIVO')
+                    ->where('estado_disponibilidad', PuntoEmisionDisponibilidadService::LIBRE)
+                    ->select('establecimiento_id')
+                    ->distinct()
+                    ->pluck('establecimiento_id')
+                    ->map(fn ($v) => (int) $v)
+                    ->values()
+                    ->all();
+
+                $puntosIds = $request->input('puntos_emision_ids', []);
+                $puntosIds = is_array($puntosIds) ? $puntosIds : [];
+                $puntosIds = array_values(array_unique(array_map('intval', $puntosIds)));
+
+                if (count($puntosIds) !== count($requiredEstIds)) {
+                    throw ValidationException::withMessages([
+                        'puntos_emision_ids' => ['Debe asignar 1 punto de emisión por cada establecimiento que tenga puntos disponibles.'],
+                    ]);
+                }
+
+                $puntos = PuntoEmision::query()
+                    ->where('company_id', (int) $id)
+                    ->whereIn('id', $puntosIds)
+                    ->where('estado', 'ACTIVO')
+                    ->where('estado_disponibilidad', PuntoEmisionDisponibilidadService::LIBRE)
+                    ->get(['id', 'establecimiento_id']);
+
+                if ($puntos->count() !== count($puntosIds)) {
+                    throw ValidationException::withMessages([
+                        'puntos_emision_ids' => ['Hay puntos inválidos/no disponibles (deben estar ACTIVO y LIBRE).'],
+                    ]);
+                }
+
+                $byEst = [];
+                foreach ($puntos as $p) {
+                    $estId = (int) $p->establecimiento_id;
+                    if (!in_array($estId, $establecimientosIds, true)) {
+                        throw ValidationException::withMessages([
+                            'puntos_emision_ids' => ['Hay puntos que no pertenecen a los establecimientos seleccionados.'],
+                        ]);
+                    }
+                    if (isset($byEst[$estId])) {
+                        throw ValidationException::withMessages([
+                            'puntos_emision_ids' => ['No se permite más de un punto para el mismo establecimiento.'],
+                        ]);
+                    }
+                    $byEst[$estId] = (int) $p->id;
+                }
+
+                foreach ($requiredEstIds as $estId) {
+                    if (!isset($byEst[(int) $estId])) {
+                        throw ValidationException::withMessages([
+                            'puntos_emision_ids' => ['Debe asignar un punto de emisión para cada establecimiento que tenga puntos disponibles.'],
+                        ]);
+                    }
+                }
+
+                // Sobrescribir los valores normalizados para la creación
+                $request->merge([
+                    'establecimientos_ids' => $establecimientosIds,
+                    'puntos_emision_ids' => $puntosIds,
+                ]);
             }
 
             DB::beginTransaction();
@@ -1161,6 +1288,127 @@ class UserController extends Controller
                 ], Response::HTTP_FORBIDDEN);
             }
 
+            // Reglas de negocio (edición): para EMISOR/GERENTE/CAJERO, si se editan
+            // establecimientos/puntos, exigir 1 punto por cada establecimiento que tenga
+            // puntos disponibles (ACTIVO + LIBRE). Si un establecimiento no tiene puntos
+            // disponibles, no es obligatorio escoger.
+            $isRoleConAsociacion = in_array($user->role, [UserRole::EMISOR, UserRole::GERENTE, UserRole::CAJERO], true);
+            $touchesAsociaciones = $request->has('establecimientos_ids') || $request->has('puntos_emision_ids');
+            if ($isRoleConAsociacion && $touchesAsociaciones) {
+                $establecimientosIds = $request->has('establecimientos_ids')
+                    ? $request->input('establecimientos_ids', [])
+                    : (json_decode($user->establecimientos_ids ?? '[]', true) ?? []);
+                $establecimientosIds = is_array($establecimientosIds) ? $establecimientosIds : [];
+                $establecimientosIds = array_values(array_unique(array_map('intval', $establecimientosIds)));
+
+                // Para EMISOR: si queda vacío, asociar a todos los ABIERTO del emisor
+                if ($user->role === UserRole::EMISOR && empty($establecimientosIds)) {
+                    $establecimientosIds = Establecimiento::query()
+                        ->where('company_id', (int) $id)
+                        ->where('estado', 'ABIERTO')
+                        ->pluck('id')
+                        ->map(fn ($v) => (int) $v)
+                        ->values()
+                        ->all();
+                }
+
+                if (empty($establecimientosIds)) {
+                    throw ValidationException::withMessages([
+                        'establecimientos_ids' => ['Debe seleccionar al menos un establecimiento.'],
+                    ]);
+                }
+
+                $validEstIds = Establecimiento::query()
+                    ->where('company_id', (int) $id)
+                    ->where('estado', 'ABIERTO')
+                    ->whereIn('id', $establecimientosIds)
+                    ->pluck('id')
+                    ->map(fn ($v) => (int) $v)
+                    ->values()
+                    ->all();
+
+                if (count($validEstIds) !== count($establecimientosIds)) {
+                    throw ValidationException::withMessages([
+                        'establecimientos_ids' => ['Hay establecimientos inválidos o no disponibles (deben estar ABIERTO).'],
+                    ]);
+                }
+
+                // Solo exigir punto si el establecimiento tiene puntos disponibles (ACTIVO + LIBRE)
+                $requiredEstIds = PuntoEmision::query()
+                    ->where('company_id', (int) $id)
+                    ->whereIn('establecimiento_id', $establecimientosIds)
+                    ->where('estado', 'ACTIVO')
+                    ->where('estado_disponibilidad', PuntoEmisionDisponibilidadService::LIBRE)
+                    ->select('establecimiento_id')
+                    ->distinct()
+                    ->pluck('establecimiento_id')
+                    ->map(fn ($v) => (int) $v)
+                    ->values()
+                    ->all();
+
+                $currentAssigned = $user->puntos_emision_ids ?? [];
+                if (is_string($currentAssigned)) {
+                    $decoded = json_decode($currentAssigned, true);
+                    $currentAssigned = is_array($decoded) ? $decoded : [];
+                }
+                $currentAssigned = array_values(array_unique(array_map('intval', is_array($currentAssigned) ? $currentAssigned : [])));
+
+                $puntosIds = $request->has('puntos_emision_ids')
+                    ? $request->input('puntos_emision_ids', [])
+                    : $currentAssigned;
+                $puntosIds = is_array($puntosIds) ? $puntosIds : [];
+                $puntosIds = array_values(array_unique(array_map('intval', $puntosIds)));
+
+                if (count($puntosIds) !== count($requiredEstIds)) {
+                    throw ValidationException::withMessages([
+                        'puntos_emision_ids' => ['Debe asignar 1 punto de emisión por cada establecimiento que tenga puntos disponibles.'],
+                    ]);
+                }
+
+                // Permitir puntos LIBRE o puntos ya asignados al mismo usuario (pueden estar OCUPADO)
+                $puntos = PuntoEmision::query()
+                    ->where('company_id', (int) $id)
+                    ->whereIn('id', $puntosIds)
+                    ->where('estado', 'ACTIVO')
+                    ->where(function ($q) use ($currentAssigned) {
+                        $q->where('estado_disponibilidad', PuntoEmisionDisponibilidadService::LIBRE);
+                        if (!empty($currentAssigned)) {
+                            $q->orWhereIn('id', $currentAssigned);
+                        }
+                    })
+                    ->get(['id', 'establecimiento_id']);
+
+                if ($puntos->count() !== count($puntosIds)) {
+                    throw ValidationException::withMessages([
+                        'puntos_emision_ids' => ['Hay puntos inválidos/no disponibles (deben estar ACTIVO y LIBRE).'],
+                    ]);
+                }
+
+                $byEst = [];
+                foreach ($puntos as $p) {
+                    $estId = (int) $p->establecimiento_id;
+                    if (!in_array($estId, $establecimientosIds, true)) {
+                        throw ValidationException::withMessages([
+                            'puntos_emision_ids' => ['Hay puntos que no pertenecen a los establecimientos seleccionados.'],
+                        ]);
+                    }
+                    if (isset($byEst[$estId])) {
+                        throw ValidationException::withMessages([
+                            'puntos_emision_ids' => ['No se permite más de un punto para el mismo establecimiento.'],
+                        ]);
+                    }
+                    $byEst[$estId] = (int) $p->id;
+                }
+
+                foreach ($requiredEstIds as $estId) {
+                    if (!isset($byEst[(int) $estId])) {
+                        throw ValidationException::withMessages([
+                            'puntos_emision_ids' => ['Debe asignar un punto de emisión por cada establecimiento que tenga puntos disponibles.'],
+                        ]);
+                    }
+                }
+            }
+
             DB::beginTransaction();
 
             // Registrar cambios para auditoría
@@ -1368,6 +1616,24 @@ class UserController extends Controller
             ]);
 
             $user->delete();
+
+            // Recalcular disponibilidad de puntos asociados (si existían)
+            try {
+                $companyId = (int) $id;
+                $puntos = $user->puntos_emision_ids;
+                if (is_string($puntos)) {
+                    $puntos = json_decode($puntos, true) ?? [];
+                }
+                if ($companyId > 0 && is_array($puntos) && !empty($puntos)) {
+                    (new PuntoEmisionDisponibilidadService())->recalculate($companyId, $puntos, (int) $user->id);
+                }
+            } catch (\Exception $e) {
+                Log::warning('No se pudo recalcular disponibilidad de puntos al eliminar usuario del emisor', [
+                    'usuario_id' => $usuario,
+                    'emisor_id' => $id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
 
             DB::commit();
 
@@ -1643,19 +1909,29 @@ class UserController extends Controller
      */
     public function checkUsername(Request $request)
     {
-        $username = trim($request->input('username', ''));
-        
-        if (empty($username) || strlen($username) < 3) {
-            return response()->json(['available' => false], 400);
+        $username = trim((string) $request->query('username', $request->input('username', '')));
+        $excludeId = $request->query('exclude_id');
+
+        if ($username === '' || mb_strlen($username) < 3) {
+            return response()->json([
+                'exists' => false,
+                'available' => false,
+                'message' => 'Username inválido'
+            ], Response::HTTP_BAD_REQUEST);
         }
 
-        $exists = User::where('username', $username)->exists();
-        
-        if ($exists) {
-            return response()->json(['available' => false, 'message' => 'Username ya existe'], 200);
+        $query = User::query()->whereRaw('LOWER(username) = ?', [mb_strtolower($username)]);
+
+        if (!empty($excludeId) && is_numeric($excludeId)) {
+            $query->where('id', '!=', (int) $excludeId);
         }
 
-        return response()->json(['available' => true], 404);
+        $exists = $query->exists();
+
+        return response()->json([
+            'exists' => $exists,
+            'available' => !$exists,
+        ], Response::HTTP_OK);
     }
 
     /**
@@ -1663,19 +1939,29 @@ class UserController extends Controller
      */
     public function checkCedula(Request $request)
     {
-        $cedula = trim($request->input('cedula', ''));
-        
-        if (empty($cedula) || strlen($cedula) !== 10) {
-            return response()->json(['available' => false], 400);
+        $cedula = trim((string) $request->query('cedula', $request->input('cedula', '')));
+        $excludeId = $request->query('exclude_id');
+
+        if ($cedula === '' || strlen($cedula) !== 10) {
+            return response()->json([
+                'exists' => false,
+                'available' => false,
+                'message' => 'Cédula inválida'
+            ], Response::HTTP_BAD_REQUEST);
         }
 
-        $exists = User::where('cedula', $cedula)->exists();
-        
-        if ($exists) {
-            return response()->json(['available' => false, 'message' => 'Cédula ya existe'], 200);
+        $query = User::query()->where('cedula', $cedula);
+
+        if (!empty($excludeId) && is_numeric($excludeId)) {
+            $query->where('id', '!=', (int) $excludeId);
         }
 
-        return response()->json(['available' => true], 404);
+        $exists = $query->exists();
+
+        return response()->json([
+            'exists' => $exists,
+            'available' => !$exists,
+        ], Response::HTTP_OK);
     }
 
     /**
@@ -1683,19 +1969,29 @@ class UserController extends Controller
      */
     public function checkEmail(Request $request)
     {
-        $email = trim($request->input('email', ''));
-        
-        if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            return response()->json(['available' => false], 400);
+        $email = trim((string) $request->query('email', $request->input('email', '')));
+        $excludeId = $request->query('exclude_id');
+
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return response()->json([
+                'exists' => false,
+                'available' => false,
+                'message' => 'Email inválido'
+            ], Response::HTTP_BAD_REQUEST);
         }
 
-        $exists = User::where('email', $email)->exists();
-        
-        if ($exists) {
-            return response()->json(['available' => false, 'message' => 'Email ya existe'], 200);
+        $query = User::query()->whereRaw('LOWER(email) = ?', [mb_strtolower($email)]);
+
+        if (!empty($excludeId) && is_numeric($excludeId)) {
+            $query->where('id', '!=', (int) $excludeId);
         }
 
-        return response()->json(['available' => true], 404);
+        $exists = $query->exists();
+
+        return response()->json([
+            'exists' => $exists,
+            'available' => !$exists,
+        ], Response::HTTP_OK);
     }
 
     /**
