@@ -452,7 +452,7 @@ class PuntoEmisionController extends Controller
             
             // Obtener todos los puntos que pertenecen a establecimientos del emisor
             $query = PuntoEmision::where('company_id', $emiId)
-                ->select('id', 'company_id', 'establecimiento_id', 'codigo', 'nombre', 'estado');
+                ->select('id', 'company_id', 'establecimiento_id', 'codigo', 'nombre', 'estado', 'estado_disponibilidad');
 
             // Si el usuario es limitado (emisor/gerente/cajero con asignaciones específicas)
             if (($permInfo['limited'] ?? false)) {
