@@ -100,7 +100,14 @@ class AuthController extends Controller
 
         // Verificar si la cuenta está bloqueada
         if ($user->locked_until && now()->lt($user->locked_until)) {
-            $minutesRemaining = now()->diffInMinutes($user->locked_until);
+            // Calcular minutos restantes correctamente
+            $lockedUntil = \Carbon\Carbon::parse($user->locked_until);
+            $secondsRemaining = now()->diffInSeconds($lockedUntil, false);
+            $minutesRemaining = (int) ceil($secondsRemaining / 60);
+            
+            // Asegurar que esté entre 1 y 10 minutos
+            if ($minutesRemaining < 1) $minutesRemaining = 1;
+            if ($minutesRemaining > 10) $minutesRemaining = 10;
             
             LoginAttempt::create([
                 'user_id' => $user->id,
@@ -202,7 +209,7 @@ class AuthController extends Controller
                         $ipAddress,
                         $user->failed_login_attempts,
                         $deviceInfo,
-                        now()->format('d/m/Y H:i:s')
+                        now()->timezone('America/Guayaquil')->format('d/m/Y H:i')
                     ));
                     Log::info('Suspicious login email sent', ['user_id' => $user->id]);
                 } catch (\Exception $e) {
@@ -240,7 +247,7 @@ class AuthController extends Controller
                         $ipAddress,
                         $user->failed_login_attempts,
                         $deviceInfo,
-                        now()->format('d/m/Y H:i:s')
+                        now()->timezone('America/Guayaquil')->format('d/m/Y H:i')
                     ));
                     Log::info('Warning email sent after 5 failed attempts', ['user_id' => $user->id]);
                 } catch (\Exception $e) {

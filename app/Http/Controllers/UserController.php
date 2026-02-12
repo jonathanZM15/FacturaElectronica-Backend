@@ -1664,18 +1664,37 @@ class UserController extends Controller
                 'token' => 'required|string'
             ]);
 
-            $token = DB::table('user_verification_tokens')
+            // Primero buscar el token sin filtrar por 'used' para poder dar mensajes específicos
+            $tokenRecord = DB::table('user_verification_tokens')
                 ->where('token', $request->token)
                 ->where('type', 'email_verification')
-                ->where('used', false)
-                ->where('expires_at', '>', now())
                 ->first();
 
-            if (!$token) {
+            // Si el token no existe
+            if (!$tokenRecord) {
                 return response()->json([
-                    'message' => 'Token inválido o expirado'
+                    'message' => 'Token inválido o no encontrado',
+                    'code' => 'TOKEN_NOT_FOUND'
                 ], Response::HTTP_BAD_REQUEST);
             }
+
+            // Si el token ya fue usado
+            if ($tokenRecord->used) {
+                return response()->json([
+                    'message' => 'Este enlace de verificación ya fue utilizado anteriormente',
+                    'code' => 'TOKEN_ALREADY_USED'
+                ], Response::HTTP_CONFLICT); // 409 Conflict
+            }
+
+            // Si el token expiró
+            if ($tokenRecord->expires_at <= now()) {
+                return response()->json([
+                    'message' => 'El enlace de verificación ha expirado',
+                    'code' => 'TOKEN_EXPIRED'
+                ], Response::HTTP_BAD_REQUEST);
+            }
+
+            $token = $tokenRecord;
 
             $user = User::find($token->user_id);
             

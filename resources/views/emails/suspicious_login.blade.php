@@ -4,178 +4,221 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Alerta de Seguridad</title>
-    <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #f5f5f5;
-            margin: 0;
-            padding: 0;
-        }
-        .container {
-            max-width: 600px;
-            margin: 40px auto;
-            background: white;
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-        }
-        .header {
-            background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
-            color: white;
-            padding: 30px;
-            text-align: center;
-        }
-        .header h1 {
-            margin: 0;
-            font-size: 24px;
-            font-weight: 700;
-        }
-        .icon {
-            font-size: 48px;
-            margin-bottom: 10px;
-        }
-        .content {
-            padding: 40px 30px;
-        }
-        .alert-box {
-            background: #fef2f2;
-            border-left: 4px solid #dc2626;
-            padding: 20px;
-            margin: 20px 0;
-            border-radius: 8px;
-        }
-        .alert-box h2 {
-            margin: 0 0 10px 0;
-            color: #991b1b;
-            font-size: 18px;
-        }
-        .alert-box p {
-            margin: 5px 0;
-            color: #7f1d1d;
-        }
-        .info-grid {
-            display: grid;
-            gap: 15px;
-            margin: 25px 0;
-        }
-        .info-item {
-            background: #f9fafb;
-            padding: 15px;
-            border-radius: 8px;
-            border-left: 3px solid #6366f1;
-        }
-        .info-label {
-            font-weight: 600;
-            color: #374151;
-            font-size: 13px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        .info-value {
-            color: #1f2937;
-            font-size: 16px;
-            margin-top: 5px;
-        }
-        .security-tips {
-            background: #eff6ff;
-            border-radius: 8px;
-            padding: 20px;
-            margin: 25px 0;
-        }
-        .security-tips h3 {
-            margin: 0 0 15px 0;
-            color: #1e40af;
-            font-size: 16px;
-        }
-        .security-tips ul {
-            margin: 0;
-            padding-left: 20px;
-        }
-        .security-tips li {
-            color: #1e3a8a;
-            margin: 8px 0;
-        }
-        .footer {
-            background: #f9fafb;
-            padding: 20px 30px;
-            text-align: center;
-            color: #6b7280;
-            font-size: 13px;
-            border-top: 1px solid #e5e7eb;
-        }
-        .footer p {
-            margin: 5px 0;
-        }
-    </style>
 </head>
-<body>
-    <div class="container">
-        <div class="header">
-            <div class="icon">⚠️</div>
-            <h1>Alerta de Seguridad</h1>
-        </div>
-        
-        <div class="content">
-            <p>Hola <strong>{{ $user->nombres }} {{ $user->apellidos }}</strong>,</p>
-            
-            <div class="alert-box">
-                <h2>🔒 Intentos de acceso sospechosos detectados</h2>
-                <p>Hemos detectado múltiples intentos fallidos de inicio de sesión en tu cuenta.</p>
-            </div>
+<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f4f8;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f0f4f8; padding: 40px 20px;">
+        <tr>
+            <td align="center">
+                <table width="600" cellpadding="0" cellspacing="0" style="background: white; border-radius: 20px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.15);">
+                    
+                    <!-- HEADER -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #dc2626 0%, #7f1d1d 100%); padding: 50px 40px; text-align: center;">
+                            <table width="100%" cellpadding="0" cellspacing="0">
+                                <tr>
+                                    <td align="center">
+                                        <div style="width: 90px; height: 90px; background: rgba(255,255,255,0.15); border-radius: 50%; margin: 0 auto 20px; line-height: 90px; font-size: 45px;">
+                                            🚨
+                                        </div>
+                                        <h1 style="color: white; margin: 0; font-size: 32px; font-weight: 800; letter-spacing: -1px;">
+                                            ¡ALERTA DE SEGURIDAD!
+                                        </h1>
+                                        <p style="color: rgba(255,255,255,0.9); margin: 15px 0 0; font-size: 16px;">
+                                            Se detectó actividad sospechosa en tu cuenta
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
 
-            <div class="info-grid">
-                <div class="info-item">
-                    <div class="info-label">📧 Cuenta afectada</div>
-                    <div class="info-value">{{ $user->email }}</div>
-                </div>
-                
-                <div class="info-item">
-                    <div class="info-label">🔢 Número de intentos</div>
-                    <div class="info-value">{{ $attemptCount }} intentos fallidos</div>
-                </div>
-                
-                <div class="info-item">
-                    <div class="info-label">🌐 Dirección IP</div>
-                    <div class="info-value">{{ $ipAddress }}</div>
-                </div>
-                
-                <div class="info-item">
-                    <div class="info-label">💻 Dispositivo</div>
-                    <div class="info-value">{{ $deviceInfo }}</div>
-                </div>
-                
-                <div class="info-item">
-                    <div class="info-label">🕐 Fecha y Hora</div>
-                    <div class="info-value">{{ $timestamp }}</div>
-                </div>
-            </div>
+                    <!-- CONTENIDO -->
+                    <tr>
+                        <td style="padding: 50px 45px;">
+                            
+                            <!-- Saludo -->
+                            <p style="font-size: 18px; color: #1f2937; margin: 0 0 30px;">
+                                Hola <strong style="color: #dc2626;">{{ $user->nombres }} {{ $user->apellidos }}</strong>,
+                            </p>
 
-            <div class="security-tips">
-                <h3>🛡️ Recomendaciones de seguridad</h3>
-                <ul>
-                    <li>Si <strong>reconoces esta actividad</strong>, puedes ignorar este mensaje.</li>
-                    <li>Si <strong>NO reconoces estos intentos</strong>, te recomendamos:
-                        <ul>
-                            <li>Cambiar tu contraseña inmediatamente</li>
-                            <li>Verificar los dispositivos con acceso a tu cuenta</li>
-                            <li>Contactar al administrador del sistema si persisten los intentos</li>
-                        </ul>
-                    </li>
-                    <li>Tu cuenta quedará <strong>bloqueada por 10 minutos</strong> después de 5 intentos fallidos.</li>
-                </ul>
-            </div>
+                            <!-- Alerta Principal -->
+                            <table width="100%" cellpadding="0" cellspacing="0" style="background: linear-gradient(135deg, #fef2f2 0%, #fecaca 100%); border-radius: 16px; margin-bottom: 35px; border-left: 6px solid #dc2626;">
+                                <tr>
+                                    <td style="padding: 30px;">
+                                        <h2 style="color: #991b1b; margin: 0 0 15px; font-size: 22px; font-weight: 700;">
+                                            ⚠️ Múltiples intentos de acceso fallidos
+                                        </h2>
+                                        <p style="color: #7f1d1d; margin: 0; font-size: 16px; line-height: 1.6;">
+                                            Alguien ha intentado acceder a tu cuenta de <strong>Máximo Facturas</strong> usando credenciales incorrectas. 
+                                            Por tu seguridad, hemos bloqueado temporalmente el acceso.
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
 
-            <p style="color: #6b7280; font-size: 14px; margin-top: 30px;">
-                Esta es una notificación automática del sistema de seguridad de <strong>Máximo Facturas</strong>. 
-                Monitorea continuamente tu cuenta para proteger tu información.
-            </p>
-        </div>
-        
-        <div class="footer">
-            <p><strong>Máximo Facturas</strong></p>
-            <p>Sistema de Facturación Electrónica</p>
-            <p style="margin-top: 10px;">Este es un correo automático, por favor no responder.</p>
-        </div>
-    </div>
+                            <!-- Detalles del Incidente -->
+                            <h3 style="color: #374151; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; margin: 0 0 20px; padding-bottom: 15px; border-bottom: 3px solid #e5e7eb;">
+                                📋 Detalles del Incidente
+                            </h3>
+
+                            <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom: 35px;">
+                                <tr>
+                                    <td style="padding: 18px 20px; background: #f9fafb; border-radius: 12px; margin-bottom: 12px;">
+                                        <table width="100%" cellpadding="0" cellspacing="0">
+                                            <tr>
+                                                <td style="color: #6b7280; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">
+                                                    📧 Cuenta afectada
+                                                </td>
+                                                <td align="right" style="color: #1f2937; font-size: 16px; font-weight: 600;">
+                                                    {{ $user->email }}
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                                <tr><td style="height: 12px;"></td></tr>
+                                <tr>
+                                    <td style="padding: 18px 20px; background: #fef2f2; border-radius: 12px; border: 2px solid #fecaca;">
+                                        <table width="100%" cellpadding="0" cellspacing="0">
+                                            <tr>
+                                                <td style="color: #991b1b; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">
+                                                    🔢 Intentos fallidos
+                                                </td>
+                                                <td align="right" style="color: #dc2626; font-size: 24px; font-weight: 800;">
+                                                    {{ $attemptCount }}
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                                <tr><td style="height: 12px;"></td></tr>
+                                <tr>
+                                    <td style="padding: 18px 20px; background: #f9fafb; border-radius: 12px;">
+                                        <table width="100%" cellpadding="0" cellspacing="0">
+                                            <tr>
+                                                <td style="color: #6b7280; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">
+                                                    🌐 Dirección IP
+                                                </td>
+                                                <td align="right" style="color: #1f2937; font-size: 16px; font-weight: 600; font-family: 'Courier New', monospace;">
+                                                    {{ $ipAddress }}
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                                <tr><td style="height: 12px;"></td></tr>
+                                <tr>
+                                    <td style="padding: 18px 20px; background: #f9fafb; border-radius: 12px;">
+                                        <table width="100%" cellpadding="0" cellspacing="0">
+                                            <tr>
+                                                <td style="color: #6b7280; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">
+                                                    💻 Dispositivo
+                                                </td>
+                                                <td align="right" style="color: #1f2937; font-size: 15px; font-weight: 600;">
+                                                    {{ $deviceInfo }}
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                                <tr><td style="height: 12px;"></td></tr>
+                                <tr>
+                                    <td style="padding: 18px 20px; background: #f9fafb; border-radius: 12px;">
+                                        <table width="100%" cellpadding="0" cellspacing="0">
+                                            <tr>
+                                                <td style="color: #6b7280; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">
+                                                    🕐 Fecha y hora (Ecuador)
+                                                </td>
+                                                <td align="right" style="color: #1f2937; font-size: 16px; font-weight: 600;">
+                                                    {{ $timestamp }}
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <!-- Aviso de Bloqueo -->
+                            <table width="100%" cellpadding="0" cellspacing="0" style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-radius: 16px; margin-bottom: 35px; border: 2px solid #f59e0b;">
+                                <tr>
+                                    <td style="padding: 25px; text-align: center;">
+                                        <p style="color: #92400e; margin: 0; font-size: 18px; font-weight: 700;">
+                                            ⏰ Tu cuenta ha sido bloqueada por <span style="color: #dc2626; font-size: 22px;">10 minutos</span>
+                                        </p>
+                                        <p style="color: #a16207; margin: 10px 0 0; font-size: 14px;">
+                                            Después de este tiempo podrás intentar iniciar sesión nuevamente
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <!-- Si fuiste tú -->
+                            <table width="100%" cellpadding="0" cellspacing="0" style="background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); border-radius: 16px; margin-bottom: 20px; border-left: 6px solid #10b981;">
+                                <tr>
+                                    <td style="padding: 25px;">
+                                        <h3 style="color: #065f46; margin: 0 0 12px; font-size: 18px; font-weight: 700;">
+                                            ✅ ¿Fuiste tú?
+                                        </h3>
+                                        <p style="color: #047857; margin: 0; font-size: 15px; line-height: 1.6;">
+                                            No te preocupes, simplemente espera 10 minutos e intenta de nuevo con la contraseña correcta. 
+                                            Puedes ignorar este mensaje.
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <!-- Si NO fuiste tú -->
+                            <table width="100%" cellpadding="0" cellspacing="0" style="background: linear-gradient(135deg, #fef2f2 0%, #fecaca 100%); border-radius: 16px; margin-bottom: 35px; border-left: 6px solid #dc2626;">
+                                <tr>
+                                    <td style="padding: 25px;">
+                                        <h3 style="color: #991b1b; margin: 0 0 15px; font-size: 18px; font-weight: 700;">
+                                            🚫 ¿NO reconoces esta actividad?
+                                        </h3>
+                                        <p style="color: #7f1d1d; margin: 0 0 15px; font-size: 15px; line-height: 1.6;">
+                                            Esto podría significar que alguien está intentando acceder a tu cuenta sin autorización. Te recomendamos:
+                                        </p>
+                                        <ul style="color: #991b1b; margin: 0 0 20px; padding-left: 20px; font-size: 14px; line-height: 1.8;">
+                                            <li>Cambia tu contraseña inmediatamente después del desbloqueo</li>
+                                            <li>Verifica que tu correo electrónico esté seguro</li>
+                                            <li>Revisa los dispositivos que tienen acceso a tu cuenta</li>
+                                        </ul>
+                                        <table width="100%" cellpadding="0" cellspacing="0">
+                                            <tr>
+                                                <td align="center">
+                                                    <a href="https://wa.me/message/72PVPYUWIIPOG1" target="_blank" style="display: inline-block; background: linear-gradient(135deg, #25d366 0%, #128c7e 100%); color: white; text-decoration: none; padding: 16px 35px; border-radius: 50px; font-size: 16px; font-weight: 700; box-shadow: 0 4px 15px rgba(37, 211, 102, 0.4);">
+                                                        💬 Contactar a Soporte por WhatsApp
+                                                    </a>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+
+                        </td>
+                    </tr>
+
+                    <!-- FOOTER -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); padding: 40px; text-align: center;">
+                            <h2 style="color: white; margin: 0 0 8px; font-size: 24px; font-weight: 800;">
+                                Máximo Facturas
+                            </h2>
+                            <p style="color: rgba(255,255,255,0.7); margin: 0 0 25px; font-size: 14px;">
+                                Sistema de Facturación Electrónica
+                            </p>
+                            <div style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 25px;">
+                                <p style="color: rgba(255,255,255,0.5); margin: 0; font-size: 12px; line-height: 1.6;">
+                                    Este es un correo automático generado por medidas de seguridad.<br>
+                                    Por favor no responder a este mensaje.
+                                </p>
+                            </div>
+                        </td>
+                    </tr>
+
+                </table>
+            </td>
+        </tr>
+    </table>
 </body>
 </html>
