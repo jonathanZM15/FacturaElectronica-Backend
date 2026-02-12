@@ -8,6 +8,7 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use App\Enums\UserRole;
+use App\Models\Company;
 
 class User extends Authenticatable
 {
@@ -111,7 +112,7 @@ class User extends Authenticatable
      */
     public function emisor()
     {
-        return $this->belongsTo(User::class, 'emisor_id');
+        return $this->belongsTo(Company::class, 'emisor_id');
     }
 
     /**

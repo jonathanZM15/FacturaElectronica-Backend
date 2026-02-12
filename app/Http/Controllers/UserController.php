@@ -10,6 +10,7 @@ use App\Http\Requests\UpdateUserRequest;
 use App\Services\PermissionService;
 use App\Enums\UserRole;
 use App\Services\PuntoEmisionDisponibilidadService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Auth;
@@ -42,8 +43,50 @@ class UserController extends Controller
             $sortBy = $request->input('sort_by', 'created_at');
             $sortDir = strtolower($request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
 
+            // Filtros avanzados (se aplican en backend para mantener paginación correcta)
+            $cedula = trim((string) $request->input('cedula', ''));
+            $nombres = trim((string) $request->input('nombres', ''));
+            $apellidos = trim((string) $request->input('apellidos', ''));
+            $username = trim((string) $request->input('username', ''));
+            $email = trim((string) $request->input('email', ''));
+            $creator = trim((string) $request->input('creator', ''));
+            $emisor = trim((string) $request->input('emisor', ''));
+            $establecimiento = trim((string) $request->input('establecimiento', ''));
+
+            $roles = $request->input('roles', []);
+            if (is_string($roles)) {
+                $roles = array_filter(array_map('trim', explode(',', $roles)));
+            }
+            if (!is_array($roles)) {
+                $roles = [];
+            }
+
+            $estados = $request->input('estados', []);
+            if (is_string($estados)) {
+                $estados = array_filter(array_map('trim', explode(',', $estados)));
+            }
+            if (!is_array($estados)) {
+                $estados = [];
+            }
+
+            $createdFrom = trim((string) $request->input('created_from', ''));
+            $createdTo = trim((string) $request->input('created_to', ''));
+            $updatedFrom = trim((string) $request->input('updated_from', ''));
+            $updatedTo = trim((string) $request->input('updated_to', ''));
+
             // Validar parámetros
-            $validSortColumns = ['id', 'name', 'email', 'role', 'created_at', 'updated_at'];
+            $validSortColumns = [
+                'id',
+                'cedula',
+                'nombres',
+                'apellidos',
+                'username',
+                'email',
+                'estado',
+                'role',
+                'created_at',
+                'updated_at',
+            ];
             if (!in_array($sortBy, $validSortColumns)) {
                 $sortBy = 'created_at';
             }
@@ -81,9 +124,114 @@ class UserController extends Controller
             // Filtro: búsqueda por nombre o email
             if (!empty($search)) {
                 $query->where(function ($q) use ($search) {
-                    $q->where(DB::raw('LOWER(name)'), 'like', '%' . strtolower($search) . '%')
-                      ->orWhere(DB::raw('LOWER(email)'), 'like', '%' . strtolower($search) . '%');
+                    $s = '%' . strtolower($search) . '%';
+                    $q->where(DB::raw('LOWER(cedula)'), 'like', $s)
+                      ->orWhere(DB::raw('LOWER(nombres)'), 'like', $s)
+                      ->orWhere(DB::raw('LOWER(apellidos)'), 'like', $s)
+                      ->orWhere(DB::raw('LOWER(username)'), 'like', $s)
+                      ->orWhere(DB::raw('LOWER(email)'), 'like', $s);
                 });
+            }
+
+            // Filtros directos por campos
+            if ($cedula !== '') {
+                $query->where(DB::raw('LOWER(cedula)'), 'like', '%' . strtolower($cedula) . '%');
+            }
+            if ($nombres !== '') {
+                $query->where(DB::raw('LOWER(nombres)'), 'like', '%' . strtolower($nombres) . '%');
+            }
+            if ($apellidos !== '') {
+                $query->where(DB::raw('LOWER(apellidos)'), 'like', '%' . strtolower($apellidos) . '%');
+            }
+            if ($username !== '') {
+                $query->where(DB::raw('LOWER(username)'), 'like', '%' . strtolower($username) . '%');
+            }
+            if ($email !== '') {
+                $query->where(DB::raw('LOWER(email)'), 'like', '%' . strtolower($email) . '%');
+            }
+
+            // Filtro: roles (multi-select)
+            if (!empty($roles)) {
+                $query->whereIn('role', $roles);
+            }
+
+            // Filtro: estados (multi-select)
+            if (!empty($estados)) {
+                $query->whereIn('estado', $estados);
+            }
+
+            // Filtro: creador (texto)
+            if ($creator !== '') {
+                $query->whereHas('creador', function ($q) use ($creator) {
+                    $s = '%' . strtolower($creator) . '%';
+                    $q->where(DB::raw('LOWER(username)'), 'like', $s)
+                      ->orWhere(DB::raw('LOWER(email)'), 'like', $s)
+                      ->orWhere(DB::raw('LOWER(cedula)'), 'like', $s)
+                      ->orWhere(DB::raw('LOWER(nombres)'), 'like', $s)
+                      ->orWhere(DB::raw('LOWER(apellidos)'), 'like', $s);
+                });
+            }
+
+            // Filtro: emisor (ruc o razón social)
+            if ($emisor !== '') {
+                $query->whereHas('emisor', function ($q) use ($emisor) {
+                    $s = '%' . strtolower($emisor) . '%';
+                    $q->where(DB::raw('LOWER(ruc)'), 'like', $s)
+                      ->orWhere(DB::raw('LOWER(razon_social)'), 'like', $s);
+                });
+            }
+
+            // Filtro: establecimiento (código o nombre -> ids -> json contains)
+            if ($establecimiento !== '') {
+                $estIds = Establecimiento::query()
+                    ->where(function ($q) use ($establecimiento) {
+                        $s = '%' . strtolower($establecimiento) . '%';
+                        $q->where(DB::raw('LOWER(codigo)'), 'like', $s)
+                          ->orWhere(DB::raw('LOWER(nombre)'), 'like', $s);
+                    })
+                    ->limit(200)
+                    ->pluck('id')
+                    ->toArray();
+
+                if (empty($estIds)) {
+                    $query->whereRaw('1=0');
+                } else {
+                    $query->where(function ($q) use ($estIds) {
+                        foreach ($estIds as $eid) {
+                            $q->orWhereJsonContains('establecimientos_ids', (int) $eid);
+                        }
+                    });
+                }
+            }
+
+            // Filtros por rango de fechas (inclusivo)
+            if ($createdFrom !== '') {
+                try {
+                    $from = Carbon::createFromFormat('Y-m-d', $createdFrom)->startOfDay();
+                    $query->where('created_at', '>=', $from);
+                } catch (\Exception $_) {
+                }
+            }
+            if ($createdTo !== '') {
+                try {
+                    $to = Carbon::createFromFormat('Y-m-d', $createdTo)->endOfDay();
+                    $query->where('created_at', '<=', $to);
+                } catch (\Exception $_) {
+                }
+            }
+            if ($updatedFrom !== '') {
+                try {
+                    $from = Carbon::createFromFormat('Y-m-d', $updatedFrom)->startOfDay();
+                    $query->where('updated_at', '>=', $from);
+                } catch (\Exception $_) {
+                }
+            }
+            if ($updatedTo !== '') {
+                try {
+                    $to = Carbon::createFromFormat('Y-m-d', $updatedTo)->endOfDay();
+                    $query->where('updated_at', '<=', $to);
+                } catch (\Exception $_) {
+                }
             }
 
             // Filtro: rol (validar que sea uno de los roles permitidos)
@@ -97,17 +245,25 @@ class UserController extends Controller
             }
 
             // Ordenamiento
-            $query->orderBy($sortBy, $sortDir);
+            if ($sortBy === 'nombres') {
+                $query->orderBy('nombres', $sortDir)->orderBy('apellidos', $sortDir);
+            } else {
+                $query->orderBy($sortBy, $sortDir);
+            }
 
             // Obtener datos paginados
             $users = $query->paginate($perPage, ['*'], 'page', $page);
 
             // Cargar información del creador para cada usuario
-            $users->load('creador:id,nombres,apellidos,username,email,role');
+            $users->load(
+                'creador:id,nombres,apellidos,username,email,role',
+                'emisor:id,ruc,razon_social,nombre_comercial'
+            );
             
             // Normalizar datos del creador en cada usuario
             $users->getCollection()->each(function ($user) {
                 $creador = $user->creador;
+                $emisor = $user->emisor;
                 $creadorUsername = $creador?->username
                     ?: ($creador?->email ?? $creador?->cedula ?? null);
 
@@ -120,6 +276,13 @@ class UserController extends Controller
                     $user->created_by_username = null;
                     $user->created_by_role = null;
                 }
+
+                $user->created_by_id = $user->created_by_id;
+                $user->created_by_nombres = $creador?->nombres;
+                $user->created_by_apellidos = $creador?->apellidos;
+
+                $user->emisor_ruc = $emisor?->ruc;
+                $user->emisor_razon_social = $emisor?->razon_social;
             });
 
             Log::info('Usuarios listados', [
@@ -764,6 +927,55 @@ class UserController extends Controller
             $perPage = max(10, min(100, (int)($request->input('per_page', 20))));
             $search = trim($request->input('search', ''));
 
+            $sortBy = $request->input('sort_by', 'created_at');
+            $sortDir = strtolower($request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
+
+            $validSortColumns = [
+                'id',
+                'cedula',
+                'nombres',
+                'apellidos',
+                'username',
+                'email',
+                'estado',
+                'role',
+                'created_at',
+                'updated_at',
+            ];
+            if (!in_array($sortBy, $validSortColumns)) {
+                $sortBy = 'created_at';
+            }
+
+            // Filtros avanzados (backend para paginación correcta)
+            $cedula = trim((string) $request->input('cedula', ''));
+            $nombres = trim((string) $request->input('nombres', ''));
+            $apellidos = trim((string) $request->input('apellidos', ''));
+            $username = trim((string) $request->input('username', ''));
+            $email = trim((string) $request->input('email', ''));
+            $creator = trim((string) $request->input('creator', ''));
+            $establecimiento = trim((string) $request->input('establecimiento', ''));
+
+            $roles = $request->input('roles', []);
+            if (is_string($roles)) {
+                $roles = array_filter(array_map('trim', explode(',', $roles)));
+            }
+            if (!is_array($roles)) {
+                $roles = [];
+            }
+
+            $estados = $request->input('estados', []);
+            if (is_string($estados)) {
+                $estados = array_filter(array_map('trim', explode(',', $estados)));
+            }
+            if (!is_array($estados)) {
+                $estados = [];
+            }
+
+            $createdFrom = trim((string) $request->input('created_from', ''));
+            $createdTo = trim((string) $request->input('created_to', ''));
+            $updatedFrom = trim((string) $request->input('updated_from', ''));
+            $updatedTo = trim((string) $request->input('updated_to', ''));
+
             // Listar usuarios del emisor
             $query = User::where('emisor_id', $id)
                 ->with('creador:id,cedula,nombres,apellidos,username,email,role');
@@ -803,7 +1015,99 @@ class UserController extends Controller
                 });
             }
 
-            $users = $query->orderBy('created_at', 'desc')->paginate($perPage, ['*'], 'page', $page);
+            if ($cedula !== '') {
+                $query->where(DB::raw('LOWER(cedula)'), 'like', '%' . strtolower($cedula) . '%');
+            }
+            if ($nombres !== '') {
+                $query->where(DB::raw('LOWER(nombres)'), 'like', '%' . strtolower($nombres) . '%');
+            }
+            if ($apellidos !== '') {
+                $query->where(DB::raw('LOWER(apellidos)'), 'like', '%' . strtolower($apellidos) . '%');
+            }
+            if ($username !== '') {
+                $query->where(DB::raw('LOWER(username)'), 'like', '%' . strtolower($username) . '%');
+            }
+            if ($email !== '') {
+                $query->where(DB::raw('LOWER(email)'), 'like', '%' . strtolower($email) . '%');
+            }
+
+            if (!empty($roles)) {
+                $query->whereIn('role', $roles);
+            }
+            if (!empty($estados)) {
+                $query->whereIn('estado', $estados);
+            }
+
+            if ($creator !== '') {
+                $query->whereHas('creador', function ($q) use ($creator) {
+                    $s = '%' . strtolower($creator) . '%';
+                    $q->where(DB::raw('LOWER(username)'), 'like', $s)
+                      ->orWhere(DB::raw('LOWER(email)'), 'like', $s)
+                      ->orWhere(DB::raw('LOWER(cedula)'), 'like', $s)
+                      ->orWhere(DB::raw('LOWER(nombres)'), 'like', $s)
+                      ->orWhere(DB::raw('LOWER(apellidos)'), 'like', $s);
+                });
+            }
+
+            if ($establecimiento !== '') {
+                $estIds = Establecimiento::query()
+                    ->where('company_id', $id)
+                    ->where(function ($q) use ($establecimiento) {
+                        $s = '%' . strtolower($establecimiento) . '%';
+                        $q->where(DB::raw('LOWER(codigo)'), 'like', $s)
+                          ->orWhere(DB::raw('LOWER(nombre)'), 'like', $s);
+                    })
+                    ->limit(200)
+                    ->pluck('id')
+                    ->toArray();
+
+                if (empty($estIds)) {
+                    $query->whereRaw('1=0');
+                } else {
+                    $query->where(function ($q) use ($estIds) {
+                        foreach ($estIds as $eid) {
+                            $q->orWhereJsonContains('establecimientos_ids', (int) $eid);
+                        }
+                    });
+                }
+            }
+
+            if ($createdFrom !== '') {
+                try {
+                    $from = Carbon::createFromFormat('Y-m-d', $createdFrom)->startOfDay();
+                    $query->where('created_at', '>=', $from);
+                } catch (\Exception $_) {
+                }
+            }
+            if ($createdTo !== '') {
+                try {
+                    $to = Carbon::createFromFormat('Y-m-d', $createdTo)->endOfDay();
+                    $query->where('created_at', '<=', $to);
+                } catch (\Exception $_) {
+                }
+            }
+            if ($updatedFrom !== '') {
+                try {
+                    $from = Carbon::createFromFormat('Y-m-d', $updatedFrom)->startOfDay();
+                    $query->where('updated_at', '>=', $from);
+                } catch (\Exception $_) {
+                }
+            }
+            if ($updatedTo !== '') {
+                try {
+                    $to = Carbon::createFromFormat('Y-m-d', $updatedTo)->endOfDay();
+                    $query->where('updated_at', '<=', $to);
+                } catch (\Exception $_) {
+                }
+            }
+
+            if ($sortBy === 'nombres') {
+                $query->orderBy('nombres', $sortDir)->orderBy('apellidos', $sortDir);
+            } else {
+                $query->orderBy($sortBy, $sortDir);
+            }
+
+            $users = $query->paginate($perPage, ['*'], 'page', $page);
 
             // Mapear datos para incluir información del creador y establecimientos/puntos de emisión
             $data = $users->items();
