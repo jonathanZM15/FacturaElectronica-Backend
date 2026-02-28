@@ -22,9 +22,45 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use App\Mail\EmailVerificationMail;
 use App\Mail\PasswordChangeMail;
+use App\Models\UserAudit;
 
 class UserController extends Controller
 {
+    /**
+     * Construye una descripción legible de los cambios para auditoría.
+     */
+    private function buildUserAuditDescription(User $targetUser, array $cambios, string $default = 'Actualización de usuario'): string
+    {
+        if (empty($cambios)) {
+            return $default . ' (sin cambios detectados)';
+        }
+
+        $parts = [];
+        foreach ($cambios as $campo => $detalle) {
+            if ($campo === 'password') {
+                $parts[] = 'password actualizada';
+                continue;
+            }
+
+            if (is_array($detalle) && array_key_exists('anterior', $detalle) && array_key_exists('nuevo', $detalle)) {
+                $ant = is_scalar($detalle['anterior']) ? (string) $detalle['anterior'] : json_encode($detalle['anterior']);
+                $nuevo = is_scalar($detalle['nuevo']) ? (string) $detalle['nuevo'] : json_encode($detalle['nuevo']);
+
+                $ant = mb_substr($ant ?? '', 0, 60);
+                $nuevo = mb_substr($nuevo ?? '', 0, 60);
+
+                $parts[] = $campo . ': ' . $ant . ' → ' . $nuevo;
+                continue;
+            }
+
+            // Fallback: solo valor nuevo
+            $val = is_scalar($detalle) ? (string) $detalle : json_encode($detalle);
+            $parts[] = $campo . ': ' . mb_substr($val ?? '', 0, 60);
+        }
+
+        return $default . ' (' . implode('; ', $parts) . ')';
+    }
+
     /**
      * Listar usuarios con paginación, búsqueda y filtros
      * Respeta jerarquía de roles: admin ve todos, distribuidor ve sus creados, etc.
@@ -595,55 +631,86 @@ class UserController extends Controller
 
             // Actualizar cédula si se proporciona
             if (isset($validated['cedula'])) {
+                $cedulaNueva = (string) $validated['cedula'];
+                $cedulaActual = (string) ($user->cedula ?? '');
+                if ($cedulaNueva === $cedulaActual) {
+                    // Sin cambio
+                } else {
                 if (User::where('cedula', $validated['cedula'])->where('id', '!=', $id)->exists()) {
                     return response()->json([
                         'message' => 'La cédula ya está registrada',
                         'errors' => ['cedula' => ['La cédula ya existe en el sistema']]
                     ], Response::HTTP_CONFLICT);
                 }
+                $cambios['cedula'] = ['anterior' => $user->cedula, 'nuevo' => $validated['cedula']];
                 $user->cedula = $validated['cedula'];
-                $cambios['cedula'] = $validated['cedula'];
+                }
             }
 
             // Actualizar nombres si se proporciona
             if (isset($validated['nombres'])) {
-                $user->nombres = $validated['nombres'];
-                $cambios['nombres'] = $validated['nombres'];
+                $nuevo = (string) $validated['nombres'];
+                $actual = (string) ($user->nombres ?? '');
+                if ($nuevo !== $actual) {
+                    $cambios['nombres'] = ['anterior' => $user->nombres, 'nuevo' => $validated['nombres']];
+                    $user->nombres = $validated['nombres'];
+                }
             }
 
             // Actualizar apellidos si se proporciona
             if (isset($validated['apellidos'])) {
-                $user->apellidos = $validated['apellidos'];
-                $cambios['apellidos'] = $validated['apellidos'];
+                $nuevo = (string) $validated['apellidos'];
+                $actual = (string) ($user->apellidos ?? '');
+                if ($nuevo !== $actual) {
+                    $cambios['apellidos'] = ['anterior' => $user->apellidos, 'nuevo' => $validated['apellidos']];
+                    $user->apellidos = $validated['apellidos'];
+                }
             }
 
             // Actualizar username si se proporciona
             if (isset($validated['username'])) {
+                $usernameNuevo = (string) $validated['username'];
+                $usernameActual = (string) ($user->username ?? '');
+                if ($usernameNuevo === $usernameActual) {
+                    // Sin cambio
+                } else {
                 if (User::where('username', $validated['username'])->where('id', '!=', $id)->exists()) {
                     return response()->json([
                         'message' => 'El username ya está registrado',
                         'errors' => ['username' => ['El username ya existe en el sistema']]
                     ], Response::HTTP_CONFLICT);
                 }
+                $cambios['username'] = ['anterior' => $user->username, 'nuevo' => $validated['username']];
                 $user->username = $validated['username'];
-                $cambios['username'] = $validated['username'];
+                }
             }
 
             // Actualizar email si se proporciona (debe ser único)
             if (isset($validated['email'])) {
+                $emailNuevo = (string) $validated['email'];
+                $emailActual = (string) ($user->email ?? '');
+                if ($emailNuevo === $emailActual) {
+                    // Sin cambio
+                } else {
                 if (User::where('email', $validated['email'])->where('id', '!=', $id)->exists()) {
                     return response()->json([
                         'message' => 'El email ya está registrado',
                         'errors' => ['email' => ['El email ya existe en el sistema']]
                     ], Response::HTTP_CONFLICT);
                 }
+                $cambios['email'] = ['anterior' => $user->email, 'nuevo' => $validated['email']];
                 $user->email = $validated['email'];
-                $cambios['email'] = $validated['email'];
+                }
             }
 
             // Actualizar rol si se proporciona
             if (isset($validated['role'])) {
                 $newRole = UserRole::from($validated['role']);
+
+                $currentRoleValue = $user->role?->value;
+                if ($newRole->value === $currentRoleValue) {
+                    // Sin cambio
+                } else {
 
                 // Validar que no se elimine el último admin
                 if ($newRole !== UserRole::ADMINISTRADOR && $user->role === UserRole::ADMINISTRADOR) {
@@ -658,8 +725,9 @@ class UserController extends Controller
                         ], Response::HTTP_CONFLICT);
                     }
                 }
+                $cambios['role'] = ['anterior' => $user->role?->value, 'nuevo' => $newRole->value];
                 $user->role = $newRole->value;  // Usar el valor del enum, no el enum mismo
-                $cambios['role'] = $newRole->value;
+                }
             }
 
             // Actualizar estado si se proporciona
@@ -670,16 +738,103 @@ class UserController extends Controller
                         'message' => 'El estado del usuario admin@factura.local no puede modificarse y siempre es Activo'
                     ], Response::HTTP_CONFLICT);
                 }
-                $user->estado = $validated['estado'];
-                $cambios['estado'] = $validated['estado'];
+
+                $estadoAnterior = (string) $user->estado;
+                $estadoNuevo = (string) $validated['estado'];
+
+                if ($estadoNuevo !== $estadoAnterior) {
+                    // Matriz de transiciones manuales permitidas (panel administrativo)
+                    $allowedManualTransitions = [
+                        'activo' => ['suspendido', 'retirado'],
+                        'suspendido' => ['activo', 'retirado'],
+                        'pendiente_verificacion' => ['suspendido'],
+                        // 'nuevo' y 'retirado' no admiten cambio manual de estado
+                        'nuevo' => [],
+                        'retirado' => [],
+                    ];
+
+                    // No permitir cambios manuales a estados automáticos
+                    // - nuevo -> activo es automático al validar correo
+                    // - activo -> pendiente_verificacion es automático cuando el usuario solicita cambio de correo desde su cuenta
+                    // - pendiente_verificacion -> activo es automático al completar verificación
+                    if ($estadoNuevo === 'pendiente_verificacion') {
+                        return response()->json([
+                            'message' => 'El estado Pendiente de verificación no puede establecerse manualmente desde el panel.'
+                        ], Response::HTTP_CONFLICT);
+                    }
+                    if ($estadoAnterior === 'nuevo' && $estadoNuevo === 'activo') {
+                        return response()->json([
+                            'message' => 'El estado Activo para un usuario Nuevo se establece automáticamente al verificar el correo.'
+                        ], Response::HTTP_CONFLICT);
+                    }
+                    if ($estadoAnterior === 'pendiente_verificacion' && $estadoNuevo === 'activo') {
+                        return response()->json([
+                            'message' => 'El estado Activo se establece automáticamente al completar la verificación del correo.'
+                        ], Response::HTTP_CONFLICT);
+                    }
+                    if ($estadoAnterior === 'activo' && $estadoNuevo === 'pendiente_verificacion') {
+                        return response()->json([
+                            'message' => 'El estado Pendiente de verificación se usa automáticamente cuando el usuario solicita cambio de correo.'
+                        ], Response::HTTP_CONFLICT);
+                    }
+
+                    // Si está Retirado, solo puede pasar a Pendiente de verificación mediante Reenviar correo (no por update)
+                    if ($estadoAnterior === 'retirado') {
+                        return response()->json([
+                            'message' => 'Un usuario Retirado solo puede reactivarse mediante Reenviar correo (cambia a Pendiente de verificación).'
+                        ], Response::HTTP_CONFLICT);
+                    }
+
+                    $allowedNext = $allowedManualTransitions[$estadoAnterior] ?? [];
+                    if (!in_array($estadoNuevo, $allowedNext, true)) {
+                        Log::warning('Transición de estado no permitida', [
+                            'usuario_objetivo_id' => $id,
+                            'estado_anterior' => $estadoAnterior,
+                            'estado_nuevo' => $estadoNuevo,
+                            'usuario_actual_id' => $currentUser->id,
+                        ]);
+
+                        return response()->json([
+                            'message' => 'Transición de estado no permitida.'
+                        ], Response::HTTP_CONFLICT);
+                    }
+                }
+
+                if ($estadoNuevo !== $estadoAnterior) {
+                    $user->estado = $estadoNuevo;
+                    $cambios['estado'] = ['anterior' => $estadoAnterior, 'nuevo' => $estadoNuevo];
+                }
             }
 
             // Actualizar establecimientos_ids si se proporciona y es gerente
             if (isset($validated['establecimientos_ids']) && $user->role === UserRole::GERENTE) {
-                $user->establecimientos_ids = $validated['establecimientos_ids'];
+                $nuevo = $validated['establecimientos_ids'];
+                $actual = $user->establecimientos_ids;
+                if ($nuevo != $actual) {
+                    $cambios['establecimientos_ids'] = ['anterior' => $actual, 'nuevo' => $nuevo];
+                    $user->establecimientos_ids = $nuevo;
+                }
             }
 
             $user->save();
+
+            // Auditoría persistente (fecha/hora + usuario modificador + descripción)
+            try {
+                $actorId = Auth::check() ? (int) Auth::id() : null;
+                $actorRole = $currentUser?->role?->value;
+                $desc = $this->buildUserAuditDescription($user, $cambios, 'Actualización de usuario');
+                UserAudit::registrar(
+                    (int) $user->id,
+                    'update',
+                    $desc,
+                    $actorId,
+                    $actorRole,
+                    $cambios,
+                    $request->ip(),
+                    (string) $request->userAgent()
+                );
+            } catch (\Exception $_) {
+            }
 
             Log::info('Usuario actualizado', [
                 'usuario_id' => $id,
@@ -1795,6 +1950,24 @@ class UserController extends Controller
 
             DB::commit();
 
+            // Auditoría persistente (fecha/hora + usuario modificador + descripción)
+            try {
+                $actorId = Auth::check() ? (int) Auth::id() : null;
+                $actorRole = $currentUser?->role?->value;
+                $desc = $this->buildUserAuditDescription($user, $cambios, 'Actualización de usuario (por emisor)');
+                UserAudit::registrar(
+                    (int) $user->id,
+                    'update',
+                    $desc,
+                    $actorId,
+                    $actorRole,
+                    $cambios,
+                    $request->ip(),
+                    (string) $request->userAgent()
+                );
+            } catch (\Exception $_) {
+            }
+
             if (!empty($cambios)) {
                 Log::info('Usuario del emisor actualizado', [
                     'usuario_id' => $usuario,
@@ -2345,6 +2518,13 @@ class UserController extends Controller
                 ], Response::HTTP_BAD_REQUEST);
             }
 
+            // Regla: si el usuario está Retirado, solo el usuario que lo creó puede solicitar reactivación
+            if ($user->estado === 'retirado' && (string) $user->created_by_id !== (string) $currentUser->id) {
+                return response()->json([
+                    'message' => 'Solo el usuario que creó este usuario puede reenviar el correo de reactivación.'
+                ], Response::HTTP_FORBIDDEN);
+            }
+
             $estadoAnterior = $user->estado;
             $nuevoEstado = $request->input('estado', $user->estado);
 
@@ -2353,6 +2533,25 @@ class UserController extends Controller
                 // Cambiar a pendiente_verificacion para reactivación
                 $user->estado = 'pendiente_verificacion';
                 $user->save();
+
+                // Auditoría persistente del cambio de estado por reenvío
+                try {
+                    $actorId = Auth::check() ? (int) Auth::id() : null;
+                    $actorRole = $currentUser?->role?->value;
+                    $cambios = ['estado' => ['anterior' => $estadoAnterior, 'nuevo' => 'pendiente_verificacion']];
+                    $desc = $this->buildUserAuditDescription($user, $cambios, 'Reenvío de verificación / reactivación');
+                    UserAudit::registrar(
+                        (int) $user->id,
+                        'resend_verification_email',
+                        $desc,
+                        $actorId,
+                        $actorRole,
+                        $cambios,
+                        $request->ip(),
+                        (string) $request->userAgent()
+                    );
+                } catch (\Exception $_) {
+                }
 
                 Log::info('Usuario cambiado a pendiente_verificacion para reactivación', [
                     'usuario_id' => $user->id,
@@ -2430,12 +2629,38 @@ class UserController extends Controller
                 ], Response::HTTP_BAD_REQUEST);
             }
 
+            // Regla: si el usuario está Retirado, solo el usuario que lo creó puede solicitar reactivación
+            if ($user->estado === 'retirado' && (string) $user->created_by_id !== (string) $currentUser->id) {
+                return response()->json([
+                    'message' => 'Solo el usuario que creó este usuario puede reenviar el correo de reactivación.'
+                ], Response::HTTP_FORBIDDEN);
+            }
+
             $estadoAnterior = $user->estado;
 
             // Cambiar estado si es necesario
             if (in_array($estadoAnterior, ['suspendido', 'retirado'])) {
                 $user->estado = 'pendiente_verificacion';
                 $user->save();
+
+                // Auditoría persistente del cambio de estado por reenvío (por emisor)
+                try {
+                    $actorId = Auth::check() ? (int) Auth::id() : null;
+                    $actorRole = $currentUser?->role?->value;
+                    $cambios = ['estado' => ['anterior' => $estadoAnterior, 'nuevo' => 'pendiente_verificacion']];
+                    $desc = $this->buildUserAuditDescription($user, $cambios, 'Reenvío de verificación / reactivación');
+                    UserAudit::registrar(
+                        (int) $user->id,
+                        'resend_verification_email',
+                        $desc,
+                        $actorId,
+                        $actorRole,
+                        $cambios,
+                        $request->ip(),
+                        (string) $request->userAgent()
+                    );
+                } catch (\Exception $_) {
+                }
             }
 
             // Enviar correo con el estado anterior
