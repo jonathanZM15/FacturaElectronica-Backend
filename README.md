@@ -123,12 +123,16 @@ Configurar las credenciales SMTP en `.env`:
 MAIL_MAILER=smtp
 MAIL_HOST=smtp.example.com
 MAIL_PORT=587
+MAIL_SCHEME=null
 MAIL_USERNAME=tu_email
 MAIL_PASSWORD=tu_contraseña
-MAIL_ENCRYPTION=tls
 MAIL_FROM_ADDRESS=noreply@tudominio.com
 MAIL_FROM_NAME="Máximo Facturas"
 ```
+
+Nota:
+- Este proyecto usa `MAIL_SCHEME` / `MAIL_URL` (ver `config/mail.php`), no `MAIL_ENCRYPTION`.
+- Si tu red bloquea el puerto 587 (STARTTLS), prueba con 465 (SMTPS): `MAIL_PORT=465` y `MAIL_SCHEME=smtps`.
 
 ## 🧪 Tests
 

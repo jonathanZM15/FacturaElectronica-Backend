@@ -228,10 +228,22 @@ class PermissionService
             return false;
         }
 
-        // Distribuidor puede gestionar a sus usuarios creados
+        // Distribuidor puede gestionar usuarios asociados a emisores que él registró
         if ($roleGestor === UserRole::DISTRIBUIDOR) {
-            return $objetivo->created_by_id === $gestor->id &&
-                   in_array($roleObjetivo->value, ['emisor', 'gerente', 'cajero']);
+            if (!in_array($roleObjetivo->value, ['emisor', 'gerente', 'cajero'], true)) {
+                return false;
+            }
+
+            // Debe estar asociado a un emisor (Company) y ese emisor debe haber sido creado por el distribuidor.
+            $emisorId = $objetivo->emisor_id;
+            if (!$emisorId) {
+                return false;
+            }
+
+            return \App\Models\Company::query()
+                ->where('id', (int) $emisorId)
+                ->where('created_by', (int) $gestor->id)
+                ->exists();
         }
 
         // Emisor puede gestionar gerentes y cajeros creados por él

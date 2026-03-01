@@ -33,16 +33,19 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', [AuthController::class, 'me']);
     Route::post('/cambiarClave', [AuthController::class, 'cambiarPassword']);
 
-    // Rutas de Usuarios (solo admins)
-    Route::middleware('admin')->group(function () {
+    // Rutas de Usuarios (admin y distribuidor)
+    // Nota HU: el registro de usuarios es exclusivamente desde Emisor Info → Usuarios.
+    Route::middleware('admin_or_distribuidor')->group(function () {
         Route::get('/usuarios', [UserController::class, 'index']);
-        Route::post('/usuarios', [UserController::class, 'store']);
         Route::get('/usuarios/{usuario}', [UserController::class, 'show']);
         Route::put('/usuarios/{usuario}', [UserController::class, 'update']);
         Route::delete('/usuarios/{usuario}', [UserController::class, 'destroy']);
         Route::post('/usuarios/{usuario}/resend-verification', [UserController::class, 'resendVerificationEmail']);
-        
-        // Rutas de Planes (solo admins)
+    });
+
+    // Rutas solo admins
+    Route::middleware('admin')->group(function () {
+        // Rutas de Planes
         Route::get('/planes', [PlanController::class, 'index']);
         Route::post('/planes', [PlanController::class, 'store']);
         Route::get('/planes/periodos', [PlanController::class, 'periodos']);

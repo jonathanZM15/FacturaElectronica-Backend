@@ -134,11 +134,13 @@ class UserController extends Controller
             if ($currentUser->role === UserRole::ADMINISTRADOR) {
                 // Admin ve todos los usuarios
             } elseif ($currentUser->role === UserRole::DISTRIBUIDOR) {
-                // Distribuidor ve: a sí mismo, los usuarios que creó, y los emisores bajo su cuenta
+                // Distribuidor ve: a sí mismo y a los usuarios asociados a emisores creados por él.
+                // Regla: emisor (Company) creado_por = currentUser.id
                 $query->where(function ($q) use ($currentUser) {
                     $q->where('id', $currentUser->id)
-                      ->orWhere('created_by_id', $currentUser->id)
-                      ->orWhere('distribuidor_id', $currentUser->id);
+                        ->orWhereHas('emisor', function ($qe) use ($currentUser) {
+                            $qe->where('created_by', $currentUser->id);
+                        });
                 });
             } elseif ($currentUser->role === UserRole::EMISOR) {
                 // Emisor ve: a sí mismo y los usuarios que creó (gerentes y cajeros)
@@ -397,7 +399,9 @@ class UserController extends Controller
             elseif ($currentUserLevel > $targetUserLevel) {
                 // Distribuidor puede ver emisores, gerentes y cajeros
                 if ($currentUser->role === UserRole::DISTRIBUIDOR) {
-                    $puedeVer = in_array($user->role->value, ['emisor', 'gerente', 'cajero']);
+                    $puedeVer = in_array($user->role->value, ['emisor', 'gerente', 'cajero'], true)
+                        && $user->emisor_id
+                        && $user->emisor()->where('created_by', $currentUser->id)->exists();
                 }
                 // Emisor puede ver gerentes y cajeros de su organización
                 elseif ($currentUser->role === UserRole::EMISOR) {
@@ -470,6 +474,15 @@ class UserController extends Controller
         try {
             /** @var User|null $currentUser */
             $currentUser = Auth::user();
+
+            // Regla de UX/seguridad: el Distribuidor no crea desde el panel global de usuarios (/usuarios).
+            // Los usuarios para emisores deben crearse desde /emisores/{id}/usuarios.
+            if ($currentUser && $currentUser->role === UserRole::DISTRIBUIDOR) {
+                return response()->json([
+                    'message' => 'El rol Distribuidor no puede crear usuarios desde este módulo. Crea usuarios desde el emisor correspondiente.'
+                ], Response::HTTP_FORBIDDEN);
+            }
+
             $validated = $request->validated();
 
             // Los permisos fueron validados en StoreUserRequest::authorize()
@@ -628,6 +641,29 @@ class UserController extends Controller
 
             $validated = $request->validated();
             $cambios = [];
+            $emailChanged = false;
+
+            // HU: después de validar el correo (email_verified_at), bloquear edición de email y username
+            $identityLocked = $user->email_verified_at !== null;
+            if ($identityLocked) {
+                if (isset($validated['email']) && (string) $validated['email'] !== (string) $user->email) {
+                    return response()->json([
+                        'message' => 'Validación fallida',
+                        'errors' => [
+                            'email' => ['No se puede modificar el email después de la verificación de correo.'],
+                        ]
+                    ], Response::HTTP_UNPROCESSABLE_ENTITY);
+                }
+
+                if (isset($validated['username']) && (string) $validated['username'] !== (string) $user->username) {
+                    return response()->json([
+                        'message' => 'Validación fallida',
+                        'errors' => [
+                            'username' => ['No se puede modificar el nombre de usuario después de la verificación de correo.'],
+                        ]
+                    ], Response::HTTP_UNPROCESSABLE_ENTITY);
+                }
+            }
 
             // Actualizar cédula si se proporciona
             if (isset($validated['cedula'])) {
@@ -700,6 +736,7 @@ class UserController extends Controller
                 }
                 $cambios['email'] = ['anterior' => $user->email, 'nuevo' => $validated['email']];
                 $user->email = $validated['email'];
+                $emailChanged = true;
                 }
             }
 
@@ -834,6 +871,44 @@ class UserController extends Controller
                     (string) $request->userAgent()
                 );
             } catch (\Exception $_) {
+            }
+
+            // Si cambia el email, invalidar enlaces anteriores y enviar un nuevo correo de activación
+            // (solo aplica a usuarios que requieren verificación).
+            if ($emailChanged && $user->email !== 'admin@factura.local') {
+                try {
+                    DB::table('user_verification_tokens')
+                        ->where('user_id', $user->id)
+                        ->where('type', 'email_verification')
+                        ->where('used', false)
+                        ->update([
+                            'used' => true,
+                            'used_at' => now(),
+                            'updated_at' => now(),
+                        ]);
+                } catch (\Exception $e) {
+                    Log::warning('No se pudieron invalidar tokens de verificación previos tras cambio de email', [
+                        'usuario_id' => $user->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+
+                if (in_array((string) $user->estado, ['nuevo', 'pendiente_verificacion'], true)) {
+                    try {
+                        $this->sendVerificationEmail($user, (string) $user->estado);
+                        Log::info('Correo de verificación enviado tras cambio de email', [
+                            'usuario_id' => $user->id,
+                            'email' => $user->email,
+                            'estado' => $user->estado,
+                        ]);
+                    } catch (\Exception $emailError) {
+                        Log::error('Error enviando correo de verificación tras cambio de email', [
+                            'usuario_id' => $user->id,
+                            'error' => $emailError->getMessage(),
+                        ]);
+                        // No fallar la actualización del usuario si falla el email
+                    }
+                }
             }
 
             Log::info('Usuario actualizado', [
@@ -1354,9 +1429,14 @@ class UserController extends Controller
             // Emisor y Gerente solo pueden crear en su propio emisor
             $canCreate = false;
             
-            if ($currentUser->role === UserRole::ADMINISTRADOR || $currentUser->role === UserRole::DISTRIBUIDOR) {
-                // Administrador y Distribuidor pueden crear en cualquier emisor
+            if ($currentUser->role === UserRole::ADMINISTRADOR) {
                 $canCreate = true;
+            } elseif ($currentUser->role === UserRole::DISTRIBUIDOR) {
+                // Distribuidor: solo puede crear usuarios en emisores que él registró
+                $canCreate = \App\Models\Company::query()
+                    ->where('id', (int) $id)
+                    ->where('created_by', (int) $currentUser->id)
+                    ->exists();
             } elseif (($currentUser->role === UserRole::EMISOR || $currentUser->role === UserRole::GERENTE) && 
                       $currentUser->emisor_id == $id) {
                 // Emisor y Gerente solo en su propio emisor
@@ -1371,6 +1451,13 @@ class UserController extends Controller
 
             // Validar jerarquía de roles
             $roleToCreate = UserRole::from($request->input('role'));
+
+            // HU: desde Emisor Info → Usuarios solo se permite crear EMISOR/GERENTE/CAJERO
+            if (!in_array($roleToCreate, [UserRole::EMISOR, UserRole::GERENTE, UserRole::CAJERO], true)) {
+                throw ValidationException::withMessages([
+                    'role' => ['Solo se permite registrar usuarios con rol Emisor, Gerente o Cajero desde esta pantalla.'],
+                ]);
+            }
             $permissionService = new PermissionService();
             
             if (!$permissionService->puedoCrearRol($currentUser, $roleToCreate->value)) {
@@ -1380,7 +1467,7 @@ class UserController extends Controller
             }
 
             // Reglas de negocio: para EMISOR/GERENTE/CAJERO es obligatorio
-            // seleccionar 1 punto de emisión por cada establecimiento asignado.
+            // seleccionar al menos un establecimiento. Los puntos de emisión SON OPCIONALES.
             if (in_array($roleToCreate, [UserRole::EMISOR, UserRole::GERENTE, UserRole::CAJERO], true)) {
                 $establecimientosIds = $request->input('establecimientos_ids', []);
                 $establecimientosIds = is_array($establecimientosIds) ? $establecimientosIds : [];
@@ -1403,6 +1490,26 @@ class UserController extends Controller
                     ]);
                 }
 
+                // HU: si el usuario logeado es GERENTE, solo puede asociar a sus establecimientos.
+                if ($currentUser->role === UserRole::GERENTE) {
+                    $gerenteAllowed = json_decode($currentUser->establecimientos_ids ?? '[]', true);
+                    $gerenteAllowed = is_array($gerenteAllowed) ? $gerenteAllowed : [];
+                    $gerenteAllowed = array_values(array_unique(array_map('intval', $gerenteAllowed)));
+
+                    if (empty($gerenteAllowed)) {
+                        throw ValidationException::withMessages([
+                            'establecimientos_ids' => ['No tienes establecimientos asignados para poder asociar usuarios.'],
+                        ]);
+                    }
+
+                    $diff = array_values(array_diff($establecimientosIds, $gerenteAllowed));
+                    if (!empty($diff)) {
+                        throw ValidationException::withMessages([
+                            'establecimientos_ids' => ['Solo puedes asociar usuarios a establecimientos registrados bajo tu usuario.'],
+                        ]);
+                    }
+                }
+
                 // Validar que los establecimientos pertenezcan al emisor y estén ABIERTO
                 $validEstIds = Establecimiento::query()
                     ->where('company_id', (int) $id)
@@ -1419,63 +1526,40 @@ class UserController extends Controller
                     ]);
                 }
 
-                // Solo exigir punto si el establecimiento tiene al menos uno disponible (ACTIVO + LIBRE)
-                $requiredEstIds = PuntoEmision::query()
-                    ->where('company_id', (int) $id)
-                    ->whereIn('establecimiento_id', $establecimientosIds)
-                    ->where('estado', 'ACTIVO')
-                    ->where('estado_disponibilidad', PuntoEmisionDisponibilidadService::LIBRE)
-                    ->select('establecimiento_id')
-                    ->distinct()
-                    ->pluck('establecimiento_id')
-                    ->map(fn ($v) => (int) $v)
-                    ->values()
-                    ->all();
-
                 $puntosIds = $request->input('puntos_emision_ids', []);
                 $puntosIds = is_array($puntosIds) ? $puntosIds : [];
                 $puntosIds = array_values(array_unique(array_map('intval', $puntosIds)));
 
-                if (count($puntosIds) !== count($requiredEstIds)) {
-                    throw ValidationException::withMessages([
-                        'puntos_emision_ids' => ['Debe asignar 1 punto de emisión por cada establecimiento que tenga puntos disponibles.'],
-                    ]);
-                }
+                // HU: puntos de emisión opcionales. Si se envían, deben ser ACTIVO + LIBRE,
+                // pertenecer a los establecimientos seleccionados y no repetirse por establecimiento.
+                if (!empty($puntosIds)) {
+                    $puntos = PuntoEmision::query()
+                        ->where('company_id', (int) $id)
+                        ->whereIn('id', $puntosIds)
+                        ->where('estado', 'ACTIVO')
+                        ->where('estado_disponibilidad', PuntoEmisionDisponibilidadService::LIBRE)
+                        ->get(['id', 'establecimiento_id']);
 
-                $puntos = PuntoEmision::query()
-                    ->where('company_id', (int) $id)
-                    ->whereIn('id', $puntosIds)
-                    ->where('estado', 'ACTIVO')
-                    ->where('estado_disponibilidad', PuntoEmisionDisponibilidadService::LIBRE)
-                    ->get(['id', 'establecimiento_id']);
-
-                if ($puntos->count() !== count($puntosIds)) {
-                    throw ValidationException::withMessages([
-                        'puntos_emision_ids' => ['Hay puntos inválidos/no disponibles (deben estar ACTIVO y LIBRE).'],
-                    ]);
-                }
-
-                $byEst = [];
-                foreach ($puntos as $p) {
-                    $estId = (int) $p->establecimiento_id;
-                    if (!in_array($estId, $establecimientosIds, true)) {
+                    if ($puntos->count() !== count($puntosIds)) {
                         throw ValidationException::withMessages([
-                            'puntos_emision_ids' => ['Hay puntos que no pertenecen a los establecimientos seleccionados.'],
+                            'puntos_emision_ids' => ['Hay puntos inválidos/no disponibles (deben estar ACTIVO y LIBRE).'],
                         ]);
                     }
-                    if (isset($byEst[$estId])) {
-                        throw ValidationException::withMessages([
-                            'puntos_emision_ids' => ['No se permite más de un punto para el mismo establecimiento.'],
-                        ]);
-                    }
-                    $byEst[$estId] = (int) $p->id;
-                }
 
-                foreach ($requiredEstIds as $estId) {
-                    if (!isset($byEst[(int) $estId])) {
-                        throw ValidationException::withMessages([
-                            'puntos_emision_ids' => ['Debe asignar un punto de emisión para cada establecimiento que tenga puntos disponibles.'],
-                        ]);
+                    $byEst = [];
+                    foreach ($puntos as $p) {
+                        $estId = (int) $p->establecimiento_id;
+                        if (!in_array($estId, $establecimientosIds, true)) {
+                            throw ValidationException::withMessages([
+                                'puntos_emision_ids' => ['Hay puntos que no pertenecen a los establecimientos seleccionados.'],
+                            ]);
+                        }
+                        if (isset($byEst[$estId])) {
+                            throw ValidationException::withMessages([
+                                'puntos_emision_ids' => ['No se permite más de un punto para el mismo establecimiento.'],
+                            ]);
+                        }
+                        $byEst[$estId] = (int) $p->id;
                     }
                 }
 
@@ -1506,14 +1590,19 @@ class UserController extends Controller
                 'establecimientos_ids' => json_encode($request->input('establecimientos_ids', [])),
             ]);
 
-            // Si proporciona puntos de emisión, almacenarlos
+            // Si proporciona puntos de emisión (y no es vacío), almacenarlos
             if ($request->has('puntos_emision_ids')) {
                 $puntos = $request->input('puntos_emision_ids', []);
-                $user->puntos_emision_ids = $puntos;
-                $user->save();
+                $puntos = is_array($puntos) ? $puntos : [];
+                $puntos = array_values(array_unique(array_map('intval', $puntos)));
 
-                // Gestión interna: marcar OCUPADO los puntos asociados
-                (new PuntoEmisionDisponibilidadService())->markOcupado((int) $id, $puntos);
+                if (!empty($puntos)) {
+                    $user->puntos_emision_ids = $puntos;
+                    $user->save();
+
+                    // Gestión interna: marcar OCUPADO los puntos asociados
+                    (new PuntoEmisionDisponibilidadService())->markOcupado((int) $id, $puntos);
+                }
             }
 
             DB::commit();
@@ -1747,10 +1836,29 @@ class UserController extends Controller
                 ], Response::HTTP_FORBIDDEN);
             }
 
+            // HU: después de validar el correo, bloquear edición de email y username
+            $identityLocked = $user->email_verified_at !== null;
+            if ($identityLocked) {
+                $emailNuevo = $request->has('email') ? (string) $request->input('email') : null;
+                $usernameNuevo = $request->has('username') ? (string) $request->input('username') : null;
+
+                if ($emailNuevo !== null && $emailNuevo !== '' && $emailNuevo !== (string) $user->email) {
+                    throw ValidationException::withMessages([
+                        'email' => ['No se puede modificar el email después de la verificación de correo.'],
+                    ]);
+                }
+
+                if ($usernameNuevo !== null && $usernameNuevo !== '' && $usernameNuevo !== (string) $user->username) {
+                    throw ValidationException::withMessages([
+                        'username' => ['No se puede modificar el nombre de usuario después de la verificación de correo.'],
+                    ]);
+                }
+            }
+
             // Reglas de negocio (edición): para EMISOR/GERENTE/CAJERO, si se editan
-            // establecimientos/puntos, exigir 1 punto por cada establecimiento que tenga
-            // puntos disponibles (ACTIVO + LIBRE). Si un establecimiento no tiene puntos
-            // disponibles, no es obligatorio escoger.
+            // establecimientos/puntos, exigir al menos un establecimiento. Los puntos de
+            // emisión SON OPCIONALES. Si se envían, deben pertenecer a los establecimientos
+            // seleccionados y no repetirse por establecimiento.
             $isRoleConAsociacion = in_array($user->role, [UserRole::EMISOR, UserRole::GERENTE, UserRole::CAJERO], true);
             $touchesAsociaciones = $request->has('establecimientos_ids') || $request->has('puntos_emision_ids');
             if ($isRoleConAsociacion && $touchesAsociaciones) {
@@ -1777,6 +1885,26 @@ class UserController extends Controller
                     ]);
                 }
 
+                // HU: si el usuario logeado es GERENTE, solo puede asociar a sus establecimientos.
+                if ($currentUser->role === UserRole::GERENTE) {
+                    $gerenteAllowed = json_decode($currentUser->establecimientos_ids ?? '[]', true);
+                    $gerenteAllowed = is_array($gerenteAllowed) ? $gerenteAllowed : [];
+                    $gerenteAllowed = array_values(array_unique(array_map('intval', $gerenteAllowed)));
+
+                    if (empty($gerenteAllowed)) {
+                        throw ValidationException::withMessages([
+                            'establecimientos_ids' => ['No tienes establecimientos asignados para poder asociar usuarios.'],
+                        ]);
+                    }
+
+                    $diff = array_values(array_diff($establecimientosIds, $gerenteAllowed));
+                    if (!empty($diff)) {
+                        throw ValidationException::withMessages([
+                            'establecimientos_ids' => ['Solo puedes asociar usuarios a establecimientos registrados bajo tu usuario.'],
+                        ]);
+                    }
+                }
+
                 $validEstIds = Establecimiento::query()
                     ->where('company_id', (int) $id)
                     ->where('estado', 'ABIERTO')
@@ -1792,19 +1920,6 @@ class UserController extends Controller
                     ]);
                 }
 
-                // Solo exigir punto si el establecimiento tiene puntos disponibles (ACTIVO + LIBRE)
-                $requiredEstIds = PuntoEmision::query()
-                    ->where('company_id', (int) $id)
-                    ->whereIn('establecimiento_id', $establecimientosIds)
-                    ->where('estado', 'ACTIVO')
-                    ->where('estado_disponibilidad', PuntoEmisionDisponibilidadService::LIBRE)
-                    ->select('establecimiento_id')
-                    ->distinct()
-                    ->pluck('establecimiento_id')
-                    ->map(fn ($v) => (int) $v)
-                    ->values()
-                    ->all();
-
                 $currentAssigned = $user->puntos_emision_ids ?? [];
                 if (is_string($currentAssigned)) {
                     $decoded = json_decode($currentAssigned, true);
@@ -1818,52 +1933,42 @@ class UserController extends Controller
                 $puntosIds = is_array($puntosIds) ? $puntosIds : [];
                 $puntosIds = array_values(array_unique(array_map('intval', $puntosIds)));
 
-                if (count($puntosIds) !== count($requiredEstIds)) {
-                    throw ValidationException::withMessages([
-                        'puntos_emision_ids' => ['Debe asignar 1 punto de emisión por cada establecimiento que tenga puntos disponibles.'],
-                    ]);
-                }
+                // HU: puntos opcionales. Si se envían, deben ser ACTIVO y LIBRE, o ya asignados al mismo usuario,
+                // pertenecer a establecimientos seleccionados y no repetirse por establecimiento.
+                if (!empty($puntosIds)) {
+                    // Permitir puntos LIBRE o puntos ya asignados al mismo usuario (pueden estar OCUPADO)
+                    $puntos = PuntoEmision::query()
+                        ->where('company_id', (int) $id)
+                        ->whereIn('id', $puntosIds)
+                        ->where('estado', 'ACTIVO')
+                        ->where(function ($q) use ($currentAssigned) {
+                            $q->where('estado_disponibilidad', PuntoEmisionDisponibilidadService::LIBRE);
+                            if (!empty($currentAssigned)) {
+                                $q->orWhereIn('id', $currentAssigned);
+                            }
+                        })
+                        ->get(['id', 'establecimiento_id']);
 
-                // Permitir puntos LIBRE o puntos ya asignados al mismo usuario (pueden estar OCUPADO)
-                $puntos = PuntoEmision::query()
-                    ->where('company_id', (int) $id)
-                    ->whereIn('id', $puntosIds)
-                    ->where('estado', 'ACTIVO')
-                    ->where(function ($q) use ($currentAssigned) {
-                        $q->where('estado_disponibilidad', PuntoEmisionDisponibilidadService::LIBRE);
-                        if (!empty($currentAssigned)) {
-                            $q->orWhereIn('id', $currentAssigned);
+                    if ($puntos->count() !== count($puntosIds)) {
+                        throw ValidationException::withMessages([
+                            'puntos_emision_ids' => ['Hay puntos inválidos/no disponibles (deben estar ACTIVO y LIBRE).'],
+                        ]);
+                    }
+
+                    $byEst = [];
+                    foreach ($puntos as $p) {
+                        $estId = (int) $p->establecimiento_id;
+                        if (!in_array($estId, $establecimientosIds, true)) {
+                            throw ValidationException::withMessages([
+                                'puntos_emision_ids' => ['Hay puntos que no pertenecen a los establecimientos seleccionados.'],
+                            ]);
                         }
-                    })
-                    ->get(['id', 'establecimiento_id']);
-
-                if ($puntos->count() !== count($puntosIds)) {
-                    throw ValidationException::withMessages([
-                        'puntos_emision_ids' => ['Hay puntos inválidos/no disponibles (deben estar ACTIVO y LIBRE).'],
-                    ]);
-                }
-
-                $byEst = [];
-                foreach ($puntos as $p) {
-                    $estId = (int) $p->establecimiento_id;
-                    if (!in_array($estId, $establecimientosIds, true)) {
-                        throw ValidationException::withMessages([
-                            'puntos_emision_ids' => ['Hay puntos que no pertenecen a los establecimientos seleccionados.'],
-                        ]);
-                    }
-                    if (isset($byEst[$estId])) {
-                        throw ValidationException::withMessages([
-                            'puntos_emision_ids' => ['No se permite más de un punto para el mismo establecimiento.'],
-                        ]);
-                    }
-                    $byEst[$estId] = (int) $p->id;
-                }
-
-                foreach ($requiredEstIds as $estId) {
-                    if (!isset($byEst[(int) $estId])) {
-                        throw ValidationException::withMessages([
-                            'puntos_emision_ids' => ['Debe asignar un punto de emisión por cada establecimiento que tenga puntos disponibles.'],
-                        ]);
+                        if (isset($byEst[$estId])) {
+                            throw ValidationException::withMessages([
+                                'puntos_emision_ids' => ['No se permite más de un punto para el mismo establecimiento.'],
+                            ]);
+                        }
+                        $byEst[$estId] = (int) $p->id;
                     }
                 }
             }
@@ -1975,6 +2080,44 @@ class UserController extends Controller
                     'actualizado_por_id' => $currentUser->id,
                     'cambios' => $cambios
                 ]);
+            }
+
+            // Si cambia el email, invalidar enlaces anteriores y enviar un nuevo correo de verificación
+            // (solo aplica a usuarios que requieren verificación).
+            $emailChanged = array_key_exists('email', $cambios);
+            if ($emailChanged && $user->email !== 'admin@factura.local') {
+                try {
+                    DB::table('user_verification_tokens')
+                        ->where('user_id', $user->id)
+                        ->where('type', 'email_verification')
+                        ->where('used', false)
+                        ->update([
+                            'used' => true,
+                            'used_at' => now(),
+                            'updated_at' => now(),
+                        ]);
+                } catch (\Exception $e) {
+                    Log::warning('No se pudieron invalidar tokens de verificación previos tras cambio de email (por emisor)', [
+                        'usuario_id' => $user->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+
+                if (in_array((string) $user->estado, ['nuevo', 'pendiente_verificacion'], true)) {
+                    try {
+                        $this->sendVerificationEmail($user, (string) $user->estado);
+                        Log::info('Correo de verificación enviado tras cambio de email (por emisor)', [
+                            'usuario_id' => $user->id,
+                            'email' => $user->email,
+                            'estado' => $user->estado,
+                        ]);
+                    } catch (\Exception $emailError) {
+                        Log::error('Error enviando correo de verificación tras cambio de email (por emisor)', [
+                            'usuario_id' => $user->id,
+                            'error' => $emailError->getMessage(),
+                        ]);
+                    }
+                }
             }
 
             return response()->json([
@@ -2181,6 +2324,20 @@ class UserController extends Controller
                 ], Response::HTTP_NOT_FOUND);
             }
 
+            // Validar que el token fue emitido para el email actual del usuario.
+            // Esto evita que enlaces antiguos (emitidos a correos anteriores) puedan activar la cuenta.
+            $metadata = json_decode($token->metadata ?? '{}', true);
+            if (!is_array($metadata)) {
+                $metadata = [];
+            }
+            $emailSentTo = isset($metadata['email_sent_to']) ? (string) $metadata['email_sent_to'] : '';
+            if ($emailSentTo !== '' && mb_strtolower($emailSentTo) !== mb_strtolower((string) $user->email)) {
+                return response()->json([
+                    'message' => 'Este enlace fue emitido para un correo anterior y ya no es válido',
+                    'code' => 'TOKEN_EMAIL_MISMATCH'
+                ], Response::HTTP_BAD_REQUEST);
+            }
+
             DB::beginTransaction();
 
             // Marcar token como usado
@@ -2198,8 +2355,6 @@ class UserController extends Controller
 
             DB::commit();
 
-            // Obtener metadata del token para saber el estado anterior
-            $metadata = json_decode($token->metadata ?? '{}', true);
             $estadoAnterior = $metadata['estado_anterior'] ?? 'nuevo';
 
             Log::info('Email verificado', [
@@ -2327,21 +2482,35 @@ class UserController extends Controller
     {
         // Crear token de verificación
         $token = Str::random(60);
-        
+
         // Si no se proporciona estado anterior, usar el estado actual del usuario
         $metadata = [
-            'estado_anterior' => $estadoAnterior ?? $user->estado
+            'estado_anterior' => $estadoAnterior ?? $user->estado,
+            'email_sent_to' => (string) $user->email,
         ];
-        
-        DB::table('user_verification_tokens')->insert([
-            'user_id' => $user->id,
-            'token' => $token,
-            'type' => 'email_verification',
-            'metadata' => json_encode($metadata),
-            'expires_at' => now()->addHours(24),
-            'created_at' => now(),
-            'updated_at' => now()
-        ]);
+
+        // Invalidate previous unused verification tokens (defense in depth)
+        DB::transaction(function () use ($user, $token, $metadata) {
+            DB::table('user_verification_tokens')
+                ->where('user_id', $user->id)
+                ->where('type', 'email_verification')
+                ->where('used', false)
+                ->update([
+                    'used' => true,
+                    'used_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+            DB::table('user_verification_tokens')->insert([
+                'user_id' => $user->id,
+                'token' => $token,
+                'type' => 'email_verification',
+                'metadata' => json_encode($metadata),
+                'expires_at' => now()->addHours(24),
+                'created_at' => now(),
+                'updated_at' => now()
+            ]);
+        });
 
         // URL del frontend para verificación
         $url = config('app.frontend_url', 'http://localhost:3000') . '/verify-email?token=' . $token;

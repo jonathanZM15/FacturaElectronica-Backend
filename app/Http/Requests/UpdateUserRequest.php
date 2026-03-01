@@ -66,8 +66,7 @@ class UpdateUserRequest extends FormRequest
                 'string',
                 'min:3',
                 'max:255',
-                'unique:users,username,' . $userId, // Username único excepto el usuario actual
-                'regex:/^[a-zA-Z0-9._\-]+$/'
+                'unique:users,username,' . $userId // Username único excepto el usuario actual
             ],
             'email' => [
                 'sometimes',
@@ -167,7 +166,7 @@ class UpdateUserRequest extends FormRequest
             'username.min' => 'El nombre de usuario debe tener al menos 3 caracteres',
             'username.max' => 'El nombre de usuario no puede exceder 255 caracteres',
             'username.unique' => 'Este nombre de usuario ya está registrado en el sistema',
-            'username.regex' => 'El nombre de usuario solo puede contener letras, números, puntos, guiones y guiones bajos',
+            // HU: el nombre de usuario acepta todo tipo de caracteres
 
             'email.sometimes' => 'El correo electrónico es opcional',
             'email.email' => 'El correo electrónico debe ser válido',
