@@ -91,12 +91,12 @@ class TipoImpuestoController extends Controller
             
             // Nombre (parcial, case-insensitive)
             if ($request->filled('nombre')) {
-                $query->where('nombre', 'LIKE', '%' . $request->input('nombre') . '%');
+                $query->where('nombre', 'ILIKE', '%' . $request->input('nombre') . '%');
             }
             
-            // Código (parcial)
+            // Código (parcial, case-insensitive)
             if ($request->filled('codigo')) {
-                $query->where('codigo', 'LIKE', '%' . $request->input('codigo') . '%');
+                $query->where('codigo', 'ILIKE', '%' . $request->input('codigo') . '%');
             }
             
             // Valor tarifa (menor o igual)

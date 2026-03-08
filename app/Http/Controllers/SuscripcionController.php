@@ -1121,7 +1121,7 @@ class SuscripcionController extends Controller
      * Eliminar una suscripción.
      * Solo se permite si:
      * - Estado de transacción es "Pendiente"
-     * - Estado de suscripción es "Pendiente" o "Programado"
+     * - Estado de suscripción es "Suspendido" o "Pendiente"
      * - No existen comprobantes emitidos asociados
      * 
      * HU8: Eliminación de Suscripción
@@ -1171,11 +1171,11 @@ class SuscripcionController extends Controller
                 ], Response::HTTP_UNPROCESSABLE_ENTITY);
             }
 
-            // 2. Verificar que el estado de suscripción sea "Pendiente" o "Programado"
-            $estadosPermitidos = ['Pendiente', 'Programado'];
+            // 2. Verificar que el estado de suscripción sea "Suspendido" o "Pendiente"
+            $estadosPermitidos = ['Suspendido', 'Pendiente'];
             if (!in_array($suscripcion->estado_suscripcion, $estadosPermitidos)) {
                 return response()->json([
-                    'message' => 'No se puede eliminar la suscripción porque no cumple las condiciones requeridas. Solo se pueden eliminar suscripciones en estado Pendiente o Programado.'
+                    'message' => 'No se puede eliminar la suscripción porque no cumple las condiciones requeridas. Solo se pueden eliminar suscripciones en estado Suspendido o Pendiente.'
                 ], Response::HTTP_UNPROCESSABLE_ENTITY);
             }
 

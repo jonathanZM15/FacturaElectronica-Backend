@@ -162,30 +162,30 @@ class UserController extends Controller
             // Filtro: búsqueda por nombre o email
             if (!empty($search)) {
                 $query->where(function ($q) use ($search) {
-                    $s = '%' . strtolower($search) . '%';
-                    $q->where(DB::raw('LOWER(cedula)'), 'like', $s)
-                      ->orWhere(DB::raw('LOWER(nombres)'), 'like', $s)
-                      ->orWhere(DB::raw('LOWER(apellidos)'), 'like', $s)
-                      ->orWhere(DB::raw('LOWER(username)'), 'like', $s)
-                      ->orWhere(DB::raw('LOWER(email)'), 'like', $s);
+                    $s = '%' . $search . '%';
+                    $q->where('cedula', 'ILIKE', $s)
+                      ->orWhere('nombres', 'ILIKE', $s)
+                      ->orWhere('apellidos', 'ILIKE', $s)
+                      ->orWhere('username', 'ILIKE', $s)
+                      ->orWhere('email', 'ILIKE', $s);
                 });
             }
 
             // Filtros directos por campos
             if ($cedula !== '') {
-                $query->where(DB::raw('LOWER(cedula)'), 'like', '%' . strtolower($cedula) . '%');
+                $query->where('cedula', 'ILIKE', '%' . $cedula . '%');
             }
             if ($nombres !== '') {
-                $query->where(DB::raw('LOWER(nombres)'), 'like', '%' . strtolower($nombres) . '%');
+                $query->where('nombres', 'ILIKE', '%' . $nombres . '%');
             }
             if ($apellidos !== '') {
-                $query->where(DB::raw('LOWER(apellidos)'), 'like', '%' . strtolower($apellidos) . '%');
+                $query->where('apellidos', 'ILIKE', '%' . $apellidos . '%');
             }
             if ($username !== '') {
-                $query->where(DB::raw('LOWER(username)'), 'like', '%' . strtolower($username) . '%');
+                $query->where('username', 'ILIKE', '%' . $username . '%');
             }
             if ($email !== '') {
-                $query->where(DB::raw('LOWER(email)'), 'like', '%' . strtolower($email) . '%');
+                $query->where('email', 'ILIKE', '%' . $email . '%');
             }
 
             // Filtro: roles (multi-select)
@@ -201,21 +201,21 @@ class UserController extends Controller
             // Filtro: creador (texto)
             if ($creator !== '') {
                 $query->whereHas('creador', function ($q) use ($creator) {
-                    $s = '%' . strtolower($creator) . '%';
-                    $q->where(DB::raw('LOWER(username)'), 'like', $s)
-                      ->orWhere(DB::raw('LOWER(email)'), 'like', $s)
-                      ->orWhere(DB::raw('LOWER(cedula)'), 'like', $s)
-                      ->orWhere(DB::raw('LOWER(nombres)'), 'like', $s)
-                      ->orWhere(DB::raw('LOWER(apellidos)'), 'like', $s);
+                    $s = '%' . $creator . '%';
+                    $q->where('username', 'ILIKE', $s)
+                      ->orWhere('email', 'ILIKE', $s)
+                      ->orWhere('cedula', 'ILIKE', $s)
+                      ->orWhere('nombres', 'ILIKE', $s)
+                      ->orWhere('apellidos', 'ILIKE', $s);
                 });
             }
 
             // Filtro: emisor (ruc o razón social)
             if ($emisor !== '') {
                 $query->whereHas('emisor', function ($q) use ($emisor) {
-                    $s = '%' . strtolower($emisor) . '%';
-                    $q->where(DB::raw('LOWER(ruc)'), 'like', $s)
-                      ->orWhere(DB::raw('LOWER(razon_social)'), 'like', $s);
+                    $s = '%' . $emisor . '%';
+                    $q->where('ruc', 'ILIKE', $s)
+                      ->orWhere('razon_social', 'ILIKE', $s);
                 });
             }
 
@@ -223,9 +223,9 @@ class UserController extends Controller
             if ($establecimiento !== '') {
                 $estIds = Establecimiento::query()
                     ->where(function ($q) use ($establecimiento) {
-                        $s = '%' . strtolower($establecimiento) . '%';
-                        $q->where(DB::raw('LOWER(codigo)'), 'like', $s)
-                          ->orWhere(DB::raw('LOWER(nombre)'), 'like', $s);
+                        $s = '%' . $establecimiento . '%';
+                        $q->where('codigo', 'ILIKE', $s)
+                          ->orWhere('nombre', 'ILIKE', $s);
                     })
                     ->limit(200)
                     ->pluck('id')
@@ -1237,28 +1237,29 @@ class UserController extends Controller
 
             if (!empty($search)) {
                 $query->where(function ($q) use ($search) {
-                    $q->where(DB::raw('LOWER(cedula)'), 'like', '%' . strtolower($search) . '%')
-                      ->orWhere(DB::raw('LOWER(nombres)'), 'like', '%' . strtolower($search) . '%')
-                      ->orWhere(DB::raw('LOWER(apellidos)'), 'like', '%' . strtolower($search) . '%')
-                      ->orWhere(DB::raw('LOWER(username)'), 'like', '%' . strtolower($search) . '%')
-                      ->orWhere(DB::raw('LOWER(email)'), 'like', '%' . strtolower($search) . '%');
+                    $s = '%' . $search . '%';
+                    $q->where('cedula', 'ILIKE', $s)
+                      ->orWhere('nombres', 'ILIKE', $s)
+                      ->orWhere('apellidos', 'ILIKE', $s)
+                      ->orWhere('username', 'ILIKE', $s)
+                      ->orWhere('email', 'ILIKE', $s);
                 });
             }
 
             if ($cedula !== '') {
-                $query->where(DB::raw('LOWER(cedula)'), 'like', '%' . strtolower($cedula) . '%');
+                $query->where('cedula', 'ILIKE', '%' . $cedula . '%');
             }
             if ($nombres !== '') {
-                $query->where(DB::raw('LOWER(nombres)'), 'like', '%' . strtolower($nombres) . '%');
+                $query->where('nombres', 'ILIKE', '%' . $nombres . '%');
             }
             if ($apellidos !== '') {
-                $query->where(DB::raw('LOWER(apellidos)'), 'like', '%' . strtolower($apellidos) . '%');
+                $query->where('apellidos', 'ILIKE', '%' . $apellidos . '%');
             }
             if ($username !== '') {
-                $query->where(DB::raw('LOWER(username)'), 'like', '%' . strtolower($username) . '%');
+                $query->where('username', 'ILIKE', '%' . $username . '%');
             }
             if ($email !== '') {
-                $query->where(DB::raw('LOWER(email)'), 'like', '%' . strtolower($email) . '%');
+                $query->where('email', 'ILIKE', '%' . $email . '%');
             }
 
             if (!empty($roles)) {
@@ -1270,12 +1271,12 @@ class UserController extends Controller
 
             if ($creator !== '') {
                 $query->whereHas('creador', function ($q) use ($creator) {
-                    $s = '%' . strtolower($creator) . '%';
-                    $q->where(DB::raw('LOWER(username)'), 'like', $s)
-                      ->orWhere(DB::raw('LOWER(email)'), 'like', $s)
-                      ->orWhere(DB::raw('LOWER(cedula)'), 'like', $s)
-                      ->orWhere(DB::raw('LOWER(nombres)'), 'like', $s)
-                      ->orWhere(DB::raw('LOWER(apellidos)'), 'like', $s);
+                    $s = '%' . $creator . '%';
+                    $q->where('username', 'ILIKE', $s)
+                      ->orWhere('email', 'ILIKE', $s)
+                      ->orWhere('cedula', 'ILIKE', $s)
+                      ->orWhere('nombres', 'ILIKE', $s)
+                      ->orWhere('apellidos', 'ILIKE', $s);
                 });
             }
 
@@ -1283,9 +1284,9 @@ class UserController extends Controller
                 $estIds = Establecimiento::query()
                     ->where('company_id', $id)
                     ->where(function ($q) use ($establecimiento) {
-                        $s = '%' . strtolower($establecimiento) . '%';
-                        $q->where(DB::raw('LOWER(codigo)'), 'like', $s)
-                          ->orWhere(DB::raw('LOWER(nombre)'), 'like', $s);
+                        $s = '%' . $establecimiento . '%';
+                        $q->where('codigo', 'ILIKE', $s)
+                          ->orWhere('nombre', 'ILIKE', $s);
                     })
                     ->limit(200)
                     ->pluck('id')

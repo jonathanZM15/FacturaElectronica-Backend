@@ -57,18 +57,18 @@ class EmisorController extends Controller
         // Admin ve todos los emisores
 
         // Basic text filters
-        if ($request->filled('ruc')) $query->where('ruc', 'like', '%'.$request->input('ruc').'%');
-        if ($request->filled('razon_social')) $query->where('razon_social', 'like', '%'.$request->input('razon_social').'%');
-        if ($request->filled('nombre_comercial')) $query->where('nombre_comercial', 'like', '%'.$request->input('nombre_comercial').'%');
-        if ($request->filled('direccion_matriz')) $query->where('direccion_matriz', 'like', '%'.$request->input('direccion_matriz').'%');
-        if ($request->filled('correo_remitente')) $query->where('correo_remitente', 'like', '%'.$request->input('correo_remitente').'%');
-        if ($request->filled('codigo_artesano')) $query->where('codigo_artesano', 'like', '%'.$request->input('codigo_artesano').'%');
+        if ($request->filled('ruc')) $query->whereRaw('ruc ILIKE ?', ['%'.$request->input('ruc').'%']);
+        if ($request->filled('razon_social')) $query->whereRaw('razon_social ILIKE ?', ['%'.$request->input('razon_social').'%']);
+        if ($request->filled('nombre_comercial')) $query->whereRaw('nombre_comercial ILIKE ?', ['%'.$request->input('nombre_comercial').'%']);
+        if ($request->filled('direccion_matriz')) $query->whereRaw('direccion_matriz ILIKE ?', ['%'.$request->input('direccion_matriz').'%']);
+        if ($request->filled('correo_remitente')) $query->whereRaw('correo_remitente ILIKE ?', ['%'.$request->input('correo_remitente').'%']);
+        if ($request->filled('codigo_artesano')) $query->whereRaw('codigo_artesano ILIKE ?', ['%'.$request->input('codigo_artesano').'%']);
 
         if ($request->filled('estado')) $query->where('estado', $request->input('estado'));
         if ($request->filled('regimen_tributario')) $query->where('regimen_tributario', $request->input('regimen_tributario'));
         if ($request->filled('obligado_contabilidad')) $query->where('obligado_contabilidad', $request->input('obligado_contabilidad'));
-        if ($request->filled('contribuyente_especial')) $query->where('contribuyente_especial', 'like', '%'.$request->input('contribuyente_especial').'%');
-        if ($request->filled('agente_retencion')) $query->where('agente_retencion', 'like', '%'.$request->input('agente_retencion').'%');
+        if ($request->filled('contribuyente_especial')) $query->whereRaw('contribuyente_especial ILIKE ?', ['%'.$request->input('contribuyente_especial').'%']);
+        if ($request->filled('agente_retencion')) $query->whereRaw('agente_retencion ILIKE ?', ['%'.$request->input('agente_retencion').'%']);
         if ($request->filled('tipo_persona')) $query->where('tipo_persona', $request->input('tipo_persona'));
         if ($request->filled('ambiente')) $query->where('ambiente', $request->input('ambiente'));
         if ($request->filled('tipo_emision')) $query->where('tipo_emision', $request->input('tipo_emision'));
@@ -158,7 +158,7 @@ class EmisorController extends Controller
             } else {
                 // filter emisores that have a user with that name
                 $query->whereExists(function ($q) use ($registrador) {
-                    $q->selectRaw('1')->from('users')->whereColumn('users.company_id','emisores.id')->where('users.name','like','%'.$registrador.'%');
+                    $q->selectRaw('1')->from('users')->whereColumn('users.company_id','emisores.id')->whereRaw('users.name ILIKE ?', ['%'.$registrador.'%']);
                 });
             }
         }
@@ -170,10 +170,10 @@ class EmisorController extends Controller
             // Apply partial matches on several textual columns
             $like = "%{$q}%";
             $query->where(function ($qq) use ($like) {
-                $qq->whereRaw("ruc LIKE ? COLLATE utf8mb4_unicode_ci", [$like])
-                   ->orWhereRaw("razon_social LIKE ? COLLATE utf8mb4_unicode_ci", [$like])
-                   ->orWhereRaw("nombre_comercial LIKE ? COLLATE utf8mb4_unicode_ci", [$like])
-                   ->orWhereRaw("direccion_matriz LIKE ? COLLATE utf8mb4_unicode_ci", [$like]);
+                $qq->whereRaw("ruc ILIKE ?", [$like])
+                   ->orWhereRaw("razon_social ILIKE ?", [$like])
+                   ->orWhereRaw("nombre_comercial ILIKE ?", [$like])
+                   ->orWhereRaw("direccion_matriz ILIKE ?", [$like]);
             });
         }
 

@@ -58,7 +58,7 @@ class PlanController extends Controller
 
             // Filtrar por nombre
             if (!empty($nombre)) {
-                $query->where('nombre', 'like', "%{$nombre}%");
+                $query->where('nombre', 'ILIKE', "%{$nombre}%");
             }
 
             // Filtrar por cantidad de comprobantes (mayor o igual)
@@ -73,7 +73,7 @@ class PlanController extends Controller
 
             // Filtrar por observación
             if (!empty($observacion)) {
-                $query->where('observacion', 'like', "%{$observacion}%");
+                $query->where('observacion', 'ILIKE', "%{$observacion}%");
             }
 
             // Filtrar por estado (puede ser múltiple separado por comas)
