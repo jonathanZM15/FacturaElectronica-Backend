@@ -10,6 +10,7 @@ use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 
 class PlanController extends Controller
 {
@@ -111,21 +112,31 @@ class PlanController extends Controller
             // Ordenar
             $query->orderBy($sortBy, $sortDir);
 
-            // Paginar
-            $planes = $query->paginate($perPage, ['*'], 'page', $page);
+            // Cache con version-key para invalidación eficiente
+            $cacheVersion = Cache::get('planes:v', 1);
+            $queryParams = $request->query();
+            ksort($queryParams);
+            $cacheKey = "planes:idx:{$cacheVersion}:" . md5(serialize($queryParams));
 
-            return response()->json([
-                'message' => 'Planes obtenidos exitosamente',
-                'data' => $planes->items(),
-                'pagination' => [
-                    'current_page' => $planes->currentPage(),
-                    'per_page' => $planes->perPage(),
-                    'total' => $planes->total(),
-                    'last_page' => $planes->lastPage(),
-                    'from' => $planes->firstItem(),
-                    'to' => $planes->lastItem(),
-                ]
-            ], Response::HTTP_OK);
+            $result = Cache::remember($cacheKey, 30, function () use ($query, $perPage, $page) {
+                $planes = $query->paginate($perPage, ['*'], 'page', $page);
+                return [
+                    'data' => $planes->items(),
+                    'pagination' => [
+                        'current_page' => $planes->currentPage(),
+                        'per_page' => $planes->perPage(),
+                        'total' => $planes->total(),
+                        'last_page' => $planes->lastPage(),
+                        'from' => $planes->firstItem(),
+                        'to' => $planes->lastItem(),
+                    ]
+                ];
+            });
+
+            return response()->json(array_merge(
+                ['message' => 'Planes obtenidos exitosamente'],
+                $result
+            ), Response::HTTP_OK);
 
         } catch (\Exception $e) {
             Log::error('Error al listar planes', [
@@ -167,6 +178,9 @@ class PlanController extends Controller
                 'plan_id' => $plan->id,
                 'created_by' => $currentUser->id
             ]);
+
+            Cache::forget('suscripciones:planes_activos');
+            Cache::put('planes:v', time(), 3600);
 
             return response()->json([
                 'message' => '✅ Plan registrado exitosamente.',
@@ -265,6 +279,9 @@ class PlanController extends Controller
                 'updated_by' => $currentUser->id
             ]);
 
+            Cache::forget('suscripciones:planes_activos');
+            Cache::put('planes:v', time(), 3600);
+
             return response()->json([
                 'message' => 'Plan actualizado exitosamente',
                 'data' => $plan
@@ -355,6 +372,9 @@ class PlanController extends Controller
                 'deleted_by' => $currentUser->id
             ]);
 
+            Cache::forget('suscripciones:planes_activos');
+            Cache::put('planes:v', time(), 3600);
+
             return response()->json([
                 'message' => '✅ Plan eliminado exitosamente.'
             ], Response::HTTP_OK);
@@ -388,17 +408,19 @@ class PlanController extends Controller
      */
     public function periodos()
     {
-        return response()->json([
-            'message' => 'Períodos obtenidos exitosamente',
-            'data' => [
-                'Mensual',
-                'Trimestral',
-                'Semestral',
-                'Anual',
-                'Bianual',
-                'Trianual'
-            ]
-        ], Response::HTTP_OK);
+        return Cache::remember('planes:periodos', 3600, function () {
+            return response()->json([
+                'message' => 'Períodos obtenidos exitosamente',
+                'data' => [
+                    'Mensual',
+                    'Trimestral',
+                    'Semestral',
+                    'Anual',
+                    'Bianual',
+                    'Trianual'
+                ]
+            ], Response::HTTP_OK);
+        });
     }
 
     /**
@@ -406,12 +428,14 @@ class PlanController extends Controller
      */
     public function estados()
     {
-        return response()->json([
-            'message' => 'Estados obtenidos exitosamente',
-            'data' => [
-                'Activo',
-                'Desactivado'
-            ]
-        ], Response::HTTP_OK);
+        return Cache::remember('planes:estados', 3600, function () {
+            return response()->json([
+                'message' => 'Estados obtenidos exitosamente',
+                'data' => [
+                    'Activo',
+                    'Desactivado'
+                ]
+            ], Response::HTTP_OK);
+        });
     }
 }

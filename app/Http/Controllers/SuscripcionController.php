@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Cache;
 use App\Services\SuscripcionEstadoService;
 use Carbon\Carbon;
 
@@ -820,22 +821,24 @@ class SuscripcionController extends Controller
     public function planesActivos()
     {
         try {
-            $planes = Plan::where('estado', 'Activo')
-                ->select('id', 'nombre', 'periodo', 'cantidad_comprobantes', 'precio', 'comprobantes_minimos', 'dias_minimos')
-                ->orderBy('nombre')
-                ->get()
-                ->map(function ($plan) {
-                    return [
-                        'id' => $plan->id,
-                        'nombre' => $plan->nombre,
-                        'periodo' => $plan->periodo,
-                        'cantidad_comprobantes' => $plan->cantidad_comprobantes,
-                        'precio' => $plan->precio,
-                        'comprobantes_minimos' => $plan->comprobantes_minimos,
-                        'dias_minimos' => $plan->dias_minimos,
-                        'label' => strtoupper($plan->nombre) . ' - ' . strtoupper($plan->periodo) . ' - ' . $plan->cantidad_comprobantes . ' C - $' . number_format($plan->precio, 2),
-                    ];
-                });
+            $planes = Cache::remember('suscripciones:planes_activos', 300, function () {
+                return Plan::where('estado', 'Activo')
+                    ->select('id', 'nombre', 'periodo', 'cantidad_comprobantes', 'precio', 'comprobantes_minimos', 'dias_minimos')
+                    ->orderBy('nombre')
+                    ->get()
+                    ->map(function ($plan) {
+                        return [
+                            'id' => $plan->id,
+                            'nombre' => $plan->nombre,
+                            'periodo' => $plan->periodo,
+                            'cantidad_comprobantes' => $plan->cantidad_comprobantes,
+                            'precio' => $plan->precio,
+                            'comprobantes_minimos' => $plan->comprobantes_minimos,
+                            'dias_minimos' => $plan->dias_minimos,
+                            'label' => strtoupper($plan->nombre) . ' - ' . strtoupper($plan->periodo) . ' - ' . $plan->cantidad_comprobantes . ' C - $' . number_format($plan->precio, 2),
+                        ];
+                    });
+            });
 
             return response()->json([
                 'message' => 'Planes activos obtenidos exitosamente',
@@ -890,26 +893,28 @@ class SuscripcionController extends Controller
      */
     public function estados()
     {
-        return response()->json([
-            'message' => 'Estados obtenidos exitosamente',
-            'data' => [
-                'manuales' => Suscripcion::ESTADOS_MANUALES,
-                'todos' => [
-                    'Vigente',
-                    'Suspendido',
-                    'Pendiente',
-                    'Programado',
-                    'Proximo a caducar',
-                    'Pocos comprobantes',
-                    'Proximo a caducar y con pocos comprobantes',
-                    'Caducado',
-                    'Sin comprobantes'
-                ],
-                'formas_pago' => ['Efectivo', 'Transferencia', 'Otro'],
-                'estados_transaccion' => ['Pendiente', 'Confirmada'],
-                'estados_comision' => ['Sin comision', 'Pendiente', 'Pagada'],
-            ]
-        ], Response::HTTP_OK);
+        return Cache::remember('suscripciones:estados', 3600, function () {
+            return response()->json([
+                'message' => 'Estados obtenidos exitosamente',
+                'data' => [
+                    'manuales' => Suscripcion::ESTADOS_MANUALES,
+                    'todos' => [
+                        'Vigente',
+                        'Suspendido',
+                        'Pendiente',
+                        'Programado',
+                        'Proximo a caducar',
+                        'Pocos comprobantes',
+                        'Proximo a caducar y con pocos comprobantes',
+                        'Caducado',
+                        'Sin comprobantes'
+                    ],
+                    'formas_pago' => ['Efectivo', 'Transferencia', 'Otro'],
+                    'estados_transaccion' => ['Pendiente', 'Confirmada'],
+                    'estados_comision' => ['Sin comision', 'Pendiente', 'Pagada'],
+                ]
+            ], Response::HTTP_OK);
+        });
     }
 
     /**

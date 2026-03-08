@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 
 class TipoImpuestoController extends Controller
 {
@@ -117,21 +118,31 @@ class TipoImpuestoController extends Controller
             // Aplicar ordenamiento
             $query->orderBy($sortBy, $sortDir);
 
-            // Ejecutar paginación
-            $tiposImpuesto = $query->paginate($perPage, ['*'], 'page', $page);
+            // Cache con version-key para invalidación eficiente
+            $cacheVersion = Cache::get('tipos_impuesto:v', 1);
+            $queryParams = $request->query();
+            ksort($queryParams);
+            $cacheKey = "tipos_impuesto:idx:{$cacheVersion}:" . md5(serialize($queryParams));
 
-            return response()->json([
-                'message' => 'Tipos de impuesto obtenidos exitosamente',
-                'data' => $tiposImpuesto->items(),
-                'pagination' => [
-                    'current_page' => $tiposImpuesto->currentPage(),
-                    'last_page' => $tiposImpuesto->lastPage(),
-                    'per_page' => $tiposImpuesto->perPage(),
-                    'total' => $tiposImpuesto->total(),
-                    'from' => $tiposImpuesto->firstItem(),
-                    'to' => $tiposImpuesto->lastItem(),
-                ],
-            ], Response::HTTP_OK);
+            $result = Cache::remember($cacheKey, 30, function () use ($query, $perPage, $page) {
+                $tiposImpuesto = $query->paginate($perPage, ['*'], 'page', $page);
+                return [
+                    'data' => $tiposImpuesto->items(),
+                    'pagination' => [
+                        'current_page' => $tiposImpuesto->currentPage(),
+                        'last_page' => $tiposImpuesto->lastPage(),
+                        'per_page' => $tiposImpuesto->perPage(),
+                        'total' => $tiposImpuesto->total(),
+                        'from' => $tiposImpuesto->firstItem(),
+                        'to' => $tiposImpuesto->lastItem(),
+                    ],
+                ];
+            });
+
+            return response()->json(array_merge(
+                ['message' => 'Tipos de impuesto obtenidos exitosamente'],
+                $result
+            ), Response::HTTP_OK);
 
         } catch (\Exception $e) {
             Log::error('Error al listar tipos de impuesto', [
@@ -244,6 +255,9 @@ class TipoImpuestoController extends Controller
                 'nombre' => $tipoImpuesto->nombre,
                 'creado_por' => $currentUser->id,
             ]);
+
+            Cache::forget('tipos_impuesto:activos');
+            Cache::put('tipos_impuesto:v', time(), 3600);
 
             return response()->json([
                 'message' => '✅ Tipo de impuesto registrado exitosamente.',
@@ -380,6 +394,9 @@ class TipoImpuestoController extends Controller
                 throw $e;
             }
 
+            Cache::forget('tipos_impuesto:activos');
+            Cache::put('tipos_impuesto:v', time(), 3600);
+
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json([
                 'message' => 'Tipo de impuesto no encontrado'
@@ -443,6 +460,9 @@ class TipoImpuestoController extends Controller
             $nombreEliminado = $tipoImpuesto->nombre;
             $tipoImpuesto->delete();
 
+            Cache::forget('tipos_impuesto:activos');
+            Cache::put('tipos_impuesto:v', time(), 3600);
+
             Log::info('Tipo de impuesto eliminado', [
                 'tipo_impuesto_id' => $id,
                 'nombre' => $nombreEliminado,
@@ -486,10 +506,12 @@ class TipoImpuestoController extends Controller
                 ], Response::HTTP_UNAUTHORIZED);
             }
 
-            $tiposActivos = TipoImpuesto::activos()
-                ->orderBy('tipo_impuesto')
-                ->orderBy('nombre')
-                ->get(['id', 'tipo_impuesto', 'tipo_tarifa', 'codigo', 'nombre', 'valor_tarifa']);
+            $tiposActivos = Cache::remember('tipos_impuesto:activos', 300, function () {
+                return TipoImpuesto::activos()
+                    ->orderBy('tipo_impuesto')
+                    ->orderBy('nombre')
+                    ->get(['id', 'tipo_impuesto', 'tipo_tarifa', 'codigo', 'nombre', 'valor_tarifa']);
+            });
 
             return response()->json([
                 'message' => 'Tipos de impuesto activos obtenidos',
@@ -519,15 +541,17 @@ class TipoImpuestoController extends Controller
                 ], Response::HTTP_UNAUTHORIZED);
             }
 
-            return response()->json([
-                'message' => 'Opciones obtenidas',
-                'data' => [
-                    'tipos_impuesto' => TipoImpuesto::TIPOS_IMPUESTO,
-                    'tipos_tarifa' => TipoImpuesto::TIPOS_TARIFA,
-                    'estados' => TipoImpuesto::ESTADOS,
-                    'tarifa_por_tipo' => TipoImpuesto::TARIFA_POR_TIPO,
-                ],
-            ], Response::HTTP_OK);
+            return Cache::remember('tipos_impuesto:opciones', 3600, function () {
+                return response()->json([
+                    'message' => 'Opciones obtenidas',
+                    'data' => [
+                        'tipos_impuesto' => TipoImpuesto::TIPOS_IMPUESTO,
+                        'tipos_tarifa' => TipoImpuesto::TIPOS_TARIFA,
+                        'estados' => TipoImpuesto::ESTADOS,
+                        'tarifa_por_tipo' => TipoImpuesto::TARIFA_POR_TIPO,
+                    ],
+                ], Response::HTTP_OK);
+            });
 
         } catch (\Exception $e) {
             return response()->json([

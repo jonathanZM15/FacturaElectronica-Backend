@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 
 class TipoRetencionController extends Controller
 {
@@ -107,21 +108,31 @@ class TipoRetencionController extends Controller
             // Aplicar ordenamiento
             $query->orderBy($sortBy, $sortDir);
 
-            // Ejecutar paginación
-            $tiposRetencion = $query->paginate($perPage, ['*'], 'page', $page);
+            // Cache con version-key para invalidación eficiente
+            $cacheVersion = Cache::get('tipos_retencion:v', 1);
+            $queryParams = $request->query();
+            ksort($queryParams);
+            $cacheKey = "tipos_retencion:idx:{$cacheVersion}:" . md5(serialize($queryParams));
 
-            return response()->json([
-                'message' => 'Tipos de retención obtenidos exitosamente',
-                'data' => $tiposRetencion->items(),
-                'pagination' => [
-                    'current_page' => $tiposRetencion->currentPage(),
-                    'last_page' => $tiposRetencion->lastPage(),
-                    'per_page' => $tiposRetencion->perPage(),
-                    'total' => $tiposRetencion->total(),
-                    'from' => $tiposRetencion->firstItem(),
-                    'to' => $tiposRetencion->lastItem(),
-                ],
-            ], Response::HTTP_OK);
+            $result = Cache::remember($cacheKey, 30, function () use ($query, $perPage, $page) {
+                $tiposRetencion = $query->paginate($perPage, ['*'], 'page', $page);
+                return [
+                    'data' => $tiposRetencion->items(),
+                    'pagination' => [
+                        'current_page' => $tiposRetencion->currentPage(),
+                        'last_page' => $tiposRetencion->lastPage(),
+                        'per_page' => $tiposRetencion->perPage(),
+                        'total' => $tiposRetencion->total(),
+                        'from' => $tiposRetencion->firstItem(),
+                        'to' => $tiposRetencion->lastItem(),
+                    ],
+                ];
+            });
+
+            return response()->json(array_merge(
+                ['message' => 'Tipos de retención obtenidos exitosamente'],
+                $result
+            ), Response::HTTP_OK);
 
         } catch (\Exception $e) {
             Log::error('Error al listar tipos de retención', [
@@ -249,6 +260,8 @@ class TipoRetencionController extends Controller
             // Cargar relaciones
             $tipoRetencion->load(['createdBy:id,username,nombres,apellidos', 'updatedBy:id,username,nombres,apellidos']);
 
+            Cache::put('tipos_retencion:v', time(), 3600);
+
             return response()->json([
                 'message' => 'Tipo de retención registrado exitosamente',
                 'data' => $tipoRetencion
@@ -358,6 +371,8 @@ class TipoRetencionController extends Controller
             // Recargar relaciones
             $tipoRetencion->load(['createdBy:id,username,nombres,apellidos', 'updatedBy:id,username,nombres,apellidos']);
 
+            Cache::put('tipos_retencion:v', time(), 3600);
+
             return response()->json([
                 'message' => 'Tipo de retención actualizado exitosamente',
                 'data' => $tipoRetencion
@@ -432,6 +447,8 @@ class TipoRetencionController extends Controller
                 'deleted_by' => $currentUser->id,
             ]);
 
+            Cache::put('tipos_retencion:v', time(), 3600);
+
             return response()->json([
                 'message' => 'Tipo de retención eliminado exitosamente'
             ], Response::HTTP_OK);
@@ -472,12 +489,14 @@ class TipoRetencionController extends Controller
                 ], Response::HTTP_FORBIDDEN);
             }
 
-            return response()->json([
-                'message' => 'Opciones obtenidas exitosamente',
-                'data' => [
-                    'tipos_retencion' => TipoRetencion::TIPOS_RETENCION,
-                ]
-            ], Response::HTTP_OK);
+            return Cache::remember('tipos_retencion:opciones', 3600, function () {
+                return response()->json([
+                    'message' => 'Opciones obtenidas exitosamente',
+                    'data' => [
+                        'tipos_retencion' => TipoRetencion::TIPOS_RETENCION,
+                    ]
+                ], Response::HTTP_OK);
+            });
 
         } catch (\Exception $e) {
             Log::error('Error al obtener opciones de tipos de retención', [
