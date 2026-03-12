@@ -34,9 +34,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/cambiarClave', [AuthController::class, 'cambiarPassword']);
 
     // Rutas de Usuarios (admin y distribuidor)
-    // Nota HU: el registro de usuarios es exclusivamente desde Emisor Info → Usuarios.
     Route::middleware('admin_or_distribuidor')->group(function () {
         Route::get('/usuarios', [UserController::class, 'index']);
+        Route::post('/usuarios', [UserController::class, 'store']);
         Route::get('/usuarios/{usuario}', [UserController::class, 'show']);
         Route::put('/usuarios/{usuario}', [UserController::class, 'update']);
         Route::delete('/usuarios/{usuario}', [UserController::class, 'destroy']);
