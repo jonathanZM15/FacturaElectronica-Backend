@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Models\LoginAttempt;
+use App\Jobs\SendSuspiciousLoginEmailJob;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Hash;
@@ -202,22 +203,16 @@ class AuthController extends Controller
                     'ip' => $ipAddress
                 ]);
 
-                // Enviar email de alerta
-                try {
-                    Mail::to($user->email)->send(new SuspiciousLoginMail(
-                        $user,
-                        $ipAddress,
-                        $user->failed_login_attempts,
-                        $deviceInfo,
-                        now()->timezone('America/Guayaquil')->format('d/m/Y H:i')
-                    ));
-                    Log::info('Suspicious login email sent', ['user_id' => $user->id]);
-                } catch (\Exception $e) {
-                    Log::error('Failed to send suspicious login email', [
-                        'user_id' => $user->id,
-                        'error' => $e->getMessage()
-                    ]);
-                }
+                // Enviar email de alerta (asincrónico vía Job)
+                dispatch(new SendSuspiciousLoginEmailJob(
+                    $user,
+                    $deviceType,
+                    $browser,
+                    $platform,
+                    $ipAddress
+                ));
+
+                Log::info('Suspicious login email job dispatched', ['user_id' => $user->id]);
 
                 return response()->json([
                     'message' => 'Demasiados intentos fallidos. Tu cuenta ha sido bloqueada por 10 minutos. Se ha enviado una notificación a tu correo.'

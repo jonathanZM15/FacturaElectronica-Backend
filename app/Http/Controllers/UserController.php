@@ -127,8 +127,13 @@ class UserController extends Controller
                 $sortBy = 'created_at';
             }
 
-            // Construir query
-            $query = User::query();
+            // Construir query con columnas optimizadas para paginación
+            $query = User::query()
+                ->select([
+                    'id', 'cedula', 'nombres', 'apellidos', 'username', 'email',
+                    'role', 'estado', 'created_by_id', 'distribuidor_id', 'emisor_id',
+                    'created_at', 'updated_at', 'email_verified_at'
+                ]);
 
             // Filtrar según el rol del usuario actual
             if ($currentUser->role === UserRole::ADMINISTRADOR) {
@@ -292,11 +297,15 @@ class UserController extends Controller
             // Obtener datos paginados
             $users = $query->paginate($perPage, ['*'], 'page', $page);
 
-            // Cargar información del creador para cada usuario
-            $users->load(
-                'creador:id,nombres,apellidos,username,email,role',
-                'emisor:id,ruc,razon_social,nombre_comercial'
-            );
+            // Cargar relaciones necesarias solo para registros paginados (optimizado)
+            $users->load([
+                'creador' => function ($q) {
+                    $q->select('id', 'nombres', 'apellidos', 'username', 'email', 'role');
+                },
+                'emisor' => function ($q) {
+                    $q->select('id', 'ruc', 'razon_social', 'nombre_comercial');
+                }
+            ]);
             
             // Normalizar datos del creador en cada usuario
             $users->getCollection()->each(function ($user) {

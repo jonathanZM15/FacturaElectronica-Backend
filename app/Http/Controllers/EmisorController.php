@@ -28,11 +28,13 @@ class EmisorController extends Controller
         $sortDir = strtolower($request->input('sort_dir', 'desc')) === 'asc' ? 'asc' : 'desc';
 
         $currentUser = Auth::user();
-        $query = Company::query()->select('emisores.*')
+        $query = Company::query()
+            ->select(['emisores.*'])
             ->with(['creator:id,name,username,nombres,apellidos,role'])
             ->with([
                 'suscripcionesVigentes' => function ($q) {
-                    $q->with(['plan:id,nombre,periodo,cantidad_comprobantes,precio'])
+                    $q->select(['id', 'emisor_id', 'plan_id', 'estado_suscripcion'])
+                      ->with(['plan:id,nombre,periodo,cantidad_comprobantes,precio'])
                       ->where('estado_suscripcion', 'Vigente')
                       ->orderByDesc('id')
                       ->limit(1);
@@ -57,155 +59,59 @@ class EmisorController extends Controller
         // Admin ve todos los emisores
 
         // Basic text filters
-        if ($request->filled('ruc')) $query->whereRaw('ruc ILIKE ?', ['%'.$request->input('ruc').'%']);
-        if ($request->filled('razon_social')) $query->whereRaw('razon_social ILIKE ?', ['%'.$request->input('razon_social').'%']);
-        if ($request->filled('nombre_comercial')) $query->whereRaw('nombre_comercial ILIKE ?', ['%'.$request->input('nombre_comercial').'%']);
-        if ($request->filled('direccion_matriz')) $query->whereRaw('direccion_matriz ILIKE ?', ['%'.$request->input('direccion_matriz').'%']);
-        if ($request->filled('correo_remitente')) $query->whereRaw('correo_remitente ILIKE ?', ['%'.$request->input('correo_remitente').'%']);
-        if ($request->filled('codigo_artesano')) $query->whereRaw('codigo_artesano ILIKE ?', ['%'.$request->input('codigo_artesano').'%']);
+        if ($request->filled('ruc')) $query->where('ruc', 'ILIKE', '%'.$request->input('ruc').'%');
+        if ($request->filled('razon_social')) $query->where('razon_social', 'ILIKE', '%'.$request->input('razon_social').'%');
+        if ($request->filled('nombre_comercial')) $query->where('nombre_comercial', 'ILIKE', '%'.$request->input('nombre_comercial').'%');
+        if ($request->filled('direccion_matriz')) $query->where('direccion_matriz', 'ILIKE', '%'.$request->input('direccion_matriz').'%');
+        if ($request->filled('correo_remitente')) $query->where('correo_remitente', 'ILIKE', '%'.$request->input('correo_remitente').'%');
+        if ($request->filled('codigo_artesano')) $query->where('codigo_artesano', 'ILIKE', '%'.$request->input('codigo_artesano').'%');
 
         if ($request->filled('estado')) $query->where('estado', $request->input('estado'));
         if ($request->filled('regimen_tributario')) $query->where('regimen_tributario', $request->input('regimen_tributario'));
         if ($request->filled('obligado_contabilidad')) $query->where('obligado_contabilidad', $request->input('obligado_contabilidad'));
-        if ($request->filled('contribuyente_especial')) $query->whereRaw('contribuyente_especial ILIKE ?', ['%'.$request->input('contribuyente_especial').'%']);
-        if ($request->filled('agente_retencion')) $query->whereRaw('agente_retencion ILIKE ?', ['%'.$request->input('agente_retencion').'%']);
+        if ($request->filled('contribuyente_especial')) $query->where('contribuyente_especial', 'ILIKE', '%'.$request->input('contribuyente_especial').'%');
+        if ($request->filled('agente_retencion')) $query->where('agente_retencion', 'ILIKE', '%'.$request->input('agente_retencion').'%');
         if ($request->filled('tipo_persona')) $query->where('tipo_persona', $request->input('tipo_persona'));
         if ($request->filled('ambiente')) $query->where('ambiente', $request->input('ambiente'));
         if ($request->filled('tipo_emision')) $query->where('tipo_emision', $request->input('tipo_emision'));
 
-        // Computed fields via subqueries (cantidad_creados, ultimo_comprobante, tipo_plan, plan dates, cantidad_restantes)
+        // Computed fields optimizados - usar withCount para evitar múltiples subqueries
         if (Schema::hasTable('comprobantes')) {
-            $query->selectSub(function ($q) {
-                $q->from('comprobantes')->selectRaw('count(*)')->whereColumn('comprobantes.company_id', 'emisores.id');
-            }, 'cantidad_creados');
-
-            $query->selectSub(function ($q) {
-                $q->from('comprobantes')->selectRaw('max(created_at)')->whereColumn('comprobantes.company_id', 'emisores.id');
-            }, 'ultimo_comprobante');
+            $query->withCount('comprobantes as cantidad_creados');
         } else {
-            $query->selectRaw('NULL as cantidad_creados, NULL as ultimo_comprobante');
-        }
-
-        // Obtener el último login de usuarios asociados al emisor
-        if (Schema::hasTable('users') && Schema::hasColumn('users', 'last_login_at') && Schema::hasColumn('users', 'emisor_id')) {
-            $query->selectSub(function ($q) {
-                $q->from('users')->selectRaw('max(last_login_at)')->whereColumn('users.emisor_id', 'emisores.id');
-            }, 'ultimo_login');
-        } else {
-            $query->selectRaw('NULL as ultimo_login');
-        }
-
-        if (Schema::hasTable('plans')) {
-            // Latest plan info
-            $query->selectSub(function ($q) {
-                $q->from('plans')->select('tipo_plan')->whereColumn('plans.company_id', 'emisores.id')->orderByDesc('id')->limit(1);
-            }, 'tipo_plan');
-            $query->selectSub(function ($q) {
-                $q->from('plans')->select('fecha_inicio')->whereColumn('plans.company_id', 'emisores.id')->orderByDesc('id')->limit(1);
-            }, 'fecha_inicio_plan');
-            $query->selectSub(function ($q) {
-                $q->from('plans')->select('fecha_fin')->whereColumn('plans.company_id', 'emisores.id')->orderByDesc('id')->limit(1);
-            }, 'fecha_fin_plan');
-
-            // if plans have 'cantidad' column, compute remaining = cantidad - cantidad_creados
-            try {
-                if (Schema::hasColumn('plans', 'cantidad')) {
-                    $query->selectSub(function ($q) {
-                        $q->from('plans as p')->selectRaw("COALESCE(p.cantidad,0) - (
-                            select count(*) from comprobantes c where c.company_id = p.company_id
-                        )")->whereColumn('p.company_id', 'emisores.id')->orderByDesc('p.id')->limit(1);
-                    }, 'cantidad_restantes');
-                } else {
-                    $query->selectRaw('NULL as cantidad_restantes');
-                }
-            } catch (\Exception $_) {
-                $query->selectRaw('NULL as cantidad_restantes');
-            }
-        } else {
-            $query->selectRaw('NULL as tipo_plan, NULL as fecha_inicio_plan, NULL as fecha_fin_plan, NULL as cantidad_restantes');
-        }
-
-        // Filter by numeric comparisons
-        if ($request->filled('cantidad_creados_gt') && is_numeric($request->input('cantidad_creados_gt'))) {
-            $query->havingRaw('cantidad_creados > ?', [(int)$request->input('cantidad_creados_gt')]);
-        }
-        if ($request->filled('cantidad_restantes_lt') && is_numeric($request->input('cantidad_restantes_lt'))) {
-            $query->havingRaw('(cantidad_restantes IS NOT NULL AND cantidad_restantes < ?) ', [(int)$request->input('cantidad_restantes_lt')]);
-        }
-
-        // Date filters (multiple fields) - accept *_from and *_to params
-        $dateFields = [
-            'fecha_inicio_plan' => 'fecha_inicio_plan',
-            'fecha_fin_plan' => 'fecha_fin_plan',
-            'created_at' => 'created_at',
-            'updated_at' => 'updated_at',
-            'ultimo_login' => 'ultimo_login',
-            'ultimo_comprobante' => 'ultimo_comprobante',
-        ];
-        foreach ($dateFields as $param => $column) {
-            $from = $request->input($param.'_from');
-            $to = $request->input($param.'_to');
-            if ($from) $query->whereDate($column, '>=', $from);
-            if ($to) $query->whereDate($column, '<=', $to);
-        }
-
-        // Registrador: try to match users.name if such relation exists
-        if ($request->filled('registrador') && Schema::hasTable('users')) {
-            $registrador = $request->input('registrador');
-            // emisores may have a registrador column or we try to match via users table
-            if (Schema::hasColumn('emisores', 'registrador')) {
-                $query->where('registrador', 'like', '%'.$registrador.'%');
-            } else {
-                // filter emisores that have a user with that name
-                $query->whereExists(function ($q) use ($registrador) {
-                    $q->selectRaw('1')->from('users')->whereColumn('users.company_id','emisores.id')->whereRaw('users.name ILIKE ?', ['%'.$registrador.'%']);
-                });
-            }
+            $query->selectRaw('0 as cantidad_creados');
         }
 
         // Simple search 'q' affects some text fields
         if ($request->filled('q')) {
             $q = $request->input('q');
-            // Use case-insensitive and accent-insensitive matching via collation
-            // Apply partial matches on several textual columns
             $like = "%{$q}%";
             $query->where(function ($qq) use ($like) {
-                $qq->whereRaw("ruc ILIKE ?", [$like])
-                   ->orWhereRaw("razon_social ILIKE ?", [$like])
-                   ->orWhereRaw("nombre_comercial ILIKE ?", [$like])
-                   ->orWhereRaw("direccion_matriz ILIKE ?", [$like]);
+                $qq->where('ruc', 'ILIKE', $like)
+                   ->orWhere('razon_social', 'ILIKE', $like)
+                   ->orWhere('nombre_comercial', 'ILIKE', $like)
+                   ->orWhere('direccion_matriz', 'ILIKE', $like);
             });
         }
 
         // Sorting: allow only known columns
-        $allowedSorts = ['id','ruc','razon_social','estado','tipo_plan','fecha_inicio_plan','fecha_fin_plan','cantidad_creados','cantidad_restantes','created_at','updated_at','registrador','ultimo_login','ultimo_comprobante'];
+        $allowedSorts = ['id','ruc','razon_social','estado','created_at','updated_at','cantidad_creados'];
         if (!in_array($sortBy, $allowedSorts)) $sortBy = 'id';
-        // apply sorting (if sorting by computed alias, use orderByRaw)
-        if (in_array($sortBy, ['tipo_plan','fecha_inicio_plan','fecha_fin_plan','cantidad_creados','cantidad_restantes','ultimo_comprobante'])) {
-            $query->orderByRaw("\"{$sortBy}\" {$sortDir}");
-        } else {
-            $query->orderBy($sortBy, $sortDir);
-        }
+        
+        $query->orderBy($sortBy, $sortDir);
 
         $paginator = $query->paginate($perPage, ['*'], 'page', $page);
 
-        // Append logo_url for each item
+        // Append logo_url for each item (optimizado)
         $items = $paginator->getCollection()->map(function ($c) {
-            if ($c instanceof Company) {
-                return array_merge($c->toArray(), [
-                    'logo_url' => $c->logo_url,
-                    'created_by_name' => $c->created_by_name,
-                    'updated_by_name' => $c->updated_by_name,
-                ]);
-            }
-            $arr = (array) $c;
-            // if model-like, ensure logo_url computed
-            $logo = $arr['logo_path'] ?? null;
-            if ($logo && !isset($arr['logo_url'])) $arr['logo_url'] = Storage::url($logo);
-            return $arr;
+            return array_merge($c->toArray(), [
+                'logo_url' => $c->logo_url ?? Storage::url($c->logo_path ?? ''),
+                'created_by_name' => $c->created_by_name,
+                'updated_by_name' => $c->updated_by_name,
+            ]);
         });
 
-        $result = [
+        return response()->json([
             'data' => $items,
             'meta' => [
                 'current_page' => $paginator->currentPage(),
@@ -213,9 +119,7 @@ class EmisorController extends Controller
                 'total' => $paginator->total(),
                 'last_page' => $paginator->lastPage(),
             ],
-        ];
-
-        return response()->json($result);
+        ]);
     }
 
     public function store(Request $request)

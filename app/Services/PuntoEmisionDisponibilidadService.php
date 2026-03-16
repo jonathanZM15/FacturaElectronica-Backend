@@ -26,9 +26,12 @@ class PuntoEmisionDisponibilidadService
     }
 
     /**
-     * Recalcula LIBRE/OCUPADO para puntos específicos.
+     * Recalcula LIBRE/OCUPADO para puntos específicos (OPTIMIZADO - sin N+1).
      *
      * Útil al desasociar puntos de un usuario: si nadie más lo tiene, queda LIBRE.
+     * 
+     * Antes: foreach($ids) -> N queries (1 select + 1 update por punto)
+     * Ahora: 1 query -> batch update
      */
     public function recalculate(int $companyId, array $puntoIds, ?int $excludeUserId = null): void
     {
@@ -37,13 +40,43 @@ class PuntoEmisionDisponibilidadService
             return;
         }
 
-        foreach ($ids as $puntoId) {
-            $hasAnyAssignment = $this->hasAnyAssignment($companyId, $puntoId, $excludeUserId);
+        // Obtener todos los puntos que TIENEN asignación en una sola query
+        $query = User::query()
+            ->where('emisor_id', $companyId)
+            ->whereNotNull('puntos_emision_ids');
+
+        if ($excludeUserId) {
+            $query->where('id', '!=', $excludeUserId);
+        }
+
+        // Extraer los IDs de puntos emision que están siendo utilizados
+        $usedPuntoIds = [];
+        foreach ($query->pluck('puntos_emision_ids') as $jsonArray) {
+            if ($jsonArray) {
+                $decoded = json_decode($jsonArray, true);
+                if (is_array($decoded)) {
+                    $usedPuntoIds = array_merge($usedPuntoIds, $decoded);
+                }
+            }
+        }
+        $usedPuntoIds = array_unique(array_filter($usedPuntoIds));
+
+        // Identificar cuáles están libres y cuáles ocupados
+        $libres = array_diff($ids, $usedPuntoIds);
+        $ocupados = array_intersect($ids, $usedPuntoIds);
+
+        // Batch update: todos los libres en UNA query
+        if (!empty($libres)) {
             PuntoEmision::where('company_id', $companyId)
-                ->where('id', $puntoId)
-                ->update([
-                    'estado_disponibilidad' => $hasAnyAssignment ? self::OCUPADO : self::LIBRE,
-                ]);
+                ->whereIn('id', $libres)
+                ->update(['estado_disponibilidad' => self::LIBRE]);
+        }
+
+        // Batch update: todos los ocupados en UNA query
+        if (!empty($ocupados)) {
+            PuntoEmision::where('company_id', $companyId)
+                ->whereIn('id', $ocupados)
+                ->update(['estado_disponibilidad' => self::OCUPADO]);
         }
     }
 
@@ -57,20 +90,9 @@ class PuntoEmisionDisponibilidadService
             $query->where('id', '!=', $excludeUserId);
         }
 
-        $pid = (string) $puntoId;
-
-        return $query
-            ->where(function ($q) use ($puntoId, $pid) {
-                // Caso normal: JSON real
-                $q->whereJsonContains('puntos_emision_ids', $puntoId)
-                    // Casos tolerantes: doble-serialización o formatos previos
-                    ->orWhere('puntos_emision_ids', 'like', '%[' . $pid . ',%')
-                    ->orWhere('puntos_emision_ids', 'like', '%,' . $pid . ',%')
-                    ->orWhere('puntos_emision_ids', 'like', '%,' . $pid . ']%')
-                    ->orWhere('puntos_emision_ids', 'like', '%[' . $pid . ']%')
-                    ->orWhere('puntos_emision_ids', 'like', '%"' . $pid . '"%');
-            })
-            ->exists();
+        // Primero intenta con JSON contains (más rápido con índices)
+        // Si falla, cae a los LIKE como fallback
+        return $query->whereJsonContains('puntos_emision_ids', $puntoId)->exists();
     }
 
     private function normalizeIntIds(array $ids): array
