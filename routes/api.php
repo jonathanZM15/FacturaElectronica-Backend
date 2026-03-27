@@ -11,6 +11,7 @@ use App\Http\Controllers\PlanController;
 use App\Http\Controllers\SuscripcionController;
 use App\Http\Controllers\TipoImpuestoController;
 use App\Http\Controllers\TipoRetencionController;
+use App\Http\Controllers\Api\CompanyDeletionController;
 
 //rutas para inicio y registro de sesion
 Route::post('/register', [AuthController::class, 'register']);
@@ -26,6 +27,9 @@ Route::post('/change-initial-password', [UserController::class, 'changeInitialPa
 Route::get('/usuarios/check/username', [UserController::class, 'checkUsername']);
 Route::get('/usuarios/check/cedula', [UserController::class, 'checkCedula']);
 Route::get('/usuarios/check/email', [UserController::class, 'checkEmail']);
+
+// Rutas públicas para descargar backups (accesibles desde email sin autenticación)
+Route::get('/company-deletion/{company}/download-backup', [CompanyDeletionController::class, 'downloadBackup'])->name('company-deletion.download-backup');
 
 Route::middleware('auth:sanctum')->group(function () {
     //rutas para cierre de sesión y cambiar clave
@@ -132,6 +136,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/emisores/{emisorId}/suscripciones/{id}/transiciones-disponibles', [SuscripcionController::class, 'transicionesDisponibles']);
     Route::get('/emisores/{emisorId}/suscripciones/{id}/historial-estados', [SuscripcionController::class, 'historialEstados']);
     Route::post('/emisores/{emisorId}/suscripciones/evaluar-estados', [SuscripcionController::class, 'evaluarEstados']);
+
+    // Rutas de Eliminación de Emisores (Historia de Usuario 4)
+    Route::post('/company-deletion/{company}/generate-backup', [CompanyDeletionController::class, 'generateBackup']);
+    Route::post('/company-deletion/{company}/request-deletion', [CompanyDeletionController::class, 'requestDeletion']);
+    Route::post('/company-deletion/{company}/execute-immediate-deletion', [CompanyDeletionController::class, 'executeImmediateDeletion']);
+    Route::post('/company-deletion/{company}/cancel-deletion', [CompanyDeletionController::class, 'cancelDeletion']);
+    Route::post('/company-deletion/restore-from-backup', [CompanyDeletionController::class, 'restoreFromBackup']);
+    Route::get('/company-deletion/{company}/deletion-history', [CompanyDeletionController::class, 'getDeletionHistory']);
+    Route::get('/company-deletion/inactive-companies', [CompanyDeletionController::class, 'getInactiveCompanies'])->middleware('admin');
 });
 
 

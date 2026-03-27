@@ -16,6 +16,13 @@ class Company extends Model
         'agente_retencion','numero_resolucion_agente_retencion',
         'tipo_persona','codigo_artesano','correo_remitente','estado','ambiente','tipo_emision','logo_path',
         'created_by', 'updated_by',
+        'last_activity_at',
+        'deletion_warning_sent_at',
+        'deletion_final_notice_sent_at',
+        'scheduled_deletion_at',
+        'is_marked_for_deletion',
+        'deletion_requested_by',
+        'backup_file_path',
     ];
 
     protected $appends = ['logo_url', 'created_by_name', 'created_by_username', 'updated_by_name'];
@@ -50,6 +57,22 @@ class Company extends Model
     public function suscripcionesVigentes()
     {
         return $this->suscripciones()->where('estado_suscripcion', 'Vigente');
+    }
+
+    /**
+     * Relación con los usuarios de la empresa
+     */
+    public function users()
+    {
+        return $this->hasMany(User::class, 'emisor_id');
+    }
+
+    /**
+     * Relación con los logs de eliminación
+     */
+    public function deletionLogs()
+    {
+        return $this->hasMany(CompanyDeletionLog::class);
     }
 
     /**
