@@ -165,9 +165,9 @@ class EstablecimientoController extends Controller
             'correo' => ['nullable','email','max:255'],
             'telefono' => ['nullable','string','max:50'],
             'actividades_economicas' => ['nullable','string'],
-            'fecha_inicio_actividades' => ['nullable','date'],
-            'fecha_reinicio_actividades' => ['nullable','date'],
-            'fecha_cierre_establecimiento' => ['nullable','date'],
+            'fecha_inicio_actividades' => ['nullable','date','after_or_equal:today'],
+            'fecha_reinicio_actividades' => ['nullable','date','after_or_equal:today'],
+            'fecha_cierre_establecimiento' => ['nullable','date','after_or_equal:today'],
         ];
 
         $validator = Validator::make($request->all(), $rules);
@@ -356,9 +356,9 @@ class EstablecimientoController extends Controller
             'correo' => ['sometimes','nullable','email','max:255'],
             'telefono' => ['sometimes','nullable','string','max:50'],
             'actividades_economicas' => ['sometimes','nullable','string'],
-            'fecha_inicio_actividades' => ['sometimes','nullable','date'],
-            'fecha_reinicio_actividades' => ['sometimes','nullable','date'],
-            'fecha_cierre_establecimiento' => ['sometimes','nullable','date'],
+            'fecha_inicio_actividades' => ['sometimes','nullable','date','after_or_equal:today'],
+            'fecha_reinicio_actividades' => ['sometimes','nullable','date','after_or_equal:today'],
+            'fecha_cierre_establecimiento' => ['sometimes','nullable','date','after_or_equal:today'],
         ];
 
         $validator = Validator::make($request->all(), $rules);
