@@ -20,7 +20,7 @@ class PuntoEmisionDisponibilidadService
             return;
         }
 
-        PuntoEmision::where('company_id', $companyId)
+        PuntoEmision::where('emisor_id', $companyId)
             ->whereIn('id', $ids)
             ->update(['estado_disponibilidad' => self::OCUPADO]);
     }
@@ -67,14 +67,14 @@ class PuntoEmisionDisponibilidadService
 
         // Batch update: todos los libres en UNA query
         if (!empty($libres)) {
-            PuntoEmision::where('company_id', $companyId)
+            PuntoEmision::where('emisor_id', $companyId)
                 ->whereIn('id', $libres)
                 ->update(['estado_disponibilidad' => self::LIBRE]);
         }
 
         // Batch update: todos los ocupados en UNA query
         if (!empty($ocupados)) {
-            PuntoEmision::where('company_id', $companyId)
+            PuntoEmision::where('emisor_id', $companyId)
                 ->whereIn('id', $ocupados)
                 ->update(['estado_disponibilidad' => self::OCUPADO]);
         }

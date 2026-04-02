@@ -10,7 +10,7 @@ class Establecimiento extends Model
     protected $table = 'establecimientos';
 
     protected $fillable = [
-        'company_id', 'codigo', 'estado', 'nombre', 'nombre_comercial', 'direccion', 'correo', 'telefono', 'logo_path', 'actividades_economicas', 'fecha_inicio_actividades', 'fecha_reinicio_actividades', 'fecha_cierre_establecimiento', 'created_by', 'updated_by'
+        'emisor_id', 'codigo', 'estado', 'nombre', 'nombre_comercial', 'direccion', 'correo', 'telefono', 'logo_path', 'actividades_economicas', 'fecha_inicio_actividades', 'fecha_reinicio_actividades', 'fecha_cierre_establecimiento', 'created_by', 'updated_by'
     ];
 
     protected $casts = [
@@ -21,7 +21,7 @@ class Establecimiento extends Model
 
     public function company()
     {
-        return $this->belongsTo(Company::class, 'company_id');
+        return $this->belongsTo(Company::class, 'emisor_id');
     }
 
     /**
@@ -142,7 +142,7 @@ class Establecimiento extends Model
             if (Storage::disk('public')->exists($this->logo_path)) {
                 // Add cache-busting parameter using updated_at timestamp
                 $timestamp = $this->updated_at ? $this->updated_at->getTimestamp() : time();
-                return url('/api/emisores/' . $this->company_id . '/establecimientos/' . $this->id . '/logo-file?v=' . $timestamp);
+                return url('/api/emisores/' . $this->emisor_id . '/establecimientos/' . $this->id . '/logo-file?v=' . $timestamp);
             }
         } catch (\Exception $_) {
             // ignore and fallback

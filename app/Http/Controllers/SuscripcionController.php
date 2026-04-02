@@ -925,7 +925,7 @@ class SuscripcionController extends Controller
         try {
             // Si la suscripción está vigente, notificar a los usuarios del emisor con rol Emisor
             if ($suscripcion->estado_suscripcion === 'Vigente') {
-                $usuariosEmisor = User::where('company_id', $suscripcion->emisor_id)
+                $usuariosEmisor = User::where('emisor_id', $suscripcion->emisor_id)
                     ->where('role', UserRole::EMISOR)
                     ->where('estado', 'activo')
                     ->get();

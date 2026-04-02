@@ -6,10 +6,10 @@ use Illuminate\Database\Eloquent\Model;
 
 class CompanyDeletionLog extends Model
 {
-    protected $table = 'company_deletion_logs';
+    protected $table = 'emisor_deletion_logs';
 
     protected $fillable = [
-        'company_id',
+        'emisor_id',
         'action_type',
         'user_id',
         'description',
@@ -30,7 +30,7 @@ class CompanyDeletionLog extends Model
      */
     public function company()
     {
-        return $this->belongsTo(Company::class);
+        return $this->belongsTo(Company::class, 'emisor_id');
     }
 
     /**

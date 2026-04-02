@@ -36,7 +36,7 @@ class EstablecimientoController extends Controller
         }
         
         // Construir query base
-        $query = Establecimiento::where('company_id', $companyId)
+        $query = Establecimiento::where('emisor_id', $companyId)
             ->with(['puntos_emision.user', 'creator', 'updater']);
         
         // Para usuarios emisor, gerente o cajero: filtrar por establecimientos asignados
@@ -135,7 +135,7 @@ class EstablecimientoController extends Controller
     // Check code uniqueness within a company
     public function checkCode($companyId, $code)
     {
-        $exists = Establecimiento::where('company_id', $companyId)->where('codigo', $code)->exists();
+        $exists = Establecimiento::where('emisor_id', $companyId)->where('codigo', $code)->exists();
         return response()->json(['exists' => $exists, 'available' => !$exists]);
     }
 
@@ -177,12 +177,12 @@ class EstablecimientoController extends Controller
 
         // Check unique code per company
         $code = $request->input('codigo');
-        if (Establecimiento::where('company_id', $companyId)->where('codigo', $code)->exists()) {
+        if (Establecimiento::where('emisor_id', $companyId)->where('codigo', $code)->exists()) {
             return response()->json(['message' => 'Código ya registrado para este emisor', 'errors' => ['codigo' => ['Código ya registrado']]], 422);
         }
 
         $data = $validator->validated();
-        $data['company_id'] = $companyId;
+        $data['emisor_id'] = $companyId;
 
         // logo file handling
         if ($request->hasFile('logo')) {
@@ -228,7 +228,7 @@ class EstablecimientoController extends Controller
             ], 403);
         }
 
-        $est = Establecimiento::where('company_id', $companyId)
+        $est = Establecimiento::where('emisor_id', $companyId)
             ->with(['creator', 'updater', 'puntos_emision.user'])
             ->findOrFail($id);
 
@@ -334,10 +334,10 @@ class EstablecimientoController extends Controller
             ], 403);
         }
         
-        $est = Establecimiento::where('company_id', $companyId)->findOrFail($id);
+        $est = Establecimiento::where('emisor_id', $companyId)->findOrFail($id);
 
         Log::info('=== ESTABLECIMIENTO UPDATE REQUEST ===', [
-            'company_id' => $companyId,
+            'emisor_id' => $companyId,
             'establecimiento_id' => $id,
             'php_method' => $request->method(),
             '_method' => $request->input('_method'),
@@ -369,7 +369,7 @@ class EstablecimientoController extends Controller
         $data = $validator->validated();
 
         if (isset($data['codigo']) && $data['codigo'] !== $est->codigo) {
-            if (Establecimiento::where('company_id', $companyId)->where('codigo', $data['codigo'])->exists()) {
+            if (Establecimiento::where('emisor_id', $companyId)->where('codigo', $data['codigo'])->exists()) {
                 return response()->json(['message' => 'Código ya registrado para este emisor', 'errors' => ['codigo' => ['Código ya registrado']]], 422);
             }
         }
@@ -428,7 +428,7 @@ class EstablecimientoController extends Controller
             ], 403);
         }
         
-        $est = Establecimiento::where('company_id', $companyId)->findOrFail($id);
+        $est = Establecimiento::where('emisor_id', $companyId)->findOrFail($id);
 
         // Check for related records that would block deletion
         try {
@@ -488,7 +488,7 @@ class EstablecimientoController extends Controller
         // Audit log
         try {
             $userId = Auth::check() ? Auth::id() : null;
-            Log::info('Establecimiento permanently deleted', ['establecimiento_id' => $est->id, 'company_id' => $companyId, 'deleted_by' => $userId]);
+            Log::info('Establecimiento permanently deleted', ['establecimiento_id' => $est->id, 'emisor_id' => $companyId, 'deleted_by' => $userId]);
         } catch (\Exception $_) {}
 
         return response()->json(['message' => 'Establecimiento eliminado correctamente.']);

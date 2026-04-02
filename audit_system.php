@@ -9,7 +9,7 @@ echo (DB::connection()->getPdo() ? "   ✓ Conectada\n" : "   ✗ No conecta\n")
 
 // 2. Verificar tablas principales
 echo "\n2. Tablas principales:\n";
-$tables = ['emisores', 'users', 'establecimientos', 'puntos_emision', 'company_deletion_logs'];
+$tables = ['emisores', 'users', 'establecimientos', 'puntos_emision', 'emisor_deletion_logs'];
 foreach ($tables as $t) {
     echo "   " . (Schema::hasTable($t) ? "✓" : "✗") . " $t\n";
 }

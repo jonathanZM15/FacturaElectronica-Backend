@@ -49,7 +49,7 @@ class CompanyDeletionService
 
             // Registrar la eliminación final
             CompanyDeletionLog::create([
-                'company_id' => $company->id,
+                'emisor_id' => $company->id,
                 'action_type' => 'auto_deletion',
                 'user_id' => $userId,
                 'description' => 'Eliminación permanente automática ejecutada',
@@ -108,7 +108,7 @@ class CompanyDeletionService
     private function logDeletionAction(Company $company, string $actionType, ?int $userId = null, ?string $description = null): void
     {
         CompanyDeletionLog::create([
-            'company_id' => $company->id,
+            'emisor_id' => $company->id,
             'action_type' => $actionType,
             'user_id' => $userId,
             'description' => $description ?? ucfirst(str_replace('_', ' ', $actionType)),

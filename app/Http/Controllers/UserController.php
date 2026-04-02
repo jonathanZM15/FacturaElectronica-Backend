@@ -1291,7 +1291,7 @@ class UserController extends Controller
 
             if ($establecimiento !== '') {
                 $estIds = Establecimiento::query()
-                    ->where('company_id', $id)
+                    ->where('emisor_id', $id)
                     ->where(function ($q) use ($establecimiento) {
                         $s = '%' . $establecimiento . '%';
                         $q->where('codigo', 'ILIKE', $s)
@@ -1486,7 +1486,7 @@ class UserController extends Controller
                 // Para EMISOR, si no llegan establecimientos_ids, asociar a todos los ABIERTO del emisor.
                 if ($roleToCreate === UserRole::EMISOR && empty($establecimientosIds)) {
                     $establecimientosIds = Establecimiento::query()
-                        ->where('company_id', (int) $id)
+                        ->where('emisor_id', (int) $id)
                         ->where('estado', 'ABIERTO')
                         ->pluck('id')
                         ->map(fn ($v) => (int) $v)
@@ -1522,7 +1522,7 @@ class UserController extends Controller
 
                 // Validar que los establecimientos pertenezcan al emisor y estén ABIERTO
                 $validEstIds = Establecimiento::query()
-                    ->where('company_id', (int) $id)
+                    ->where('emisor_id', (int) $id)
                     ->where('estado', 'ABIERTO')
                     ->whereIn('id', $establecimientosIds)
                     ->pluck('id')
@@ -1544,7 +1544,7 @@ class UserController extends Controller
                 // pertenecer a los establecimientos seleccionados y no repetirse por establecimiento.
                 if (!empty($puntosIds)) {
                     $puntos = PuntoEmision::query()
-                        ->where('company_id', (int) $id)
+                        ->where('emisor_id', (int) $id)
                         ->whereIn('id', $puntosIds)
                         ->where('estado', 'ACTIVO')
                         ->where('estado_disponibilidad', PuntoEmisionDisponibilidadService::LIBRE)
@@ -1881,7 +1881,7 @@ class UserController extends Controller
                 // Para EMISOR: si queda vacío, asociar a todos los ABIERTO del emisor
                 if ($user->role === UserRole::EMISOR && empty($establecimientosIds)) {
                     $establecimientosIds = Establecimiento::query()
-                        ->where('company_id', (int) $id)
+                        ->where('emisor_id', (int) $id)
                         ->where('estado', 'ABIERTO')
                         ->pluck('id')
                         ->map(fn ($v) => (int) $v)
@@ -1916,7 +1916,7 @@ class UserController extends Controller
                 }
 
                 $validEstIds = Establecimiento::query()
-                    ->where('company_id', (int) $id)
+                    ->where('emisor_id', (int) $id)
                     ->where('estado', 'ABIERTO')
                     ->whereIn('id', $establecimientosIds)
                     ->pluck('id')
@@ -1948,7 +1948,7 @@ class UserController extends Controller
                 if (!empty($puntosIds)) {
                     // Permitir puntos LIBRE o puntos ya asignados al mismo usuario (pueden estar OCUPADO)
                     $puntos = PuntoEmision::query()
-                        ->where('company_id', (int) $id)
+                        ->where('emisor_id', (int) $id)
                         ->whereIn('id', $puntosIds)
                         ->where('estado', 'ACTIVO')
                         ->where(function ($q) use ($currentAssigned) {

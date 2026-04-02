@@ -185,7 +185,7 @@ class CompanyRestoreService
     private function logRestoration(Company $company, int $userId): void
     {
         \App\Models\CompanyDeletionLog::create([
-            'company_id' => $company->id,
+            'emisor_id' => $company->id,
             'action_type' => 'restored',
             'user_id' => $userId,
             'description' => 'Emisor restaurado desde archivo de backup',

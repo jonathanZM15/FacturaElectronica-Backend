@@ -12,7 +12,7 @@ class PuntoEmision extends Model
     protected $table = 'puntos_emision';
 
     protected $fillable = [
-        'company_id',
+        'emisor_id',
         'establecimiento_id',
         'user_id',
         'codigo',
@@ -42,7 +42,7 @@ class PuntoEmision extends Model
      */
     public function company()
     {
-        return $this->belongsTo(Company::class, 'company_id');
+        return $this->belongsTo(Company::class, 'emisor_id');
     }
 
     /**

@@ -98,7 +98,7 @@ class PuntoEmisionController extends Controller
         } else {
             // Si la tabla no guarda ambiente, usamos el ambiente actual del emisor como aproximación.
             // El flag persistente garantiza que, una vez detectado en PROD, no se revierte.
-            $company = Company::find($punto->company_id);
+            $company = Company::find($punto->emisor_id);
             if (!$company || ($company->ambiente ?? null) !== 'PRODUCCION') {
                 return false;
             }
@@ -227,7 +227,7 @@ class PuntoEmisionController extends Controller
             if ($permInfo instanceof JsonResponse) return $permInfo;
             
             $puntos = PuntoEmision::with('user')
-                ->where('company_id', $companyId)
+                ->where('emisor_id', $companyId)
                 ->where('establecimiento_id', $establecimientoId)
                 ->get();
 
@@ -259,7 +259,7 @@ class PuntoEmisionController extends Controller
             if ($permInfo instanceof JsonResponse) return $permInfo;
             
             $punto = PuntoEmision::with('user')
-                ->where('company_id', $companyId)
+                ->where('emisor_id', $companyId)
                 ->where('establecimiento_id', $establecimientoId)
                 ->findOrFail($puntoId);
 
@@ -282,7 +282,7 @@ class PuntoEmisionController extends Controller
             if ($permInfo instanceof JsonResponse) return $permInfo;
             
             // Validar que el establecimiento existe y pertenece a la compañía
-            $establecimiento = Establecimiento::where('company_id', $companyId)
+            $establecimiento = Establecimiento::where('emisor_id', $companyId)
                 ->findOrFail($establecimientoId);
 
             // Validar que el código sea único dentro del mismo establecimiento
@@ -294,7 +294,7 @@ class PuntoEmisionController extends Controller
                     Rule::notIn(['000']),
                     Rule::unique('puntos_emision', 'codigo')
                         ->where('establecimiento_id', $establecimientoId)
-                        ->where('company_id', $companyId)
+                        ->where('emisor_id', $companyId)
                 ],
                 'estado' => 'required|in:ACTIVO,DESACTIVADO',
                 'nombre' => 'required|string|max:255',
@@ -308,7 +308,7 @@ class PuntoEmisionController extends Controller
             ]);
 
             $punto = PuntoEmision::create([
-                'company_id' => $companyId,
+                'emisor_id' => $companyId,
                 'establecimiento_id' => $establecimientoId,
                 ...$validated
             ]);
@@ -334,7 +334,7 @@ class PuntoEmisionController extends Controller
             $permInfo = $this->checkPermissions($companyId);
             if ($permInfo instanceof JsonResponse) return $permInfo;
             
-            $punto = PuntoEmision::where('company_id', $companyId)
+            $punto = PuntoEmision::where('emisor_id', $companyId)
                 ->where('establecimiento_id', $establecimientoId)
                 ->findOrFail($puntoId);
 
@@ -349,7 +349,7 @@ class PuntoEmisionController extends Controller
                     Rule::notIn(['000']),
                     Rule::unique('puntos_emision', 'codigo')
                         ->where('establecimiento_id', $establecimientoId)
-                        ->where('company_id', $companyId)
+                        ->where('emisor_id', $companyId)
                         ->ignore($puntoId)
                 ],
                 'estado' => 'sometimes|in:ACTIVO,DESACTIVADO',
@@ -405,7 +405,7 @@ class PuntoEmisionController extends Controller
                 return response()->json(['message' => 'Contraseña incorrecta'], 401);
             }
 
-            $punto = PuntoEmision::where('company_id', $companyId)
+            $punto = PuntoEmision::where('emisor_id', $companyId)
                 ->where('establecimiento_id', $establecimientoId)
                 ->findOrFail($puntoId);
 
@@ -451,8 +451,8 @@ class PuntoEmisionController extends Controller
             $forAssignment = $request->query('for_assignment') === 'true';
             
             // Obtener todos los puntos que pertenecen a establecimientos del emisor
-            $query = PuntoEmision::where('company_id', $emiId)
-                ->select('id', 'company_id', 'establecimiento_id', 'codigo', 'nombre', 'estado', 'estado_disponibilidad');
+            $query = PuntoEmision::where('emisor_id', $emiId)
+                ->select('id', 'emisor_id', 'establecimiento_id', 'codigo', 'nombre', 'estado', 'estado_disponibilidad');
 
             // Si el usuario es limitado (emisor/gerente/cajero con asignaciones específicas)
             if (($permInfo['limited'] ?? false)) {

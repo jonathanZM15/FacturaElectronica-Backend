@@ -72,7 +72,7 @@ class Company extends Model
      */
     public function deletionLogs()
     {
-        return $this->hasMany(CompanyDeletionLog::class);
+        return $this->hasMany(CompanyDeletionLog::class, 'emisor_id');
     }
 
     /**

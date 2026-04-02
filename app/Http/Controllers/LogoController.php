@@ -182,7 +182,7 @@ class LogoController extends Controller
      */
     public function establecimientos_file($companyId, $estId)
     {
-        $est = \App\Models\Establecimiento::where('company_id', $companyId)->find($estId);
+        $est = \App\Models\Establecimiento::where('emisor_id', $companyId)->find($estId);
         if (!$est || !$est->logo_path) {
             return response(null, 404);
         }
