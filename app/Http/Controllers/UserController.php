@@ -1611,7 +1611,7 @@ class UserController extends Controller
                     $user->save();
 
                     // Gestión interna: marcar OCUPADO los puntos asociados
-                    (new PuntoEmisionDisponibilidadService())->markOcupado((int) $id, $puntos);
+                    (new PuntoEmisionDisponibilidadService())->markOcupado((int) $id, (int) $user->id, $puntos);
                 }
             }
 
@@ -2056,7 +2056,7 @@ class UserController extends Controller
 
                     // Gestión interna: disponibilidad
                     $disp = new PuntoEmisionDisponibilidadService();
-                    $disp->markOcupado((int) $id, $added);
+                    $disp->markOcupado((int) $id, (int) $user->id, $added);
                     $disp->recalculate((int) $id, $removed, (int) $user->id);
                 }
             }

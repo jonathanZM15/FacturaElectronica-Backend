@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Hash;
+use App\Services\PuntoEmisionUsuarioService;
 
 class EstablecimientoController extends Controller
 {
@@ -250,6 +251,42 @@ class EstablecimientoController extends Controller
                 $est->setRelation('puntos_emision', $filteredPuntos);
             }
         }
+
+        // Enriquecer puntos de emisión con el usuario asociado.
+        // Nota: La asignación real de puntos está en users.puntos_emision_ids.
+        $puntos = $est->puntos_emision ?? collect();
+        $puntoIds = $puntos->pluck('id')->map(fn ($v) => (int) $v)->values()->all();
+        $userMap = (new PuntoEmisionUsuarioService())->mapUsuariosPorPuntoIds((int) $companyId, $puntoIds);
+
+        $puntosPayload = $puntos->map(function ($punto) use ($userMap) {
+            $arr = $punto->toArray();
+            $puntoId = (int) ($punto->id ?? 0);
+
+            $userSlim = null;
+            if ($punto->relationLoaded('user') && $punto->user) {
+                $u = $punto->user;
+                $roleValue = $u->role instanceof \App\Enums\UserRole ? $u->role->value : (string) ($u->role ?? '');
+                $userSlim = [
+                    'id' => $u->id,
+                    'username' => $u->username,
+                    'role' => $roleValue,
+                    'nombres' => $u->nombres,
+                    'apellidos' => $u->apellidos,
+                ];
+            } elseif ($puntoId > 0 && isset($userMap[$puntoId])) {
+                $userSlim = $userMap[$puntoId];
+            }
+
+            if ($userSlim) {
+                $arr['user_id'] = $userSlim['id'];
+                $arr['user'] = $userSlim;
+            } else {
+                // Normalizar para que el frontend evalúe consistentemente.
+                $arr['user'] = $arr['user'] ?? null;
+            }
+
+            return $arr;
+        })->values()->all();
         
         // Similar al emisor, verificar si el código puede ser editado
         // (Si hay comprobantes autorizados asociados al establecimiento, no se puede editar el código)
@@ -268,6 +305,7 @@ class EstablecimientoController extends Controller
         }
 
         $payload = array_merge($est->toArray(), [
+            'puntos_emision' => $puntosPayload,
             'logo_url' => $est->logo_url,
             'codigo_editable' => $codigoEditable,
             'created_by_name' => $est->created_by_name,

@@ -12,6 +12,7 @@ use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
+use App\Services\PuntoEmisionUsuarioService;
 
 class PuntoEmisionController extends Controller
 {
@@ -226,7 +227,7 @@ class PuntoEmisionController extends Controller
             ]);
             if ($permInfo instanceof JsonResponse) return $permInfo;
             
-            $puntos = PuntoEmision::with('user')
+            $puntos = PuntoEmision::with(['user:id,username,role,nombres,apellidos'])
                 ->where('emisor_id', $companyId)
                 ->where('establecimiento_id', $establecimientoId)
                 ->get();
@@ -238,7 +239,40 @@ class PuntoEmisionController extends Controller
                 })->values();
             }
 
-            return response()->json(['data' => $puntos, 'success' => true]);
+            // Enriquecer con usuario asociado en base a users.puntos_emision_ids (fallback si user_id no está seteado)
+            $puntoIds = $puntos->pluck('id')->map(fn ($v) => (int) $v)->values()->all();
+            $userMap = (new PuntoEmisionUsuarioService())->mapUsuariosPorPuntoIds((int) $companyId, $puntoIds);
+
+            $payload = $puntos->map(function ($punto) use ($userMap) {
+                $arr = $punto->toArray();
+                $puntoId = (int) ($punto->id ?? 0);
+
+                $userSlim = null;
+                if ($punto->relationLoaded('user') && $punto->user) {
+                    $u = $punto->user;
+                    $roleValue = $u->role instanceof \App\Enums\UserRole ? $u->role->value : (string) ($u->role ?? '');
+                    $userSlim = [
+                        'id' => $u->id,
+                        'username' => $u->username,
+                        'role' => $roleValue,
+                        'nombres' => $u->nombres,
+                        'apellidos' => $u->apellidos,
+                    ];
+                } elseif ($puntoId > 0 && isset($userMap[$puntoId])) {
+                    $userSlim = $userMap[$puntoId];
+                }
+
+                if ($userSlim) {
+                    $arr['user_id'] = $userSlim['id'];
+                    $arr['user'] = $userSlim;
+                } else {
+                    $arr['user'] = $arr['user'] ?? null;
+                }
+
+                return $arr;
+            })->values()->all();
+
+            return response()->json(['data' => $payload, 'success' => true]);
         } catch (\Exception $e) {
             return response()->json(['message' => $e->getMessage()], 500);
         }
@@ -258,14 +292,43 @@ class PuntoEmisionController extends Controller
             ]);
             if ($permInfo instanceof JsonResponse) return $permInfo;
             
-            $punto = PuntoEmision::with('user')
+            $punto = PuntoEmision::with(['user:id,username,role,nombres,apellidos'])
                 ->where('emisor_id', $companyId)
                 ->where('establecimiento_id', $establecimientoId)
                 ->findOrFail($puntoId);
 
             $this->ensureBloqueoEdicionProduccion($punto);
 
-            return response()->json(['data' => $punto, 'success' => true]);
+            // Enriquecer con usuario asociado en base a users.puntos_emision_ids (fallback si user_id no está seteado)
+            $userMap = (new PuntoEmisionUsuarioService())->mapUsuariosPorPuntoIds((int) $companyId, [(int) $punto->id]);
+
+            $arr = $punto->toArray();
+            $userSlim = null;
+            if ($punto->relationLoaded('user') && $punto->user) {
+                $u = $punto->user;
+                $roleValue = $u->role instanceof \App\Enums\UserRole ? $u->role->value : (string) ($u->role ?? '');
+                $userSlim = [
+                    'id' => $u->id,
+                    'username' => $u->username,
+                    'role' => $roleValue,
+                    'nombres' => $u->nombres,
+                    'apellidos' => $u->apellidos,
+                ];
+            } else {
+                $pid = (int) ($punto->id ?? 0);
+                if ($pid > 0 && isset($userMap[$pid])) {
+                    $userSlim = $userMap[$pid];
+                }
+            }
+
+            if ($userSlim) {
+                $arr['user_id'] = $userSlim['id'];
+                $arr['user'] = $userSlim;
+            } else {
+                $arr['user'] = $arr['user'] ?? null;
+            }
+
+            return response()->json(['data' => $arr, 'success' => true]);
         } catch (\Exception $e) {
             return response()->json(['message' => 'Punto de emisión no encontrado'], 404);
         }

@@ -13,7 +13,7 @@ class PuntoEmisionDisponibilidadService
     /**
      * Marca puntos como OCUPADO (cuando se asocian a un usuario).
      */
-    public function markOcupado(int $companyId, array $puntoIds): void
+    public function markOcupado(int $companyId, int $userId, array $puntoIds): void
     {
         $ids = $this->normalizeIntIds($puntoIds);
         if (empty($ids)) {
@@ -22,7 +22,10 @@ class PuntoEmisionDisponibilidadService
 
         PuntoEmision::where('emisor_id', $companyId)
             ->whereIn('id', $ids)
-            ->update(['estado_disponibilidad' => self::OCUPADO]);
+            ->update([
+                'estado_disponibilidad' => self::OCUPADO,
+                'user_id' => $userId,
+            ]);
     }
 
     /**
@@ -69,7 +72,10 @@ class PuntoEmisionDisponibilidadService
         if (!empty($libres)) {
             PuntoEmision::where('emisor_id', $companyId)
                 ->whereIn('id', $libres)
-                ->update(['estado_disponibilidad' => self::LIBRE]);
+                ->update([
+                    'estado_disponibilidad' => self::LIBRE,
+                    'user_id' => null,
+                ]);
         }
 
         // Batch update: todos los ocupados en UNA query
