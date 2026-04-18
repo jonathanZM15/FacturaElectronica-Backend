@@ -27,6 +27,29 @@ use App\Models\UserAudit;
 class UserController extends Controller
 {
     /**
+     * Remueve tildes y caracteres acentuados de una cadena
+     * Para permitir búsquedas sin distinción de tildes
+     */
+    private function removeAccents(string $text): string
+    {
+        $map = array(
+            'á' => 'a', 'à' => 'a', 'ä' => 'a', 'â' => 'a', 'ã' => 'a',
+            'é' => 'e', 'è' => 'e', 'ë' => 'e', 'ê' => 'e',
+            'í' => 'i', 'ì' => 'i', 'ï' => 'i', 'î' => 'i',
+            'ó' => 'o', 'ò' => 'o', 'ö' => 'o', 'ô' => 'o', 'õ' => 'o',
+            'ú' => 'u', 'ù' => 'u', 'ü' => 'u', 'û' => 'u',
+            'ç' => 'c', 'ñ' => 'n',
+            'Á' => 'A', 'À' => 'A', 'Ä' => 'A', 'Â' => 'A', 'Ã' => 'A',
+            'É' => 'E', 'È' => 'E', 'Ë' => 'E', 'Ê' => 'E',
+            'Í' => 'I', 'Ì' => 'I', 'Ï' => 'I', 'Î' => 'I',
+            'Ó' => 'O', 'Ò' => 'O', 'Ö' => 'O', 'Ô' => 'O', 'Õ' => 'O',
+            'Ú' => 'U', 'Ù' => 'U', 'Ü' => 'U', 'Û' => 'U',
+            'Ç' => 'C', 'Ñ' => 'N'
+        );
+        return strtr($text, $map);
+    }
+
+    /**
      * Construye una descripción legible de los cambios para auditoría.
      */
     private function buildUserAuditDescription(User $targetUser, array $cambios, string $default = 'Actualización de usuario'): string
@@ -139,13 +162,10 @@ class UserController extends Controller
             if ($currentUser->role === UserRole::ADMINISTRADOR) {
                 // Admin ve todos los usuarios
             } elseif ($currentUser->role === UserRole::DISTRIBUIDOR) {
-                // Distribuidor ve: a sí mismo y a los usuarios asociados a emisores creados por él.
-                // Regla: emisor (Company) creado_por = currentUser.id
-                $query->where(function ($q) use ($currentUser) {
-                    $q->where('id', $currentUser->id)
-                        ->orWhereHas('emisor', function ($qe) use ($currentUser) {
-                            $qe->where('created_by', $currentUser->id);
-                        });
+                // Distribuidor ve: SOLO a los usuarios asociados a emisores creados por él.
+                // NO se ve a sí mismo (requisito HU3)
+                $query->whereHas('emisor', function ($qe) use ($currentUser) {
+                    $qe->where('created_by', $currentUser->id);
                 });
             } elseif ($currentUser->role === UserRole::EMISOR) {
                 // Emisor ve: a sí mismo y los usuarios que creó (gerentes y cajeros)
@@ -180,12 +200,39 @@ class UserController extends Controller
             if ($cedula !== '') {
                 $query->where('cedula', 'ILIKE', '%' . $cedula . '%');
             }
-            if ($nombres !== '') {
-                $query->where('nombres', 'ILIKE', '%' . $nombres . '%');
+            
+            // Si nombres y apellidos tienen el mismo valor (filtro combinado "nombre")
+            if ($nombres !== '' && $apellidos !== '' && $nombres === $apellidos) {
+                $query->where(function ($q) use ($nombres) {
+                    $s = '%' . $nombres . '%';
+                    // Usar unaccent de PostgreSQL para ignorar tildes
+                    try {
+                        $q->whereRaw("unaccent(nombres) ILIKE unaccent(?)", [$s])
+                          ->orWhereRaw("unaccent(apellidos) ILIKE unaccent(?)", [$s]);
+                    } catch (\Exception $_) {
+                        // Fallback si unaccent no está disponible
+                        $q->where('nombres', 'ILIKE', $s)
+                          ->orWhere('apellidos', 'ILIKE', $s);
+                    }
+                });
+            } else {
+                // Filtros separados si tienen valores diferentes
+                if ($nombres !== '') {
+                    try {
+                        $query->whereRaw("unaccent(nombres) ILIKE unaccent(?)", ['%' . $nombres . '%']);
+                    } catch (\Exception $_) {
+                        $query->where('nombres', 'ILIKE', '%' . $nombres . '%');
+                    }
+                }
+                if ($apellidos !== '') {
+                    try {
+                        $query->whereRaw("unaccent(apellidos) ILIKE unaccent(?)", ['%' . $apellidos . '%']);
+                    } catch (\Exception $_) {
+                        $query->where('apellidos', 'ILIKE', '%' . $apellidos . '%');
+                    }
+                }
             }
-            if ($apellidos !== '') {
-                $query->where('apellidos', 'ILIKE', '%' . $apellidos . '%');
-            }
+            
             if ($username !== '') {
                 $query->where('username', 'ILIKE', '%' . $username . '%');
             }
@@ -532,7 +579,7 @@ class UserController extends Controller
             }
 
             // Crear el usuario
-            $user = User::create([
+            $userData = [
                 'cedula' => $validated['cedula'],
                 'nombres' => $validated['nombres'],
                 'apellidos' => $validated['apellidos'],
@@ -550,7 +597,28 @@ class UserController extends Controller
                 'establecimientos_ids' => isset($validated['establecimientos_ids']) 
                     ? json_encode($validated['establecimientos_ids']) 
                     : null,
-            ]);
+            ];
+            $user = User::create($userData);
+
+            // Registro de auditoría obligatorio al crear
+            try {
+                // Eliminar password y establishments antes de guardar en datos ingresados si se desea, o guardar datos limpios
+                $auditData = $userData;
+                unset($auditData['password']);
+                
+                UserAudit::registrar(
+                    (int) $user->id,
+                    'create',
+                    'Creación de usuario nuevo',
+                    (int) $currentUser->id,
+                    $currentUser->role->value,
+                    $auditData,
+                    $request->ip(),
+                    (string) $request->userAgent()
+                );
+            } catch (\Exception $e) {
+                Log::error('Error en auditoría al crear usuario', ['error' => $e->getMessage()]);
+            }
 
             Log::info('Usuario creado', [
                 'nuevo_usuario_id' => $user->id,
@@ -678,17 +746,9 @@ class UserController extends Controller
             if (isset($validated['cedula'])) {
                 $cedulaNueva = (string) $validated['cedula'];
                 $cedulaActual = (string) ($user->cedula ?? '');
-                if ($cedulaNueva === $cedulaActual) {
-                    // Sin cambio
-                } else {
-                if (User::where('cedula', $validated['cedula'])->where('id', '!=', $id)->exists()) {
-                    return response()->json([
-                        'message' => 'La cédula ya está registrada',
-                        'errors' => ['cedula' => ['La cédula ya existe en el sistema']]
-                    ], Response::HTTP_CONFLICT);
-                }
-                $cambios['cedula'] = ['anterior' => $user->cedula, 'nuevo' => $validated['cedula']];
-                $user->cedula = $validated['cedula'];
+                if ($cedulaNueva !== $cedulaActual) {
+                    $cambios['cedula'] = ['anterior' => $user->cedula, 'nuevo' => $validated['cedula']];
+                    $user->cedula = $validated['cedula'];
                 }
             }
 
@@ -1054,9 +1114,42 @@ class UserController extends Controller
                 ], Response::HTTP_CONFLICT);
             }
 
-            $user->delete();
+            // Log de eliminación
+            Log::info('Usuario eliminado', [
+                'usuario_eliminado_id' => $id,
+                'usuario_eliminado_email' => $user->email,
+                'usuario_eliminado_role' => $user->role->value,
+                'estado_eliminado' => $user->estado,
+                'usuario_actual_id' => $currentUser->id,
+                'rol_actual' => $currentUser->role->value
+            ]);
 
-            // Si el usuario tenía puntos asociados, recalcular disponibilidad
+            // Registro de auditoría obligatorio al eliminar
+            try {
+                UserAudit::registrar(
+                    (int) $id,
+                    'delete',
+                    'Eliminación usuario ID: ' . $id . ' Email: ' . $user->email,
+                    (int) $currentUser->id,
+                    $currentUser->role->value,
+                    [
+                        'id' => $id,
+                        'email' => $user->email,
+                        'cedula' => $user->cedula,
+                        'nombres' => $user->nombres,
+                        'apellidos' => $user->apellidos,
+                        'username' => $user->username,
+                        'role' => $user->role->value,
+                        'estado' => $user->estado
+                    ],
+                    $request->ip(),
+                    (string) $request->userAgent()
+                );
+            } catch (\Exception $e) {
+                Log::error('Error en auditoría al eliminar usuario', ['error' => $e->getMessage()]);
+            }
+
+            $user->delete();
             try {
                 $companyId = (int) ($user->emisor_id ?? 0);
                 $puntos = $user->puntos_emision_ids;
@@ -1073,15 +1166,7 @@ class UserController extends Controller
                 ]);
             }
 
-            Log::info('Usuario eliminado', [
-                'usuario_eliminado_id' => $id,
-                'usuario_eliminado_email' => $user->email,
-                'usuario_eliminado_role' => $user->role->value,
-                'estado_eliminado' => $user->estado,
-                'usuario_actual_id' => $currentUser->id,
-                'rol_actual' => $currentUser->role->value
-            ]);
-
+            // Eliminar log duplicado
             return response()->json([
                 'message' => 'Usuario eliminado exitosamente'
             ]);
@@ -1462,7 +1547,14 @@ class UserController extends Controller
             // Validar jerarquía de roles
             $roleToCreate = UserRole::from($request->input('role'));
 
-            // HU: desde Emisor Info → Usuarios solo se permite crear EMISOR/GERENTE/CAJERO
+            // HU: No se puede seleccionar establecimientos y puntos de emisor para el rol CAJERO creado por usuario de rol GERENTE
+            if ($currentUser->role === UserRole::GERENTE && $roleToCreate === UserRole::CAJERO) {
+                if (!empty($request->input('establecimientos_ids')) || !empty($request->input('puntos_emision_ids'))) {
+                    throw ValidationException::withMessages([
+                        'establecimientos_ids' => ['No se puede seleccionar establecimientos y puntos de emisor para el rol CAJERO creado por usuario de rol GERENTE.'],
+                    ]);
+                }
+            }
             if (!in_array($roleToCreate, [UserRole::EMISOR, UserRole::GERENTE, UserRole::CAJERO], true)) {
                 throw ValidationException::withMessages([
                     'role' => ['Solo se permite registrar usuarios con rol Emisor, Gerente o Cajero desde esta pantalla.'],
@@ -1476,8 +1568,8 @@ class UserController extends Controller
                 ], Response::HTTP_FORBIDDEN);
             }
 
-            // Reglas de negocio: para EMISOR/GERENTE/CAJERO es obligatorio
-            // seleccionar al menos un establecimiento. Los puntos de emisión SON OPCIONALES.
+            // Reglas de negocio: para EMISOR/GERENTE/CAJERO
+            // ya NO es obligatorio seleccionar al menos un establecimiento.
             if (in_array($roleToCreate, [UserRole::EMISOR, UserRole::GERENTE, UserRole::CAJERO], true)) {
                 $establecimientosIds = $request->input('establecimientos_ids', []);
                 $establecimientosIds = is_array($establecimientosIds) ? $establecimientosIds : [];
@@ -1492,12 +1584,6 @@ class UserController extends Controller
                         ->map(fn ($v) => (int) $v)
                         ->values()
                         ->all();
-                }
-
-                if (empty($establecimientosIds)) {
-                    throw ValidationException::withMessages([
-                        'establecimientos_ids' => ['Debe seleccionar al menos un establecimiento.'],
-                    ]);
                 }
 
                 // HU: si el usuario logeado es GERENTE, solo puede asociar a sus establecimientos.
@@ -1521,19 +1607,21 @@ class UserController extends Controller
                 }
 
                 // Validar que los establecimientos pertenezcan al emisor y estén ABIERTO
-                $validEstIds = Establecimiento::query()
-                    ->where('emisor_id', (int) $id)
-                    ->where('estado', 'ABIERTO')
-                    ->whereIn('id', $establecimientosIds)
-                    ->pluck('id')
-                    ->map(fn ($v) => (int) $v)
-                    ->values()
-                    ->all();
+                if (!empty($establecimientosIds)) {
+                    $validEstIds = Establecimiento::query()
+                        ->where('emisor_id', (int) $id)
+                        ->where('estado', 'ABIERTO')
+                        ->whereIn('id', $establecimientosIds)
+                        ->pluck('id')
+                        ->map(fn ($v) => (int) $v)
+                        ->values()
+                        ->all();
 
-                if (count($validEstIds) !== count($establecimientosIds)) {
-                    throw ValidationException::withMessages([
-                        'establecimientos_ids' => ['Hay establecimientos inválidos o no disponibles (deben estar ABIERTO).'],
-                    ]);
+                    if (count($validEstIds) !== count($establecimientosIds)) {
+                        throw ValidationException::withMessages([
+                            'establecimientos_ids' => ['Hay establecimientos inválidos o no disponibles (deben estar ABIERTO).'],
+                        ]);
+                    }
                 }
 
                 $puntosIds = $request->input('puntos_emision_ids', []);
@@ -1585,20 +1673,68 @@ class UserController extends Controller
             // Generar contraseña temporal si no se proporciona
             $password = $request->input('password') ?? $this->generateTemporaryPassword();
 
-            // Crear usuario con datos del emisor
-            $user = User::create([
+            $userData = [
                 'cedula' => $request->input('cedula'),
                 'nombres' => $request->input('nombres'),
                 'apellidos' => $request->input('apellidos'),
-                'username' => $request->input('username'),
+                'username' => strtolower($request->input('username') ?? ''),
                 'email' => $request->input('email'),
                 'password' => Hash::make($password),
-                'role' => UserRole::from($request->input('role')),
+                'role' => UserRole::from($request->input('role'))->value,
                 'estado' => ($request->input('email') ?? '') === 'admin@factura.local' ? 'activo' : 'nuevo',
                 'created_by_id' => $currentUser->id,
                 'emisor_id' => $id,
                 'establecimientos_ids' => json_encode($request->input('establecimientos_ids', [])),
-            ]);
+            ];
+
+            // Crear usuario con datos del emisor
+            $user = User::create($userData);
+
+            // Registro de auditoría obligatorio al crear
+            try {
+                // Eliminar password antes de guardar en datos ingresados
+                $auditData = $userData;
+                unset($auditData['password']);
+                
+                UserAudit::registrar(
+                    (int) $user->id,
+                    'create',
+                    'Creación de usuario nuevo asociado a emisor',
+                    (int) $currentUser->id,
+                    $currentUser->role->value,
+                    $auditData,
+                    $request->ip(),
+                    (string) $request->userAgent()
+                );
+            } catch (\Exception $e) {
+                Log::error('Error en auditoría al crear usuario por emisor', ['error' => $e->getMessage()]);
+            }
+
+            // Registrar auditorías de asociación de establecimientos
+            $establecimientosIdsFinal = $request->input('establecimientos_ids', []);
+            if (!empty($establecimientosIdsFinal) && is_array($establecimientosIdsFinal)) {
+                $establecimientosAsociados = Establecimiento::whereIn('id', $establecimientosIdsFinal)->get();
+                foreach ($establecimientosAsociados as $est) {
+                    try {
+                        UserAudit::registrar(
+                            (int) $user->id,
+                            'Asociación',
+                            "Usuario asociado al establecimiento ID: {$est->id} - {$est->nombre}",
+                            (int) $currentUser->id,
+                            $currentUser->role->value,
+                            [
+                                'emisor_id' => $id,
+                                'establecimiento_id' => $est->id,
+                                'establecimiento_codigo' => $est->codigo
+                            ],
+                            $request->ip(),
+                            (string) $request->userAgent()
+                        );
+                    } catch (\Exception $e) {
+                        Log::error('Error auditoria asoc establecimiento', ['error' => $e->getMessage()]);
+                    }
+                }
+            }
 
             // Si proporciona puntos de emisión (y no es vacío), almacenarlos
             if ($request->has('puntos_emision_ids')) {
@@ -1607,11 +1743,35 @@ class UserController extends Controller
                 $puntos = array_values(array_unique(array_map('intval', $puntos)));
 
                 if (!empty($puntos)) {
-                    $user->puntos_emision_ids = $puntos;
+                    $user->puntos_emision_ids = json_encode($puntos);
                     $user->save();
 
                     // Gestión interna: marcar OCUPADO los puntos asociados
                     (new PuntoEmisionDisponibilidadService())->markOcupado((int) $id, (int) $user->id, $puntos);
+
+                    // Registrar auditorías de asociación de puntos de emisión
+                    $puntosAsociados = PuntoEmision::whereIn('id', $puntos)->get();
+                    foreach ($puntosAsociados as $pto) {
+                        try {
+                            UserAudit::registrar(
+                                (int) $user->id,
+                                'Asociación',
+                                "Usuario asociado al punto de emisión ID: {$pto->id} - Establecimiento: {$pto->establecimiento_id}",
+                                (int) $currentUser->id,
+                                $currentUser->role->value,
+                                [
+                                    'emisor_id' => $id,
+                                    'establecimiento_id' => $pto->establecimiento_id,
+                                    'punto_emision_id' => $pto->id,
+                                    'punto_emision_codigo' => $pto->codigo
+                                ],
+                                $request->ip(),
+                                (string) $request->userAgent()
+                            );
+                        } catch (\Exception $e) {
+                            Log::error('Error auditoria asoc punto emisión', ['error' => $e->getMessage()]);
+                        }
+                    }
                 }
             }
 
@@ -1871,6 +2031,16 @@ class UserController extends Controller
             // seleccionados y no repetirse por establecimiento.
             $isRoleConAsociacion = in_array($user->role, [UserRole::EMISOR, UserRole::GERENTE, UserRole::CAJERO], true);
             $touchesAsociaciones = $request->has('establecimientos_ids') || $request->has('puntos_emision_ids');
+
+            // HU: No se puede seleccionar establecimientos y puntos de emisor para el rol CAJERO creado por usuario de rol GERENTE
+            if ($currentUser->role === UserRole::GERENTE && $user->role === UserRole::CAJERO && $touchesAsociaciones) {
+                if (!empty($request->input('establecimientos_ids')) || !empty($request->input('puntos_emision_ids'))) {
+                    throw ValidationException::withMessages([
+                        'establecimientos_ids' => ['No se puede modificar establecimientos y puntos de emisor para el rol CAJERO creado por usuario de rol GERENTE.'],
+                    ]);
+                }
+            }
+
             if ($isRoleConAsociacion && $touchesAsociaciones) {
                 $establecimientosIds = $request->has('establecimientos_ids')
                     ? $request->input('establecimientos_ids', [])
@@ -1889,14 +2059,8 @@ class UserController extends Controller
                         ->all();
                 }
 
-                if (empty($establecimientosIds)) {
-                    throw ValidationException::withMessages([
-                        'establecimientos_ids' => ['Debe seleccionar al menos un establecimiento.'],
-                    ]);
-                }
-
                 // HU: si el usuario logeado es GERENTE, solo puede asociar a sus establecimientos.
-                if ($currentUser->role === UserRole::GERENTE) {
+                if ($currentUser->role === UserRole::GERENTE && !empty($establecimientosIds)) {
                     $gerenteAllowed = json_decode($currentUser->establecimientos_ids ?? '[]', true);
                     $gerenteAllowed = is_array($gerenteAllowed) ? $gerenteAllowed : [];
                     $gerenteAllowed = array_values(array_unique(array_map('intval', $gerenteAllowed)));
@@ -1991,12 +2155,14 @@ class UserController extends Controller
             // Actualizar campos permitidos
             $campos = ['cedula', 'nombres', 'apellidos', 'username', 'email', 'estado'];
             foreach ($campos as $campo) {
-                if ($request->has($campo) && $user->{$campo} != $request->input($campo)) {
+                // El campo username siempre se procesa en minúsculas debido al Form Request, aplicamos strtolower por seguridad adicional
+                $val = $campo === 'username' ? strtolower((string) $request->input($campo)) : $request->input($campo);
+                if ($request->has($campo) && $user->{$campo} !== $val) {
                     $cambios[$campo] = [
                         'anterior' => $user->{$campo},
-                        'nuevo' => $request->input($campo)
+                        'nuevo' => $val
                     ];
-                    $user->{$campo} = $request->input($campo);
+                    $user->{$campo} = $val;
                 }
             }
 
@@ -2064,6 +2230,76 @@ class UserController extends Controller
             $user->save();
 
             DB::commit();
+
+            // Auditorías de asociación/desasociación de establecimientos
+            if (isset($cambios['establecimientos_ids'])) {
+                $antiguos = $cambios['establecimientos_ids']['anterior'] ?? [];
+                $nuevos = $cambios['establecimientos_ids']['nuevo'] ?? [];
+                
+                $added = array_diff($nuevos, $antiguos);
+                $removed = array_diff($antiguos, $nuevos);
+
+                foreach ($added as $estId) {
+                    try {
+                        $est = Establecimiento::find($estId);
+                        if ($est) {
+                            UserAudit::registrar((int)$user->id, 'Asociación', 
+                                "Usuario asociado al establecimiento ID: {$est->id} - {$est->nombre}",
+                                (int)$currentUser->id, $currentUser->role->value,
+                                ['emisor_id' => $id, 'establecimiento_id' => $est->id, 'establecimiento_codigo' => $est->codigo],
+                                $request->ip(), (string)$request->userAgent());
+                        }
+                    } catch (\Exception $e) { /* ignore */ }
+                }
+
+                foreach ($removed as $estId) {
+                    try {
+                        $est = Establecimiento::find($estId);
+                        if ($est) {
+                            UserAudit::registrar((int)$user->id, 'Desasociación', 
+                                "Usuario desasociado del establecimiento ID: {$est->id} - {$est->nombre}",
+                                (int)$currentUser->id, $currentUser->role->value,
+                                ['emisor_id' => $id, 'establecimiento_id' => $est->id, 'establecimiento_codigo' => $est->codigo],
+                                $request->ip(), (string)$request->userAgent());
+                        }
+                    } catch (\Exception $e) { /* ignore */ }
+                }
+            }
+
+            // Auditorías de asociación/desasociación de puntos de emisión
+            if (isset($cambios['puntos_emision_ids'])) {
+                $antiguos = $cambios['puntos_emision_ids']['anterior'] ?? [];
+                $nuevos = $cambios['puntos_emision_ids']['nuevo'] ?? [];
+                
+                $added = array_diff($nuevos, $antiguos);
+                $removed = array_diff($antiguos, $nuevos);
+
+                foreach ($added as $ptoId) {
+                    try {
+                        $pto = PuntoEmision::find($ptoId);
+                        if ($pto) {
+                            UserAudit::registrar((int)$user->id, 'Asociación', 
+                                "Usuario asociado al punto de emisión ID: {$pto->id} - Establecimiento: {$pto->establecimiento_id}",
+                                (int)$currentUser->id, $currentUser->role->value,
+                                ['emisor_id' => $id, 'establecimiento_id' => $pto->establecimiento_id, 'punto_emision_id' => $pto->id, 'punto_emision_codigo' => $pto->codigo],
+                                $request->ip(), (string)$request->userAgent());
+                        }
+                    } catch (\Exception $e) { /* ignore */ }
+                }
+
+                foreach ($removed as $ptoId) {
+                    try {
+                        $pto = PuntoEmision::find($ptoId);
+                        if ($pto) {
+                            UserAudit::registrar((int)$user->id, 'Desasociación', 
+                                "Usuario desasociado del punto de emisión ID: {$pto->id} - Establecimiento: {$pto->establecimiento_id}",
+                                (int)$currentUser->id, $currentUser->role->value,
+                                ['emisor_id' => $id, 'establecimiento_id' => $pto->establecimiento_id, 'punto_emision_id' => $pto->id, 'punto_emision_codigo' => $pto->codigo],
+                                $request->ip(), (string)$request->userAgent());
+                        }
+                    } catch (\Exception $e) { /* ignore */ }
+                }
+            }
 
             // Auditoría persistente (fecha/hora + usuario modificador + descripción)
             try {
@@ -2244,6 +2480,31 @@ class UserController extends Controller
                 'estado' => $user->estado,
                 'timestamp' => now()
             ]);
+
+            // Registro de auditoría obligatorio al eliminar
+            try {
+                UserAudit::registrar(
+                    (int) $usuario,
+                    'delete',
+                    'Eliminación usuario de emisor ID: ' . $usuario . ' Email: ' . $user->email,
+                    (int) $currentUser->id,
+                    $currentUser->role->value,
+                    [
+                        'id' => $usuario,
+                        'email' => $user->email,
+                        'cedula' => $user->cedula,
+                        'nombres' => $user->nombres,
+                        'apellidos' => $user->apellidos,
+                        'username' => $user->username,
+                        'role' => $user->role->value,
+                        'estado' => $user->estado
+                    ],
+                    $request->ip(),
+                    (string) $request->userAgent()
+                );
+            } catch (\Exception $e) {
+                Log::error('Error en auditoría al eliminar usuario', ['error' => $e->getMessage()]);
+            }
 
             $user->delete();
 

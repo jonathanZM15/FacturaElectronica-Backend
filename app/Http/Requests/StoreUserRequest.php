@@ -27,6 +27,18 @@ class StoreUserRequest extends FormRequest
     }
 
     /**
+     * Prepare the data for validation.
+     */
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('username')) {
+            $this->merge([
+                'username' => strtolower($this->username),
+            ]);
+        }
+    }
+
+    /**
      * Get the validation rules that apply to the request.
      *
      * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array|string>
@@ -38,8 +50,7 @@ class StoreUserRequest extends FormRequest
                 'required',
                 'string',
                 'size:10',
-                'digits:10',
-                'unique:users,cedula'
+                'digits:10'
             ],
             'nombres' => [
                 'required',
@@ -60,6 +71,7 @@ class StoreUserRequest extends FormRequest
                 'string',
                 'min:3',
                 'max:255',
+                'regex:/^[a-z0-9._-]+$/', // Letras minúsculas, números, punto, guion bajo, guion medio. Sin espacios ni tildes.
                 'unique:users,username'
             ],
             'email' => [
@@ -103,7 +115,6 @@ class StoreUserRequest extends FormRequest
             'cedula.required' => 'La cédula es obligatoria',
             'cedula.size' => 'La cédula debe tener exactamente 10 dígitos',
             'cedula.digits' => 'La cédula debe contener solo números',
-            'cedula.unique' => 'Esta cédula ya está registrada',
             
             'nombres.required' => 'Los nombres son obligatorios',
             'nombres.min' => 'El nombre debe tener al menos 3 caracteres',
@@ -118,6 +129,7 @@ class StoreUserRequest extends FormRequest
             'username.required' => 'El nombre de usuario es obligatorio',
             'username.min' => 'El nombre de usuario debe tener al menos 3 caracteres',
             'username.unique' => 'Este nombre de usuario ya está registrado',
+            'username.regex' => 'El nombre de usuario solo permite letras, números, punto, guion bajo o guion medio, sin espacios ni tildes',
             
             'email.required' => 'El email es obligatorio',
             'email.email' => 'El email no es válido',

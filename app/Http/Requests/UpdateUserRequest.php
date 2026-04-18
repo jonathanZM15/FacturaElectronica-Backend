@@ -29,6 +29,18 @@ class UpdateUserRequest extends FormRequest
     }
 
     /**
+     * Prepare the data for validation.
+     */
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('username')) {
+            $this->merge([
+                'username' => strtolower($this->username),
+            ]);
+        }
+    }
+
+    /**
      * Get the validation rules that apply to the request.
      *
      * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array|string>
@@ -44,8 +56,7 @@ class UpdateUserRequest extends FormRequest
                 'sometimes',
                 'string',
                 'size:10',
-                'digits:10',
-                'unique:users,cedula,' . $userId // Cédula única excepto el usuario actual
+                'digits:10'
             ],
             'nombres' => [
                 'sometimes',
@@ -66,6 +77,7 @@ class UpdateUserRequest extends FormRequest
                 'string',
                 'min:3',
                 'max:255',
+                'regex:/^[a-z0-9._-]+$/', // Letras minúsculas, números, punto, guion bajo, guion medio. Sin espacios ni tildes.
                 'unique:users,username,' . $userId // Username único excepto el usuario actual
             ],
             'email' => [
@@ -147,7 +159,6 @@ class UpdateUserRequest extends FormRequest
             'cedula.string' => 'La cédula debe ser texto',
             'cedula.size' => 'La cédula debe tener exactamente 10 dígitos',
             'cedula.digits' => 'La cédula solo debe contener números',
-            'cedula.unique' => 'Esta cédula ya está registrada en el sistema',
 
             'nombres.sometimes' => 'Los nombres son opcionales',
             'nombres.string' => 'Los nombres deben ser texto',
@@ -166,7 +177,7 @@ class UpdateUserRequest extends FormRequest
             'username.min' => 'El nombre de usuario debe tener al menos 3 caracteres',
             'username.max' => 'El nombre de usuario no puede exceder 255 caracteres',
             'username.unique' => 'Este nombre de usuario ya está registrado en el sistema',
-            // HU: el nombre de usuario acepta todo tipo de caracteres
+            'username.regex' => 'El nombre de usuario solo permite letras, números, punto, guion bajo o guion medio, sin espacios ni tildes',
 
             'email.sometimes' => 'El correo electrónico es opcional',
             'email.email' => 'El correo electrónico debe ser válido',
