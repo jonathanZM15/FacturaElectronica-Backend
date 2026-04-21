@@ -18,10 +18,12 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use App\Mail\AccountConfirmationMail;
+use App\Mail\PasswordSetupMail;
+use App\Mail\EmailChangeNoticeMail;
+use App\Mail\AccountReactivationVerifyMail;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
-use App\Mail\EmailVerificationMail;
-use App\Mail\PasswordChangeMail;
 use App\Models\UserAudit;
 
 class UserController extends Controller
@@ -803,6 +805,25 @@ class UserController extends Controller
                         'errors' => ['email' => ['El email ya existe en el sistema']]
                     ], Response::HTTP_CONFLICT);
                 }
+                
+                // Enviar notificación al email ANTIGUO antes de cambiar
+                if ($user->email !== 'admin@factura.local') {
+                    try {
+                        Mail::to($emailActual)->send(new EmailChangeNoticeMail($user, $emailNuevo));
+                        Log::info('Email de cambio de correo enviado al email antiguo', [
+                            'usuario_id' => $user->id,
+                            'email_antiguo' => $emailActual,
+                            'email_nuevo' => $emailNuevo,
+                        ]);
+                    } catch (\Exception $e) {
+                        Log::error('Error enviando notificación de cambio de email', [
+                            'usuario_id' => $user->id,
+                            'email' => $emailActual,
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+                }
+                
                 $cambios['email'] = ['anterior' => $user->email, 'nuevo' => $validated['email']];
                 $user->email = $validated['email'];
                 $emailChanged = true;
@@ -2786,7 +2807,15 @@ class UserController extends Controller
         // URL del frontend para verificación
         $url = config('app.frontend_url', 'http://localhost:3000') . '/verify-email?token=' . $token;
 
-        Mail::to($user->email)->send(new EmailVerificationMail($url, $user));
+        // Determinar qué correo enviar según el estado anterior
+        $estadoAnt = $estadoAnterior ?? $user->estado;
+        if (in_array($estadoAnt, ['suspendido', 'retirado'])) {
+            // Es una reactivación - enviar correo de reactivación
+            Mail::to($user->email)->send(new AccountReactivationVerifyMail($user, $url));
+        } else {
+            // Es una verificación inicial - enviar correo de confirmación
+            Mail::to($user->email)->send(new AccountConfirmationMail($user, $url));
+        }
     }
 
     /**
@@ -2809,7 +2838,7 @@ class UserController extends Controller
         // URL del frontend para cambio de contraseña
         $url = config('app.frontend_url', 'http://localhost:3000') . '/change-password?token=' . $token;
 
-        Mail::to($user->email)->send(new PasswordChangeMail($url, $user));
+        Mail::to($user->email)->send(new PasswordSetupMail($user, $url));
     }
 
     /**
