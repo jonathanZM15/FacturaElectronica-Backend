@@ -22,6 +22,7 @@ Route::post('/password-reset', [AuthController::class, 'resetPassword']);
 // Rutas públicas para verificación de email y cambio de contraseña inicial
 Route::post('/verify-email', [UserController::class, 'verifyEmail']);
 Route::post('/change-initial-password', [UserController::class, 'changeInitialPassword']);
+Route::post('/confirm-email-change', [UserController::class, 'confirmEmailChange']);
 
 // Rutas públicas para verificar disponibilidad de usuario, cédula y email
 Route::get('/usuarios/check/username', [UserController::class, 'checkUsername']);
@@ -45,6 +46,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/usuarios/{usuario}', [UserController::class, 'update']);
         Route::delete('/usuarios/{usuario}', [UserController::class, 'destroy']);
         Route::post('/usuarios/{usuario}/resend-verification', [UserController::class, 'resendVerificationEmail']);
+        Route::post('/usuarios/{usuario}/request-email-change', [UserController::class, 'requestEmailChange']);
     });
 
     // Rutas solo admins

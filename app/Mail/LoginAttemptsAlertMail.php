@@ -4,32 +4,59 @@ namespace App\Mail;
 
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
+use Illuminate\Mail\Mailables\Content;
+use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
 
 class LoginAttemptsAlertMail extends Mailable
 {
     use Queueable, SerializesModels;
 
-    public function __construct(
-        public $user,
-        public $attempts = 5,
-        public $date_time = null,
-        public $ip_address = null,
-        public $device = null
-    ) {
-        $this->date_time = $date_time ?? now()->format('d/m/Y H:i');
+    public $user;
+    public $ipAddress;
+    public $attemptCount;
+    public $deviceInfo;
+    public $timestamp;
+
+    /**
+     * Create a new message instance.
+     */
+    public function __construct($user, $ipAddress, $attemptCount, $deviceInfo, $timestamp)
+    {
+        $this->user = $user;
+        $this->ipAddress = $ipAddress;
+        $this->attemptCount = $attemptCount;
+        $this->deviceInfo = $deviceInfo;
+        $this->timestamp = $timestamp;
     }
 
-    public function build()
+    /**
+     * Get the message envelope.
+     */
+    public function envelope(): Envelope
     {
-        return $this->view('emails.login_attempts_alert')
-                    ->subject('⚠️ Intentos fallidos de acceso a su cuenta en Máximo Facturas')
-                    ->with([
-                        'user' => $this->user,
-                        'attempts' => $this->attempts,
-                        'date_time' => $this->date_time,
-                        'ip_address' => $this->ip_address,
-                        'device' => $this->device,
-                    ]);
+        return new Envelope(
+            subject: '⚠️ Alerta de Seguridad - Intentos de acceso sospechosos',
+        );
+    }
+
+    /**
+     * Get the message content definition.
+     */
+    public function content(): Content
+    {
+        return new Content(
+            view: 'emails.suspicious_login',
+        );
+    }
+
+    /**
+     * Get the attachments for the message.
+     *
+     * @return array<int, \Illuminate\Mail\Mailables\Attachment>
+     */
+    public function attachments(): array
+    {
+        return [];
     }
 }

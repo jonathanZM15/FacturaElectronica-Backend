@@ -2,7 +2,7 @@
 
 namespace App\Jobs;
 
-use App\Mail\SuspiciousLoginMail;
+use App\Mail\LoginAttemptsAlertMail;
 use App\Models\User;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -32,13 +32,17 @@ class SendSuspiciousLoginEmailJob implements ShouldQueue
      */
     public function handle(): void
     {
+        // Construir deviceInfo en el mismo formato que en AuthController
+        $deviceInfo = "{$this->browser} en {$this->platform} ({$this->deviceType})";
+        $timestamp = now()->timezone('America/Guayaquil')->format('d/m/Y H:i');
+
         Mail::to($this->user->email)->send(
-            new SuspiciousLoginMail(
+            new LoginAttemptsAlertMail(
                 $this->user,
-                $this->deviceType,
-                $this->browser,
-                $this->platform,
-                $this->ipAddress
+                $this->ipAddress,
+                5, // attemptCount siempre es 5 cuando se dispara este job
+                $deviceInfo,
+                $timestamp
             )
         );
     }

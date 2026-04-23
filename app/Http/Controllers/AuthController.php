@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use App\Mail\PasswordRecoveryMail;
-use App\Mail\SuspiciousLoginMail;
+use App\Mail\LoginAttemptsAlertMail;
 use Illuminate\Auth\Events\PasswordReset;
 use Jenssegers\Agent\Agent;
 
@@ -237,7 +237,7 @@ class AuthController extends Controller
             // Enviar email de alerta si ya hay 5 intentos (antes de bloquear)
             if ($user->failed_login_attempts === 5) {
                 try {
-                    Mail::to($user->email)->send(new SuspiciousLoginMail(
+                    Mail::to($user->email)->send(new LoginAttemptsAlertMail(
                         $user,
                         $ipAddress,
                         $user->failed_login_attempts,

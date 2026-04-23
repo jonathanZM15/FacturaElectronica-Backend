@@ -18,39 +18,14 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
-use App\Mail\AccountConfirmationMail;
-use App\Mail\PasswordSetupMail;
-use App\Mail\EmailChangeNoticeMail;
-use App\Mail\AccountReactivationVerifyMail;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use App\Mail\EmailVerificationMail;
+use App\Mail\PasswordChangeMail;
 use App\Models\UserAudit;
 
 class UserController extends Controller
 {
-    /**
-     * Remueve tildes y caracteres acentuados de una cadena
-     * Para permitir búsquedas sin distinción de tildes
-     */
-    private function removeAccents(string $text): string
-    {
-        $map = array(
-            'á' => 'a', 'à' => 'a', 'ä' => 'a', 'â' => 'a', 'ã' => 'a',
-            'é' => 'e', 'è' => 'e', 'ë' => 'e', 'ê' => 'e',
-            'í' => 'i', 'ì' => 'i', 'ï' => 'i', 'î' => 'i',
-            'ó' => 'o', 'ò' => 'o', 'ö' => 'o', 'ô' => 'o', 'õ' => 'o',
-            'ú' => 'u', 'ù' => 'u', 'ü' => 'u', 'û' => 'u',
-            'ç' => 'c', 'ñ' => 'n',
-            'Á' => 'A', 'À' => 'A', 'Ä' => 'A', 'Â' => 'A', 'Ã' => 'A',
-            'É' => 'E', 'È' => 'E', 'Ë' => 'E', 'Ê' => 'E',
-            'Í' => 'I', 'Ì' => 'I', 'Ï' => 'I', 'Î' => 'I',
-            'Ó' => 'O', 'Ò' => 'O', 'Ö' => 'O', 'Ô' => 'O', 'Õ' => 'O',
-            'Ú' => 'U', 'Ù' => 'U', 'Ü' => 'U', 'Û' => 'U',
-            'Ç' => 'C', 'Ñ' => 'N'
-        );
-        return strtr($text, $map);
-    }
-
     /**
      * Construye una descripción legible de los cambios para auditoría.
      */
@@ -164,10 +139,13 @@ class UserController extends Controller
             if ($currentUser->role === UserRole::ADMINISTRADOR) {
                 // Admin ve todos los usuarios
             } elseif ($currentUser->role === UserRole::DISTRIBUIDOR) {
-                // Distribuidor ve: SOLO a los usuarios asociados a emisores creados por él.
-                // NO se ve a sí mismo (requisito HU3)
-                $query->whereHas('emisor', function ($qe) use ($currentUser) {
-                    $qe->where('created_by', $currentUser->id);
+                // Distribuidor ve: a sí mismo y a los usuarios asociados a emisores creados por él.
+                // Regla: emisor (Company) creado_por = currentUser.id
+                $query->where(function ($q) use ($currentUser) {
+                    $q->where('id', $currentUser->id)
+                        ->orWhereHas('emisor', function ($qe) use ($currentUser) {
+                            $qe->where('created_by', $currentUser->id);
+                        });
                 });
             } elseif ($currentUser->role === UserRole::EMISOR) {
                 // Emisor ve: a sí mismo y los usuarios que creó (gerentes y cajeros)
@@ -202,39 +180,12 @@ class UserController extends Controller
             if ($cedula !== '') {
                 $query->where('cedula', 'ILIKE', '%' . $cedula . '%');
             }
-            
-            // Si nombres y apellidos tienen el mismo valor (filtro combinado "nombre")
-            if ($nombres !== '' && $apellidos !== '' && $nombres === $apellidos) {
-                $query->where(function ($q) use ($nombres) {
-                    $s = '%' . $nombres . '%';
-                    // Usar unaccent de PostgreSQL para ignorar tildes
-                    try {
-                        $q->whereRaw("unaccent(nombres) ILIKE unaccent(?)", [$s])
-                          ->orWhereRaw("unaccent(apellidos) ILIKE unaccent(?)", [$s]);
-                    } catch (\Exception $_) {
-                        // Fallback si unaccent no está disponible
-                        $q->where('nombres', 'ILIKE', $s)
-                          ->orWhere('apellidos', 'ILIKE', $s);
-                    }
-                });
-            } else {
-                // Filtros separados si tienen valores diferentes
-                if ($nombres !== '') {
-                    try {
-                        $query->whereRaw("unaccent(nombres) ILIKE unaccent(?)", ['%' . $nombres . '%']);
-                    } catch (\Exception $_) {
-                        $query->where('nombres', 'ILIKE', '%' . $nombres . '%');
-                    }
-                }
-                if ($apellidos !== '') {
-                    try {
-                        $query->whereRaw("unaccent(apellidos) ILIKE unaccent(?)", ['%' . $apellidos . '%']);
-                    } catch (\Exception $_) {
-                        $query->where('apellidos', 'ILIKE', '%' . $apellidos . '%');
-                    }
-                }
+            if ($nombres !== '') {
+                $query->where('nombres', 'ILIKE', '%' . $nombres . '%');
             }
-            
+            if ($apellidos !== '') {
+                $query->where('apellidos', 'ILIKE', '%' . $apellidos . '%');
+            }
             if ($username !== '') {
                 $query->where('username', 'ILIKE', '%' . $username . '%');
             }
@@ -805,25 +756,6 @@ class UserController extends Controller
                         'errors' => ['email' => ['El email ya existe en el sistema']]
                     ], Response::HTTP_CONFLICT);
                 }
-                
-                // Enviar notificación al email ANTIGUO antes de cambiar
-                if ($user->email !== 'admin@factura.local') {
-                    try {
-                        Mail::to($emailActual)->send(new EmailChangeNoticeMail($user, $emailNuevo));
-                        Log::info('Email de cambio de correo enviado al email antiguo', [
-                            'usuario_id' => $user->id,
-                            'email_antiguo' => $emailActual,
-                            'email_nuevo' => $emailNuevo,
-                        ]);
-                    } catch (\Exception $e) {
-                        Log::error('Error enviando notificación de cambio de email', [
-                            'usuario_id' => $user->id,
-                            'email' => $emailActual,
-                            'error' => $e->getMessage(),
-                        ]);
-                    }
-                }
-                
                 $cambios['email'] = ['anterior' => $user->email, 'nuevo' => $validated['email']];
                 $user->email = $validated['email'];
                 $emailChanged = true;
@@ -2807,15 +2739,7 @@ class UserController extends Controller
         // URL del frontend para verificación
         $url = config('app.frontend_url', 'http://localhost:3000') . '/verify-email?token=' . $token;
 
-        // Determinar qué correo enviar según el estado anterior
-        $estadoAnt = $estadoAnterior ?? $user->estado;
-        if (in_array($estadoAnt, ['suspendido', 'retirado'])) {
-            // Es una reactivación - enviar correo de reactivación
-            Mail::to($user->email)->send(new AccountReactivationVerifyMail($user, $url));
-        } else {
-            // Es una verificación inicial - enviar correo de confirmación
-            Mail::to($user->email)->send(new AccountConfirmationMail($user, $url));
-        }
+        Mail::to($user->email)->send(new EmailVerificationMail($url, $user));
     }
 
     /**
@@ -2838,7 +2762,7 @@ class UserController extends Controller
         // URL del frontend para cambio de contraseña
         $url = config('app.frontend_url', 'http://localhost:3000') . '/change-password?token=' . $token;
 
-        Mail::to($user->email)->send(new PasswordSetupMail($user, $url));
+        Mail::to($user->email)->send(new PasswordChangeMail($url, $user));
     }
 
     /**
