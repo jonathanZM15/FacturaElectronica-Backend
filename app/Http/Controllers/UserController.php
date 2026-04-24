@@ -20,8 +20,9 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
-use App\Mail\EmailVerificationMail;
-use App\Mail\PasswordChangeMail;
+use App\Mail\AccountConfirmationMail;
+use App\Mail\PasswordSetupMail;
+use App\Services\UserEmailService;
 use App\Models\UserAudit;
 
 class UserController extends Controller
@@ -2587,14 +2588,14 @@ class UserController extends Controller
                 'estado_anterior' => $estadoAnterior
             ]);
 
-            // Solo enviar correo de cambio de contraseña si el usuario era NUEVO
+            // Solo enviar correo de setup de contraseña si el usuario era NUEVO
             // Los usuarios suspendidos/retirados ya tienen contraseña
             if ($estadoAnterior === 'nuevo') {
                 try {
-                    $this->sendPasswordChangeEmail($user);
-                    Log::info('Correo de cambio de contraseña enviado', ['usuario_id' => $user->id]);
+                    $this->sendPasswordSetupEmail($user);
+                    Log::info('Correo de setup de contraseña enviado', ['usuario_id' => $user->id]);
                 } catch (\Exception $emailError) {
-                    Log::error('Error enviando correo de cambio de contraseña', [
+                    Log::error('Error enviando correo de setup de contraseña', [
                         'usuario_id' => $user->id,
                         'error' => $emailError->getMessage()
                     ]);
@@ -2641,7 +2642,7 @@ class UserController extends Controller
 
             $token = DB::table('user_verification_tokens')
                 ->where('token', $request->token)
-                ->where('type', 'password_change')
+                ->where('type', 'password_setup')
                 ->where('used', false)
                 ->where('expires_at', '>', now())
                 ->first();
@@ -2700,69 +2701,39 @@ class UserController extends Controller
     }
 
     /**
-     * Helper: Enviar email de verificación
+     * Helper: Enviar email de verificación usando UserEmailService
+     * Envía AccountConfirmationMail para usuarios nuevos
+     * Envía AccountReactivationVerifyMail para usuarios suspendidos o retirados
      */
     private function sendVerificationEmail(User $user, ?string $estadoAnterior = null)
     {
-        // Crear token de verificación
-        $token = Str::random(60);
-
-        // Si no se proporciona estado anterior, usar el estado actual del usuario
-        $metadata = [
-            'estado_anterior' => $estadoAnterior ?? $user->estado,
-            'email_sent_to' => (string) $user->email,
-        ];
-
-        // Invalidate previous unused verification tokens (defense in depth)
-        DB::transaction(function () use ($user, $token, $metadata) {
-            DB::table('user_verification_tokens')
-                ->where('user_id', $user->id)
-                ->where('type', 'email_verification')
-                ->where('used', false)
-                ->update([
-                    'used' => true,
-                    'used_at' => now(),
-                    'updated_at' => now(),
-                ]);
-
-            DB::table('user_verification_tokens')->insert([
-                'user_id' => $user->id,
-                'token' => $token,
-                'type' => 'email_verification',
-                'metadata' => json_encode($metadata),
-                'expires_at' => now()->addHours(24),
-                'created_at' => now(),
-                'updated_at' => now()
+        try {
+            $emailService = new UserEmailService();
+            $emailService->sendVerificationEmailByState($user, $estadoAnterior);
+        } catch (\Exception $e) {
+            Log::error('Error enviando correo de verificación', [
+                'usuario_id' => $user->id,
+                'error' => $e->getMessage()
             ]);
-        });
-
-        // URL del frontend para verificación
-        $url = config('app.frontend_url', 'http://localhost:3000') . '/verify-email?token=' . $token;
-
-        Mail::to($user->email)->send(new EmailVerificationMail($url, $user));
+            throw $e;
+        }
     }
 
     /**
-     * Helper: Enviar email de cambio de contraseña
+     * Helper: Enviar email de setup de contraseña usando UserEmailService
      */
-    private function sendPasswordChangeEmail(User $user)
+    private function sendPasswordSetupEmail(User $user)
     {
-        // Crear token para cambio de contraseña
-        $token = Str::random(60);
-        
-        DB::table('user_verification_tokens')->insert([
-            'user_id' => $user->id,
-            'token' => $token,
-            'type' => 'password_change',
-            'expires_at' => now()->addHours(48),
-            'created_at' => now(),
-            'updated_at' => now()
-        ]);
-
-        // URL del frontend para cambio de contraseña
-        $url = config('app.frontend_url', 'http://localhost:3000') . '/change-password?token=' . $token;
-
-        Mail::to($user->email)->send(new PasswordChangeMail($url, $user));
+        try {
+            $emailService = new UserEmailService();
+            $emailService->sendPasswordSetupMail($user);
+        } catch (\Exception $e) {
+            Log::error('Error enviando correo de setup de contraseña', [
+                'usuario_id' => $user->id,
+                'error' => $e->getMessage()
+            ]);
+            throw $e;
+        }
     }
 
     /**
@@ -2925,7 +2896,9 @@ class UserController extends Controller
             if (in_array($estadoAnterior, ['suspendido', 'retirado'])) {
                 // Cambiar a pendiente_verificacion para reactivación
                 $user->estado = 'pendiente_verificacion';
-                $user->save();
+                // Evita doble envío: el controller envía el correo de reactivación
+                // después del cambio de estado, así que aquí no debemos disparar el observer.
+                $user->saveQuietly();
 
                 // Auditoría persistente del cambio de estado por reenvío
                 try {
@@ -3034,7 +3007,9 @@ class UserController extends Controller
             // Cambiar estado si es necesario
             if (in_array($estadoAnterior, ['suspendido', 'retirado'])) {
                 $user->estado = 'pendiente_verificacion';
-                $user->save();
+                // Evita doble envío: el controller envía el correo de reactivación
+                // después del cambio de estado, así que aquí no debemos disparar el observer.
+                $user->saveQuietly();
 
                 // Auditoría persistente del cambio de estado por reenvío (por emisor)
                 try {
@@ -3089,6 +3064,216 @@ class UserController extends Controller
 
             return response()->json([
                 'message' => 'Error al reenviar el correo de verificación'
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Solicitar cambio de correo
+     * Usuario autenticado solicita cambiar su email
+     */
+    public function requestEmailChange(Request $request, string $id)
+    {
+        try {
+            // Permitir auto-gestión y también gestión desde el panel si el actor
+            // puede administrar al usuario objetivo según la jerarquía del sistema.
+            $currentUser = Auth::user();
+            $user = User::find($id);
+
+            if (!$user) {
+                return response()->json([
+                    'message' => 'Usuario no encontrado'
+                ], Response::HTTP_NOT_FOUND);
+            }
+
+            $canManageTarget = (int) $currentUser->id === (int) $user->id
+                || PermissionService::puedeGestionarUsuario($currentUser, $user);
+
+            if (!$canManageTarget) {
+                return response()->json([
+                    'message' => 'No tienes permiso para solicitar cambio de correo de este usuario'
+                ], Response::HTTP_FORBIDDEN);
+            }
+
+            $request->validate([
+                'new_email' => 'required|email|unique:users,email'
+            ], [
+                'new_email.required' => 'El nuevo correo es requerido',
+                'new_email.email' => 'El correo debe ser válido',
+                'new_email.unique' => 'El correo ya está registrado en el sistema',
+            ]);
+            $newEmail = $request->input('new_email');
+
+            // Verificar que no sea el mismo correo
+            if ($newEmail === $user->email) {
+                return response()->json([
+                    'message' => 'El nuevo correo debe ser diferente del actual',
+                    'errors' => ['new_email' => ['El nuevo correo debe ser diferente del actual']]
+                ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+
+            // El usuario admin@factura.local no puede cambiar su correo
+            if ($user->email === 'admin@factura.local') {
+                return response()->json([
+                    'message' => 'No se puede cambiar el correo de la cuenta administrativa'
+                ], Response::HTTP_CONFLICT);
+            }
+
+            DB::beginTransaction();
+
+            // Cambiar estado a pendiente_verificacion
+            $user->estado = 'pendiente_verificacion';
+            $user->save();
+
+            DB::commit();
+
+            Log::info('Cambio de correo solicitado', [
+                'usuario_id' => $user->id,
+                'correo_anterior' => $user->email,
+                'correo_nuevo' => $newEmail
+            ]);
+
+            // Usar servicio para enviar correos
+            try {
+                $emailService = new UserEmailService();
+                $emailService->requestEmailChange($user, $newEmail);
+
+                return response()->json([
+                    'message' => 'Solicitud de cambio de correo enviada. Revisa ambos correos para confirmar el cambio.',
+                    'data' => [
+                        'current_email' => $user->email,
+                        'new_email_hint' => preg_replace('/(.{2})(.*)(.{2})/', '$1***$3', $newEmail),
+                        'estado' => $user->estado
+                    ]
+                ]);
+            } catch (\Exception $emailError) {
+                Log::error('Error enviando correos de cambio de correo', [
+                    'usuario_id' => $user->id,
+                    'error' => $emailError->getMessage()
+                ]);
+                return response()->json([
+                    'message' => 'Error al procesar solicitud de cambio de correo'
+                ], Response::HTTP_INTERNAL_SERVER_ERROR);
+            }
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'message' => 'Validación fallida',
+                'errors' => $e->errors()
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Error solicitando cambio de correo', [
+                'usuario_id' => $id,
+                'error' => $e->getMessage()
+            ]);
+            return response()->json([
+                'message' => 'Error al solicitar cambio de correo'
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Confirmar cambio de correo
+     * Endpoint público para confirmar el cambio con token
+     */
+    public function confirmEmailChange(Request $request)
+    {
+        try {
+            $request->validate([
+                'token' => 'required|string'
+            ]);
+
+            // Buscar el token
+            $tokenRecord = DB::table('user_verification_tokens')
+                ->where('token', $request->token)
+                ->where('type', 'email_change_confirmation')
+                ->where('used', false)
+                ->where('expires_at', '>', now())
+                ->first();
+
+            if (!$tokenRecord) {
+                return response()->json([
+                    'message' => 'Token inválido, expirado o ya fue utilizado',
+                    'code' => 'TOKEN_INVALID'
+                ], Response::HTTP_BAD_REQUEST);
+            }
+
+            $user = User::find($tokenRecord->user_id);
+            if (!$user) {
+                return response()->json([
+                    'message' => 'Usuario no encontrado'
+                ], Response::HTTP_NOT_FOUND);
+            }
+
+            // Obtener el nuevo correo desde metadata
+            $metadata = json_decode($tokenRecord->metadata ?? '{}', true);
+            if (!is_array($metadata)) {
+                $metadata = [];
+            }
+            $newEmail = $metadata['new_email'] ?? null;
+
+            if (!$newEmail) {
+                return response()->json([
+                    'message' => 'Datos de token inválidos'
+                ], Response::HTTP_BAD_REQUEST);
+            }
+
+            // Verificar que el nuevo correo no exista ya en otro usuario
+            if (User::where('email', $newEmail)->where('id', '!=', $user->id)->exists()) {
+                return response()->json([
+                    'message' => 'El correo ya está registrado en el sistema'
+                ], Response::HTTP_CONFLICT);
+            }
+
+            DB::beginTransaction();
+
+            // Actualizar email del usuario
+            $oldEmail = $user->email;
+            $user->email = $newEmail;
+            $user->estado = 'activo';
+            $user->email_verified_at = now();
+            $user->save();
+
+            // Marcar token como usado
+            DB::table('user_verification_tokens')
+                ->where('id', $tokenRecord->id)
+                ->update([
+                    'used' => true,
+                    'used_at' => now()
+                ]);
+
+            // Invalidar tokens de cambio de correo anteriores para este usuario
+            DB::table('user_verification_tokens')
+                ->where('user_id', $user->id)
+                ->where('type', 'email_change_confirmation')
+                ->where('id', '!=', $tokenRecord->id)
+                ->update([
+                    'used' => true,
+                    'used_at' => now()
+                ]);
+
+            DB::commit();
+
+            Log::info('Cambio de correo confirmado', [
+                'usuario_id' => $user->id,
+                'correo_anterior' => $oldEmail,
+                'correo_nuevo' => $newEmail
+            ]);
+
+            return response()->json([
+                'message' => 'Correo actualizado exitosamente. Ya puedes iniciar sesión con tu nuevo correo.',
+                'data' => [
+                    'email' => $user->email,
+                    'estado' => $user->estado
+                ]
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Error confirmando cambio de correo', [
+                'error' => $e->getMessage()
+            ]);
+            return response()->json([
+                'message' => 'Error al confirmar cambio de correo'
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }

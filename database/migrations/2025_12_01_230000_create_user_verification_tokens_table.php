@@ -15,7 +15,7 @@ return new class extends Migration
             $table->id();
             $table->foreignId('user_id')->constrained()->onDelete('cascade');
             $table->string('token', 100)->unique();
-            $table->enum('type', ['email_verification', 'password_change'])->comment('Tipo de token: verificación de email o cambio de contraseña');
+            $table->enum('type', ['email_verification', 'password_change', 'password_setup', 'email_change_confirmation'])->comment('Tipo de token');
             $table->timestamp('expires_at');
             $table->boolean('used')->default(false);
             $table->timestamp('used_at')->nullable();

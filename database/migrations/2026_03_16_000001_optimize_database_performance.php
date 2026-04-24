@@ -147,30 +147,51 @@ return new class extends Migration
     }
 
     /**
-     * Helper para crear índice simple si no existe (Compatible MySQL + PostgreSQL)
+     * Helper para crear índice simple si no existe (Compatible MySQL + PostgreSQL + SQLite)
      */
     private function createIndexIfNotExists(string $table, string $column, string $indexName, string $driver): void
     {
         $indexExists = false;
 
-        if ($driver === 'pgsql') {
-            // PostgreSQL
-            $result = DB::select(
-                "SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND tablename = ? AND indexname = ?",
-                [$table, $indexName]
-            );
-            $indexExists = !empty($result);
-        } else {
-            // MySQL
-            $result = DB::select(
-                "SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?",
-                [$table, $indexName]
-            );
-            $indexExists = !empty($result);
+        try {
+            if ($driver === 'pgsql') {
+                // PostgreSQL
+                $result = DB::select(
+                    "SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND tablename = ? AND indexname = ?",
+                    [$table, $indexName]
+                );
+                $indexExists = !empty($result);
+            } elseif ($driver === 'mysql') {
+                // MySQL
+                $result = DB::select(
+                    "SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?",
+                    [$table, $indexName]
+                );
+                $indexExists = !empty($result);
+            } elseif ($driver === 'sqlite') {
+                // SQLite - try to query the index
+                try {
+                    $result = DB::select(
+                        "SELECT 1 FROM sqlite_master WHERE type='index' AND name=?",
+                        [$indexName]
+                    );
+                    $indexExists = !empty($result);
+                } catch (\Exception $e) {
+                    // Si falla, asumir que no existe
+                    $indexExists = false;
+                }
+            }
+        } catch (\Exception $e) {
+            // Si hay error al verificar, intentar crear igual
+            $indexExists = false;
         }
 
         if (!$indexExists) {
-            DB::statement("CREATE INDEX $indexName ON $table ($column)");
+            try {
+                DB::statement("CREATE INDEX $indexName ON $table ($column)");
+            } catch (\Exception $e) {
+                // Ignorar si el índice ya existe o hay error
+            }
         }
     }
 
@@ -181,25 +202,46 @@ return new class extends Migration
     {
         $indexExists = false;
 
-        if ($driver === 'pgsql') {
-            // PostgreSQL
-            $result = DB::select(
-                "SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND tablename = ? AND indexname = ?",
-                [$table, $indexName]
-            );
-            $indexExists = !empty($result);
-        } else {
-            // MySQL
-            $result = DB::select(
-                "SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?",
-                [$table, $indexName]
-            );
-            $indexExists = !empty($result);
+        try {
+            if ($driver === 'pgsql') {
+                // PostgreSQL
+                $result = DB::select(
+                    "SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND tablename = ? AND indexname = ?",
+                    [$table, $indexName]
+                );
+                $indexExists = !empty($result);
+            } elseif ($driver === 'mysql') {
+                // MySQL
+                $result = DB::select(
+                    "SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?",
+                    [$table, $indexName]
+                );
+                $indexExists = !empty($result);
+            } elseif ($driver === 'sqlite') {
+                // SQLite - try to query the index
+                try {
+                    $result = DB::select(
+                        "SELECT 1 FROM sqlite_master WHERE type='index' AND name=?",
+                        [$indexName]
+                    );
+                    $indexExists = !empty($result);
+                } catch (\Exception $e) {
+                    // Si falla, asumir que no existe
+                    $indexExists = false;
+                }
+            }
+        } catch (\Exception $e) {
+            // Si hay error al verificar, intentar crear igual
+            $indexExists = false;
         }
 
         if (!$indexExists) {
-            $columnsList = implode(', ', $columns);
-            DB::statement("CREATE INDEX $indexName ON $table ($columnsList)");
+            try {
+                $columnsList = implode(', ', $columns);
+                DB::statement("CREATE INDEX $indexName ON $table ($columnsList)");
+            } catch (\Exception $e) {
+                // Ignorar si el índice ya existe o hay error
+            }
         }
     }
 };

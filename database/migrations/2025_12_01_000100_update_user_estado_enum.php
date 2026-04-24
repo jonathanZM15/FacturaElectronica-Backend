@@ -7,22 +7,50 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration {
     public function up(): void
     {
-        // Postgres compatible: usar VARCHAR y default 'nuevo'
-        DB::statement("ALTER TABLE users ALTER COLUMN estado TYPE VARCHAR(40)");
-        DB::statement("ALTER TABLE users ALTER COLUMN estado SET DEFAULT 'nuevo'");
+        // Only run PostgreSQL-specific ALTER statements on PostgreSQL
+        if ($this->isPostgres()) {
+            try {
+                DB::statement("ALTER TABLE users ALTER COLUMN estado TYPE VARCHAR(40)");
+                DB::statement("ALTER TABLE users ALTER COLUMN estado SET DEFAULT 'nuevo'");
+            } catch (\Exception $e) {
+                // Ignore if column already modified
+            }
+        }
 
-        // Asegurar que el admin tenga 'activo'
-        DB::statement("UPDATE users SET estado = 'activo' WHERE email = 'admin@factura.local'");
-        // Para el resto, si estaban en valores viejos, mapear: 'inactivo' -> 'retirado'
-        DB::statement("UPDATE users SET estado = 'retirado' WHERE estado = 'inactivo' AND email <> 'admin@factura.local'");
-        // Si tenían 'activo' o 'suspendido' se mantiene; los nulls pasar a 'nuevo'
-        DB::statement("UPDATE users SET estado = 'nuevo' WHERE (estado IS NULL OR estado = '') AND email <> 'admin@factura.local'");
+        // These UPDATE statements work on all databases
+        try {
+            DB::statement("UPDATE users SET estado = 'activo' WHERE email = 'admin@factura.local'");
+        } catch (\Exception $e) {
+            // Ignore if table doesn't exist yet
+        }
+        
+        try {
+            DB::statement("UPDATE users SET estado = 'retirado' WHERE estado = 'inactivo' AND email <> 'admin@factura.local'");
+            DB::statement("UPDATE users SET estado = 'nuevo' WHERE (estado IS NULL OR estado = '') AND email <> 'admin@factura.local'");
+        } catch (\Exception $e) {
+            // Ignore if table doesn't exist yet
+        }
     }
 
     public function down(): void
     {
-        // Revertir: mantener VARCHAR y default 'activo'
-        DB::statement("ALTER TABLE users ALTER COLUMN estado SET DEFAULT 'activo'");
-        DB::statement("UPDATE users SET estado = 'inactivo' WHERE estado IN ('nuevo','retirado','pendiente_verificacion') AND email <> 'admin@factura.local'");
+        if ($this->isPostgres()) {
+            try {
+                DB::statement("ALTER TABLE users ALTER COLUMN estado SET DEFAULT 'activo'");
+            } catch (\Exception $e) {
+                // Ignore if already reverted
+            }
+        }
+        
+        try {
+            DB::statement("UPDATE users SET estado = 'inactivo' WHERE estado IN ('nuevo','retirado','pendiente_verificacion') AND email <> 'admin@factura.local'");
+        } catch (\Exception $e) {
+            // Ignore
+        }
+    }
+
+    private function isPostgres(): bool
+    {
+        return DB::connection()->getDriverName() === 'pgsql';
     }
 };

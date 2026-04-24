@@ -38,6 +38,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', [AuthController::class, 'me']);
     Route::post('/cambiarClave', [AuthController::class, 'cambiarPassword']);
 
+    // Rutas públicas para usuarios autenticados
+    Route::post('/usuarios/{usuario}/request-email-change', [UserController::class, 'requestEmailChange']);
+
     // Rutas de Usuarios (admin y distribuidor)
     Route::middleware('admin_or_distribuidor')->group(function () {
         Route::get('/usuarios', [UserController::class, 'index']);
@@ -46,7 +49,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/usuarios/{usuario}', [UserController::class, 'update']);
         Route::delete('/usuarios/{usuario}', [UserController::class, 'destroy']);
         Route::post('/usuarios/{usuario}/resend-verification', [UserController::class, 'resendVerificationEmail']);
-        Route::post('/usuarios/{usuario}/request-email-change', [UserController::class, 'requestEmailChange']);
     });
 
     // Rutas solo admins

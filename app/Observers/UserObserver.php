@@ -7,9 +7,9 @@ use App\Mail\{
     AccountSuspendedMail,
     AccountReactivatedMail,
     AccountDeactivatedMail,
-    AccountReactivationVerifyMail,
-    EmailChangeConfirmMail
+    AccountReactivationVerifyMail
 };
+use App\Services\UserEmailService;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
 
@@ -28,7 +28,7 @@ class UserObserver
         $changes = $user->getChanges();
 
         // Si cambió el estado, enviar correo correspondiente
-        if (isset($changes['estado']) && $changes['estado'] !== $original['estado'] ?? null) {
+        if (isset($changes['estado'])) {
             $estadoAnterior = $original['estado'] ?? null;
             $estadoNuevo = $changes['estado'];
 
@@ -58,12 +58,9 @@ class UserObserver
                     in_array($estadoAnterior, ['activo', 'suspendido', 'pendiente_verificacion', 'nuevo'], true) && $estadoNuevo === 'retirado' => 
                         Mail::to($user->email)->send(new AccountDeactivatedMail($user)),
 
-                    // retirado → pendiente_verificacion: Enviar solicitud de verificación para reactivación
+                    // retirado → pendiente_verificacion: Enviar solicitud de verificación para reactivación con token real
                     $estadoAnterior === 'retirado' && $estadoNuevo === 'pendiente_verificacion' => 
-                        Mail::to($user->email)->send(new AccountReactivationVerifyMail(
-                            $user,
-                            config('app.frontend_url', 'http://localhost:3000') . '/verify-email?token=pending'
-                        )),
+                        $this->sendReactivationVerificationEmail($user),
 
                     default => null
                 };
@@ -100,6 +97,23 @@ class UserObserver
                     'error' => $e->getMessage(),
                 ]);
             }
+        }
+    }
+
+    /**
+     * Enviar correo de verificación de reactivación con token real
+     */
+    private function sendReactivationVerificationEmail(User $user): void
+    {
+        try {
+            $emailService = new UserEmailService();
+            $emailService->sendAccountReactivationVerifyMail($user);
+        } catch (\Exception $e) {
+            Log::error('Error enviando correo de verificación de reactivación', [
+                'usuario_id' => $user->id,
+                'error' => $e->getMessage()
+            ]);
+            // No lanzar excepción para que el observer no interrumpa el flujo
         }
     }
 }

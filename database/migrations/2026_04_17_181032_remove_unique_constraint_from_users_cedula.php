@@ -12,6 +12,11 @@ return new class extends Migration
      */
     public function up(): void
     {
+        // Solo ejecutar en PostgreSQL
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+
         // Verificar primero si el índice existe para evitar errores al intentar eliminarlo varias veces
         $indexExists = collect(DB::select("SELECT indexname FROM pg_indexes WHERE tablename = 'users' AND indexname = 'users_cedula_unique'"))->isNotEmpty();
         if ($indexExists) {
@@ -26,6 +31,11 @@ return new class extends Migration
      */
     public function down(): void
     {
+        // Solo ejecutar en PostgreSQL
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+
         $indexExists = collect(DB::select("SELECT indexname FROM pg_indexes WHERE tablename = 'users' AND indexname = 'users_cedula_unique'"))->isNotEmpty();
         if (!$indexExists) {
             Schema::table('users', function (Blueprint $table) {

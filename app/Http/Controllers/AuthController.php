@@ -234,25 +234,6 @@ class AuthController extends Controller
                 'attempted_at' => now(),
             ]);
 
-            // Enviar email de alerta si ya hay 5 intentos (antes de bloquear)
-            if ($user->failed_login_attempts === 5) {
-                try {
-                    Mail::to($user->email)->send(new LoginAttemptsAlertMail(
-                        $user,
-                        $ipAddress,
-                        $user->failed_login_attempts,
-                        $deviceInfo,
-                        now()->timezone('America/Guayaquil')->format('d/m/Y H:i')
-                    ));
-                    Log::info('Warning email sent after 5 failed attempts', ['user_id' => $user->id]);
-                } catch (\Exception $e) {
-                    Log::error('Failed to send warning email', [
-                        'user_id' => $user->id,
-                        'error' => $e->getMessage()
-                    ]);
-                }
-            }
-
             $intentosRestantes = 5 - $user->failed_login_attempts;
 
             Log::error('Authentication Failed: Invalid password', [
