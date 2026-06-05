@@ -9,11 +9,9 @@ use App\Models\ComprobanteImpuesto;
 use App\Models\Establecimiento;
 use App\Models\PuntoEmision;
 use App\Models\TipoImpuesto;
+use App\Jobs\ProcesarFacturaSriJob;
 use App\Services\EcuadorIdentificationValidator;
 use App\Services\FacturaCalculatorService;
-use App\Services\SriSoapService;
-use App\Services\SriSignatureService;
-use App\Services\SriXmlGeneratorService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -23,15 +21,20 @@ use Illuminate\Support\Facades\Validator;
 class FacturacionController extends Controller
 {
     public function __construct(
-        private readonly FacturaCalculatorService $calculator,
-        private readonly SriXmlGeneratorService $xmlService,
-        private readonly SriSignatureService $signatureService,
-        private readonly SriSoapService $soapService
+        private readonly FacturaCalculatorService $calculator
     ) {
     }
 
     public function emitirFactura(Request $request): JsonResponse
     {
+        $request->validate([
+            'firma' => ['required', 'file'],
+            'password' => ['required', 'string'],
+            'payload' => ['required', 'json'],
+        ]);
+
+        $payloadData = json_decode($request->input('payload'), true);
+
         $rules = [
             'emisor_id' => ['required', 'integer', 'exists:emisores,id'],
             'establecimiento_id' => ['required', 'integer', 'exists:establecimientos,id'],
@@ -55,9 +58,9 @@ class FacturacionController extends Controller
             'detalles.*.impuesto.codigo' => ['nullable', 'numeric'],
         ];
 
-        $validator = Validator::make($request->all(), $rules);
-        $validator->after(function ($v) use ($request) {
-            $cliente = $request->input('cliente', []);
+        $validator = Validator::make($payloadData, $rules);
+        $validator->after(function ($v) use ($payloadData) {
+            $cliente = $payloadData['cliente'] ?? [];
             $tipo = strtoupper((string) ($cliente['tipo_identificacion'] ?? ''));
             $id = (string) ($cliente['identificacion'] ?? '');
 
@@ -88,6 +91,8 @@ class FacturacionController extends Controller
         }
 
         $data = $validator->validated();
+        
+        $pathFirma = $request->file('firma')->store('firmas_temp', 'local');
         $detalles = $this->resolverImpuestosDetalle($data['detalles']);
         if ($detalles === null) {
             return response()->json([
@@ -158,7 +163,7 @@ class FacturacionController extends Controller
                 'total_iva' => $calculo['totales']['total_iva'],
                 'total_impuestos' => $calculo['totales']['total_iva'],
                 'total' => $calculo['totales']['importe_total'],
-                'estado_sri' => 'CREADA',
+                'estado_sri' => 'PROCESANDO',
                 'ambiente' => 'PRUEBAS',
                 'tipo_emision' => 'NORMAL',
             ]);
@@ -201,77 +206,22 @@ class FacturacionController extends Controller
                 ]);
             }
 
-            $comprobante->load([
-                'company',
-                'cliente',
-                'establecimiento',
-                'detalles.impuestos.tipoImpuesto',
-                'impuestos.tipoImpuesto',
-            ]);
-
-            $xmlData = $this->xmlService->generarXmlFactura($comprobante);
-            $comprobante->clave_acceso = $xmlData['clave_acceso'];
-            $comprobante->save();
-
-            $xmlFirmado = $this->signatureService->firmarXml(
-                $xmlData['xml'],
-                env('SRI_FIRMA_PATH', ''),
-                env('SRI_FIRMA_PASSWORD', '')
-            );
-
-            $comprobante->estado_sri = 'FIRMADA';
-            $comprobante->save();
-
             return [
-                'comprobante' => $comprobante,
-                'xml_firmado' => $xmlFirmado,
+                'comprobante_id' => $comprobante->id,
+                'secuencial' => $secuencialData['secuencial'],
+                'secuencial_formateado' => $secuencialData['secuencial_formateado'],
             ];
         });
 
-        /** @var Comprobante $comprobante */
-        $comprobante = $transactionResult['comprobante'];
-        $xmlFirmado = $transactionResult['xml_firmado'];
-
-        $recepcion = $this->soapService->enviarComprobante($xmlFirmado);
-        if (!($recepcion['success'] ?? false) || ($recepcion['estado'] ?? '') !== 'RECIBIDA') {
-            $comprobante->estado_sri = 'RECHAZADA';
-            $comprobante->save();
-
-            return response()->json([
-                'success' => false,
-                'estado' => $recepcion['estado'] ?? 'RECHAZADA',
-                'errores' => $recepcion['errores'] ?? [],
-            ], 422);
-        }
-
-        $comprobante->estado_sri = 'ENVIADA';
-        $comprobante->save();
-
-        $autorizacion = $this->soapService->autorizarComprobante($comprobante->clave_acceso);
-        if ($autorizacion['success'] ?? false) {
-            $comprobante->estado_sri = 'AUTORIZADA';
-            $comprobante->numero_autorizacion = $autorizacion['numero_autorizacion'] ?? $comprobante->clave_acceso;
-            $comprobante->fecha_autorizacion = $autorizacion['fecha_autorizacion'] ?? null;
-            $comprobante->xml_autorizado = $autorizacion['xml_autorizado'] ?? null;
-            $comprobante->save();
-
-            return response()->json([
-                'success' => true,
-                'estado' => 'AUTORIZADA',
-                'clave_acceso' => $comprobante->clave_acceso,
-                'numero_autorizacion' => $comprobante->numero_autorizacion,
-                'fecha_autorizacion' => $comprobante->fecha_autorizacion,
-            ]);
-        }
-
-        $comprobante->estado_sri = $autorizacion['estado'] ?? 'DEVUELTA';
-        $comprobante->save();
+        ProcesarFacturaSriJob::dispatch($transactionResult['comprobante_id'], $pathFirma, $request->input('password'))->afterCommit();
 
         return response()->json([
-            'success' => false,
-            'estado' => $autorizacion['estado'] ?? 'DEVUELTA',
-            'errores' => $autorizacion['errores'] ?? [],
-        ], 422);
+            'success' => true,
+            'estado' => 'PROCESANDO',
+            'comprobante_id' => $transactionResult['comprobante_id'],
+            'secuencial' => $transactionResult['secuencial'],
+            'secuencial_formateado' => $transactionResult['secuencial_formateado'],
+        ], 202);
     }
 
     private function buildSubtotales(array $detalles): array
