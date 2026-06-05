@@ -12,6 +12,7 @@ use App\Http\Controllers\SuscripcionController;
 use App\Http\Controllers\TipoImpuestoController;
 use App\Http\Controllers\TipoRetencionController;
 use App\Http\Controllers\Api\CompanyDeletionController;
+use App\Http\Controllers\FacturacionController;
 
 //rutas para inicio y registro de sesion
 Route::post('/register', [AuthController::class, 'register']);
@@ -159,6 +160,9 @@ Route::post('/companies/{company}/logo', [LogoController::class, 'store'])->midd
 
 // Establecimiento logo routes
 Route::get('/emisores/{id}/establecimientos/{est}/logo-file', [LogoController::class, 'establecimientos_file'])->name('establecimientos.logo.file');
+
+// Ruta para emitir la factura electronica
+Route::post('/facturacion/emitir', [FacturacionController::class, 'emitirFactura']);
 
 
 

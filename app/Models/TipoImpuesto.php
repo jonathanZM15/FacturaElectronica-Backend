@@ -20,7 +20,8 @@ class TipoImpuesto extends Model
     protected $fillable = [
         'tipo_impuesto',
         'tipo_tarifa',
-        'codigo',
+        'codigo_impuesto',
+        'codigo_porcentaje',
         'nombre',
         'valor_tarifa',
         'estado',
@@ -32,7 +33,8 @@ class TipoImpuesto extends Model
      * The attributes that should be cast.
      */
     protected $casts = [
-        'codigo' => 'integer',
+        'codigo_impuesto' => 'integer',
+        'codigo_porcentaje' => 'integer',
         'valor_tarifa' => 'decimal:2',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',

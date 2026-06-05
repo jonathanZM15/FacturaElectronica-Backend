@@ -67,6 +67,16 @@ class Company extends Model
         return $this->hasMany(User::class, 'emisor_id');
     }
 
+    public function clientes()
+    {
+        return $this->hasMany(Cliente::class, 'emisor_id');
+    }
+
+    public function comprobantes()
+    {
+        return $this->hasMany(Comprobante::class, 'emisor_id');
+    }
+
     /**
      * Relación con los logs de eliminación
      */

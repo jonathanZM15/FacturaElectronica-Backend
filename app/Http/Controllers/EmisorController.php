@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use Carbon\Carbon;
+use App\Services\EcuadorIdentificationValidator;
 
 class EmisorController extends Controller
 {
@@ -563,107 +564,11 @@ class EmisorController extends Controller
     }
 
     /**
-     * Validate RUC according to Ecuador SRI rules (basic implementation).
-     * Supports natural persons (third digit 0-5), public (6) and private (9) companies.
+     * Validate RUC according to Ecuador SRI rules (strict implementation).
      */
     private function validateRucSRI(string $ruc): bool
     {
-        $ruc = preg_replace('/\D/', '', $ruc);
-        $len = strlen($ruc);
-        if ($len < 10) return false;
-
-        $third = intval($ruc[2]);
-
-        if ($third >= 0 && $third < 6) {
-            // natural person: validate cédula (first 10 digits)
-            $cedula = substr($ruc, 0, 10);
-            if (!$this->validateCedula($cedula)) return false;
-            if ($len == 10) return true;
-            if ($len == 13) {
-                $suffix = intval(substr($ruc, 10, 3));
-                return $suffix > 0; // common suffix like 001
-            }
-            return false;
-        }
-
-        if ($third == 6) {
-            // public companies
-            return $this->validatePublicCompany($ruc);
-        }
-
-        if ($third == 9) {
-            // private companies
-            return $this->validatePrivateCompany($ruc);
-        }
-
-        return false;
-    }
-
-    private function validateCedula(string $cedula): bool
-    {
-        if (strlen($cedula) !== 10) return false;
-        if (!ctype_digit($cedula)) return false;
-
-        $province = intval(substr($cedula, 0, 2));
-        if ($province < 1 || $province > 24) return false;
-        // Ecuador cédula algorithm: multiply digits by coefficients, if product>=10 subtract 9,
-        // sum and compute check digit via modulo 10.
-        $coeff = [2,1,2,1,2,1,2,1,2];
-        $sum = 0;
-        for ($i = 0; $i < 9; $i++) {
-            $v = intval($cedula[$i]) * $coeff[$i];
-            if ($v >= 10) $v -= 9;
-            $sum += $v;
-        }
-        $mod = $sum % 10;
-        $check = $mod === 0 ? 0 : 10 - $mod;
-        return $check === intval($cedula[9]);
-    }
-
-    private function validatePublicCompany(string $ruc): bool
-    {
-        $ruc = preg_replace('/\D/', '', $ruc);
-        if (strlen($ruc) < 9) return false;
-        if (!ctype_digit($ruc)) return false;
-
-        $coeff = [3,2,7,6,5,4,3,2];
-        $sum = 0;
-        for ($i = 0; $i < 8; $i++) {
-            $sum += intval($ruc[$i]) * $coeff[$i];
-        }
-        $mod = $sum % 11;
-        $check = $mod == 0 ? 0 : 11 - $mod;
-        if ($check == 10) return false;
-        if ($check != intval($ruc[8])) return false;
-
-        if (strlen($ruc) == 13) {
-            $suffix = intval(substr($ruc, 9, 4));
-            return $suffix > 0;
-        }
-        return true;
-    }
-
-    /**
-     * Validate RUC for private companies (third digit = 9) using Ecuador SRI rules.
-     * Validates structural format without strict check digit verification,
-     * as the SRI may accept RUCs that are structurally valid even if check digit calculation differs.
-     */
-    private function validatePrivateCompany(string $ruc): bool
-    {
-        $ruc = preg_replace('/\D/', '', $ruc);
-        // Private company RUC must be 13 digits
-        if (strlen($ruc) !== 13) return false;
-        if (!ctype_digit($ruc)) return false;
-
-        // Third digit must be 9
-        if ($ruc[2] !== '9') return false;
-
-        // Last three digits must be 001
-        if (substr($ruc, 10, 3) !== '001') return false;
-
-        // Structural validation passed - accept the RUC
-        // The SRI may accept RUCs that pass structural validation even if check digit calculation differs
-        return true;
+        return EcuadorIdentificationValidator::validateRuc($ruc);
     }
 
     /**
