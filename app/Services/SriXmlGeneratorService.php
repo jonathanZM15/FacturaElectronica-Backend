@@ -23,14 +23,14 @@ class SriXmlGeneratorService
         $codigoNumerico = $this->padLeft((string) ($comprobante->secuencial ?? random_int(1, 99999999)), 8);
         $tipoEmision = '1';
 
-        $claveAcceso = $this->generarClaveAcceso(
+        $claveAcceso = $comprobante->clave_acceso ?: (new SriClaveAccesoService())->generarFactura(
             $fechaClave,
-            $tipoComprobante,
             $ruc,
             $ambiente,
             $serie,
             $secuencial,
             $codigoNumerico,
+            $tipoComprobante,
             $tipoEmision
         );
 

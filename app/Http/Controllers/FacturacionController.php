@@ -10,6 +10,8 @@ use App\Models\Establecimiento;
 use App\Models\PuntoEmision;
 use App\Models\TipoImpuesto;
 use App\Jobs\ProcesarFacturaSriJob;
+use App\Jobs\ConsultarAutorizacionSriJob;
+use Illuminate\Support\Facades\Crypt;
 use App\Services\EcuadorIdentificationValidator;
 use App\Services\FacturaCalculatorService;
 use Illuminate\Http\JsonResponse;
@@ -28,7 +30,7 @@ class FacturacionController extends Controller
     public function emitirFactura(Request $request): JsonResponse
     {
         $request->validate([
-            'firma' => ['required', 'file'],
+            'firma' => ['required', 'file', 'extensions:p12,pfx'],
             'password' => ['required', 'string'],
             'payload' => ['required', 'json'],
         ]);
@@ -92,7 +94,7 @@ class FacturacionController extends Controller
 
         $data = $validator->validated();
         
-        $pathFirma = $request->file('firma')->store('firmas_temp', 'local');
+        $pathFirma = $request->file('firma')->store('sri/certificados', 'local');
         $detalles = $this->resolverImpuestosDetalle($data['detalles']);
         if ($detalles === null) {
             return response()->json([
@@ -163,7 +165,7 @@ class FacturacionController extends Controller
                 'total_iva' => $calculo['totales']['total_iva'],
                 'total_impuestos' => $calculo['totales']['total_iva'],
                 'total' => $calculo['totales']['importe_total'],
-                'estado_sri' => 'PROCESANDO',
+                'estado_sri' => 'BORRADOR',
                 'ambiente' => 'PRUEBAS',
                 'tipo_emision' => 'NORMAL',
             ]);
@@ -213,7 +215,11 @@ class FacturacionController extends Controller
             ];
         });
 
-        ProcesarFacturaSriJob::dispatch($transactionResult['comprobante_id'], $pathFirma, $request->input('password'))->afterCommit();
+        ProcesarFacturaSriJob::dispatch(
+            $transactionResult['comprobante_id'],
+            $pathFirma,
+            Crypt::encryptString($request->input('password'))
+        )->afterCommit();
 
         return response()->json([
             'success' => true,
@@ -222,6 +228,55 @@ class FacturacionController extends Controller
             'secuencial' => $transactionResult['secuencial'],
             'secuencial_formateado' => $transactionResult['secuencial_formateado'],
         ], 202);
+    }
+
+    public function estadoComprobante(Comprobante $comprobante): JsonResponse
+    {
+        return response()->json([
+            'comprobante_id' => $comprobante->id,
+            'clave_acceso' => $comprobante->clave_acceso,
+            'estado_sri' => $comprobante->estado_sri,
+            'estado_recepcion' => $comprobante->sri_estado_recepcion,
+            'estado_autorizacion' => $comprobante->sri_estado_autorizacion,
+            'numero_autorizacion' => $comprobante->numero_autorizacion,
+            'fecha_autorizacion' => $comprobante->fecha_autorizacion,
+            'ultimo_error_sri' => $comprobante->ultimo_error_sri,
+            'intentos_envio' => $comprobante->sri_intentos_envio,
+            'intentos_autorizacion' => $comprobante->sri_intentos_autorizacion,
+            'firmado_en' => $comprobante->firmado_en,
+            'enviado_en' => $comprobante->enviado_en,
+            'recibido_en' => $comprobante->recibido_en,
+            'autorizado_en' => $comprobante->autorizado_en,
+            'logs' => $comprobante->sriLogs()->latest()->take(20)->get(),
+        ]);
+    }
+
+    public function reintentarProcesamiento(Comprobante $comprobante): JsonResponse
+    {
+        if (in_array($comprobante->estado_sri, ['AUTORIZADO'], true)) {
+            return response()->json([
+                'message' => 'El comprobante ya fue autorizado y no requiere reintento.',
+            ], 409);
+        }
+
+        if (!$comprobante->clave_acceso) {
+            return response()->json([
+                'message' => 'El comprobante no tiene clave de acceso generada; debe reemitirse desde cero.',
+            ], 422);
+        }
+
+        if (!empty($comprobante->xml_firmado)) {
+            ConsultarAutorizacionSriJob::dispatch($comprobante->id)->afterCommit();
+
+            return response()->json([
+                'message' => 'Se reprogramo la consulta de autorizacion SRI.',
+                'comprobante_id' => $comprobante->id,
+            ], 202);
+        }
+
+        return response()->json([
+            'message' => 'El comprobante aun no tiene XML firmado; vuelva a emitirlo para reiniciar el flujo.',
+        ], 422);
     }
 
     private function buildSubtotales(array $detalles): array

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\SriEstadoComprobante;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -42,11 +43,30 @@ class Comprobante extends Model
         'xml_autorizado',
         'ambiente',
         'tipo_emision',
+        'xml_generado',
+        'xml_firmado',
+        'ultima_peticion_recepcion',
+        'ultima_respuesta_recepcion',
+        'ultima_peticion_autorizacion',
+        'ultima_respuesta_autorizacion',
+        'ultimo_error_sri',
+        'sri_estado_recepcion',
+        'sri_estado_autorizacion',
+        'sri_intentos_envio',
+        'sri_intentos_autorizacion',
+        'firmado_en',
+        'enviado_en',
+        'recibido_en',
+        'autorizado_en',
     ];
 
     protected $casts = [
         'fecha_emision' => 'date',
         'fecha_autorizacion' => 'datetime',
+        'firmado_en' => 'datetime',
+        'enviado_en' => 'datetime',
+        'recibido_en' => 'datetime',
+        'autorizado_en' => 'datetime',
         'subtotal_sin_impuestos' => 'decimal:2',
         'subtotal_iva_0' => 'decimal:2',
         'subtotal_iva' => 'decimal:2',
@@ -60,6 +80,13 @@ class Comprobante extends Model
         'propina' => 'decimal:2',
         'total' => 'decimal:2',
         'xml_autorizado' => 'string',
+        'xml_generado' => 'string',
+        'xml_firmado' => 'string',
+        'ultima_peticion_recepcion' => 'string',
+        'ultima_respuesta_recepcion' => 'string',
+        'ultima_peticion_autorizacion' => 'string',
+        'ultima_respuesta_autorizacion' => 'string',
+        'ultimo_error_sri' => 'string',
     ];
 
     public function company()
@@ -90,5 +117,10 @@ class Comprobante extends Model
     public function impuestos()
     {
         return $this->hasMany(ComprobanteImpuesto::class, 'comprobante_id');
+    }
+
+    public function sriLogs()
+    {
+        return $this->hasMany(ComprobanteSriLog::class, 'comprobante_id');
     }
 }
