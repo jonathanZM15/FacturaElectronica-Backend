@@ -250,7 +250,7 @@ class SriXmlGeneratorService
         if ($tipo === 'EXTERIOR') {
             return '08';
         }
-        if ($tipo === 'CONSUMIDOR_FINAL') {
+        if ($tipo === 'CONSUMIDOR_FINAL' || $tipo === '07') {
             return '07';
         }
 

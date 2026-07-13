@@ -2,33 +2,29 @@
 
 namespace App\Services;
 
+use App\Exceptions\SriFirmaException;
 use DOMDocument;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Process;
 use RobRichards\XMLSecLibs\XMLSecurityDSig;
 use RobRichards\XMLSecLibs\XMLSecurityKey;
 
 class SriSignatureService
 {
+    /**
+     * Verifica que el P12 sea legible con la contraseña indicada (sin firmar XML).
+     */
+    public function verificarP12(string $rutaFirmaP12, string $passwordFirma): void
+    {
+        $this->abrirPkcs12DesdeArchivo($rutaFirmaP12, $passwordFirma);
+    }
+
     public function firmarXml(string $xmlPuro, string $rutaFirmaP12, string $passwordFirma): string
     {
-        if (!is_file($rutaFirmaP12)) {
-            throw new \RuntimeException('Archivo P12 no encontrado.');
-        }
+        $certs = $this->abrirPkcs12DesdeArchivo($rutaFirmaP12, $passwordFirma);
 
-        $p12 = file_get_contents($rutaFirmaP12);
-        if ($p12 === false) {
-            throw new \RuntimeException('No se pudo leer el archivo P12.');
-        }
-
-        $certs = [];
-        if (!openssl_pkcs12_read($p12, $certs, $passwordFirma)) {
-            throw new \RuntimeException('No se pudo abrir el P12. Verifica la clave.');
-        }
-
-        $privateKey = $certs['pkey'] ?? null;
-        $publicCert = $certs['cert'] ?? null;
-        if (!$privateKey || !$publicCert) {
-            throw new \RuntimeException('El P12 no contiene certificado o llave privada.');
-        }
+        $privateKey = $certs['pkey'];
+        $publicCert = $certs['cert'];
 
         $dom = new DOMDocument('1.0', 'UTF-8');
         $dom->preserveWhiteSpace = false;
@@ -70,6 +66,218 @@ class SriSignatureService
         $dsig->appendSignature($dom->documentElement);
 
         return $dom->saveXML();
+    }
+
+    private function abrirPkcs12DesdeArchivo(string $rutaFirmaP12, string $passwordFirma): array
+    {
+        if (!is_file($rutaFirmaP12)) {
+            throw new SriFirmaException('Archivo P12 no encontrado.');
+        }
+
+        $p12 = file_get_contents($rutaFirmaP12);
+        if ($p12 === false || $p12 === '') {
+            throw new SriFirmaException('No se pudo leer el archivo P12 o está vacío.');
+        }
+
+        $password = $this->normalizarPassword($passwordFirma);
+
+        Log::info('Intentando abrir certificado P12.', [
+            'ruta' => $rutaFirmaP12,
+            'tamanio_bytes' => strlen($p12),
+            'longitud_clave' => strlen($password),
+            'openssl_version' => defined('OPENSSL_VERSION_TEXT') ? OPENSSL_VERSION_TEXT : 'desconocida',
+        ]);
+
+        return $this->abrirPkcs12($p12, $password, $rutaFirmaP12);
+    }
+
+    private function normalizarPassword(string $password): string
+    {
+        return trim($password);
+    }
+
+    private function abrirPkcs12(string $p12Binary, string $password, ?string $rutaParaCli = null): array
+    {
+        $certs = [];
+        if (openssl_pkcs12_read($p12Binary, $certs, $password)) {
+            Log::info('P12 abierto correctamente (OpenSSL nativo).');
+
+            return $this->validarCertificados($certs);
+        }
+
+        $errors = $this->collectOpenSslErrors();
+        Log::warning('openssl_pkcs12_read falló (intento estándar).', ['openssl_errors' => $errors]);
+
+        $certs = [];
+        $legacyConfig = $this->createLegacyOpenSslConfig();
+        if ($legacyConfig !== null) {
+            $previousConf = getenv('OPENSSL_CONF');
+            putenv('OPENSSL_CONF=' . $legacyConfig);
+
+            try {
+                $result = openssl_pkcs12_read($p12Binary, $certs, $password);
+            } finally {
+                if ($previousConf !== false && $previousConf !== '') {
+                    putenv('OPENSSL_CONF=' . $previousConf);
+                } else {
+                    putenv('OPENSSL_CONF');
+                }
+
+                @unlink($legacyConfig);
+            }
+
+            if ($result) {
+                Log::info('P12 abierto con proveedor legacy de OpenSSL.');
+
+                return $this->validarCertificados($certs);
+            }
+
+            $errors = array_merge($errors, $this->collectOpenSslErrors());
+            Log::warning('openssl_pkcs12_read falló con proveedor legacy.', ['openssl_errors' => $errors]);
+        }
+
+        if ($rutaParaCli !== null) {
+            $cliCerts = $this->abrirPkcs12ViaCli($rutaParaCli, $password);
+            if ($cliCerts !== null) {
+                Log::info('P12 abierto mediante CLI de OpenSSL (-legacy).');
+
+                return $cliCerts;
+            }
+        }
+
+        $hint = $this->buildErrorHint($errors);
+        throw new SriFirmaException('No se pudo abrir el P12. Verifica la clave.' . $hint);
+    }
+
+    private function validarCertificados(array $certs): array
+    {
+        $privateKey = $certs['pkey'] ?? null;
+        $publicCert = $certs['cert'] ?? null;
+        if (!$privateKey || !$publicCert) {
+            throw new SriFirmaException('El P12 no contiene certificado o llave privada.');
+        }
+
+        return $certs;
+    }
+
+    private function createLegacyOpenSslConfig(): ?string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'openssl-legacy-');
+        if ($path === false) {
+            return null;
+        }
+
+        $content = <<<'CNF'
+openssl_conf = openssl_init
+
+[openssl_init]
+providers = provider_sect
+
+[provider_sect]
+default = default_sect
+legacy = legacy_sect
+
+[default_sect]
+activate = 1
+
+[legacy_sect]
+activate = 1
+CNF;
+
+        if (file_put_contents($path, $content) === false) {
+            @unlink($path);
+
+            return null;
+        }
+
+        return $path;
+    }
+
+    private function abrirPkcs12ViaCli(string $p12Path, string $password): ?array
+    {
+        $opensslBin = $this->resolveOpenSslBinary();
+        if ($opensslBin === null) {
+            Log::warning('No se encontró binario openssl en PATH para fallback P12.');
+
+            return null;
+        }
+
+        try {
+            $result = Process::timeout(30)->run([
+                $opensslBin,
+                'pkcs12',
+                '-in', $p12Path,
+                '-nodes',
+                '-passin', 'pass:' . $password,
+                '-legacy',
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('CLI OpenSSL no disponible para P12.', ['error' => $e->getMessage()]);
+
+            return null;
+        }
+
+        if (!$result->successful()) {
+            Log::warning('CLI OpenSSL pkcs12 falló.', [
+                'exit_code' => $result->exitCode(),
+                'stderr' => $result->errorOutput(),
+            ]);
+
+            return null;
+        }
+
+        $pemBundle = $result->output();
+        $privateKey = null;
+        $publicCert = null;
+
+        if (preg_match('/-----BEGIN (?:RSA )?PRIVATE KEY-----.*?-----END (?:RSA )?PRIVATE KEY-----/s', $pemBundle, $match)) {
+            $privateKey = $match[0];
+        }
+
+        if (preg_match('/-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----/s', $pemBundle, $match)) {
+            $publicCert = $match[0];
+        }
+
+        if (!$privateKey || !$publicCert) {
+            return null;
+        }
+
+        return ['pkey' => $privateKey, 'cert' => $publicCert];
+    }
+
+    private function resolveOpenSslBinary(): ?string
+    {
+        foreach (['openssl', 'openssl.exe'] as $candidate) {
+            try {
+                $check = Process::run([$candidate, 'version']);
+                if ($check->successful()) {
+                    return $candidate;
+                }
+            } catch (\Throwable) {
+                continue;
+            }
+        }
+
+        return null;
+    }
+
+    private function collectOpenSslErrors(): array
+    {
+        $errors = [];
+        while ($msg = openssl_error_string()) {
+            $errors[] = $msg;
+        }
+
+        return $errors;
+    }
+
+    private function buildErrorHint(array $errors): string
+    {
+        if ($errors === []) {
+            return '';
+        }
+
+        return ' Detalle OpenSSL: ' . implode('; ', array_slice($errors, -3));
     }
 
     private function buildXadesObject(
@@ -136,12 +344,14 @@ class SriSignatureService
     private function certDigest(string $pem): string
     {
         $der = $this->pemToDer($pem);
+
         return base64_encode(hash('sha256', $der, true));
     }
 
     private function pemToDer(string $pem): string
     {
         $clean = preg_replace('/-----BEGIN CERTIFICATE-----|-----END CERTIFICATE-----|\s+/', '', $pem);
+
         return base64_decode($clean) ?: '';
     }
 
@@ -151,6 +361,7 @@ class SriSignatureService
         foreach ($issuer as $key => $value) {
             $parts[] = $key . '=' . $value;
         }
+
         return implode(', ', $parts);
     }
 }

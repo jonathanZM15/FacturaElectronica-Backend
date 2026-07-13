@@ -9,21 +9,26 @@ use App\Models\ComprobanteImpuesto;
 use App\Models\Establecimiento;
 use App\Models\PuntoEmision;
 use App\Models\TipoImpuesto;
+use App\Exceptions\SriFirmaException;
 use App\Jobs\ProcesarFacturaSriJob;
 use App\Jobs\ConsultarAutorizacionSriJob;
 use Illuminate\Support\Facades\Crypt;
 use App\Services\EcuadorIdentificationValidator;
 use App\Services\FacturaCalculatorService;
+use App\Services\SriSignatureService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 
 class FacturacionController extends Controller
 {
     public function __construct(
-        private readonly FacturaCalculatorService $calculator
+        private readonly FacturaCalculatorService $calculator,
+        private readonly SriSignatureService $signatureService
     ) {
     }
 
@@ -93,8 +98,45 @@ class FacturacionController extends Controller
         }
 
         $data = $validator->validated();
-        
-        $pathFirma = $request->file('firma')->store('sri/certificados', 'local');
+
+        $archivoFirma = $request->file('firma');
+        $passwordFirma = trim((string) $request->input('password'));
+        $extension = strtolower($archivoFirma->getClientOriginalExtension() ?: 'p12');
+        $nombreAlmacenado = uniqid('cert_', true) . '.' . $extension;
+        $disk = config('sri.certificate_disk', 'local');
+
+        Log::info('Recibiendo certificado P12 para emision SRI.', [
+            'nombre_original' => $archivoFirma->getClientOriginalName(),
+            'extension' => $extension,
+            'mime' => $archivoFirma->getMimeType(),
+            'tamanio_bytes' => $archivoFirma->getSize(),
+            'longitud_clave' => strlen($passwordFirma),
+        ]);
+
+        $pathFirma = $archivoFirma->storeAs('sri/certificados', $nombreAlmacenado, $disk);
+        $rutaAbsoluta = Storage::disk($disk)->path($pathFirma);
+
+        Log::info('Certificado P12 almacenado temporalmente.', [
+            'path_relativo' => $pathFirma,
+            'ruta_absoluta' => $rutaAbsoluta,
+            'bytes_en_disco' => is_file($rutaAbsoluta) ? filesize($rutaAbsoluta) : null,
+        ]);
+
+        try {
+            $this->signatureService->verificarP12($rutaAbsoluta, $passwordFirma);
+        } catch (SriFirmaException $e) {
+            Storage::disk($disk)->delete($pathFirma);
+
+            Log::error('Validacion temprana de P12 fallida.', [
+                'path' => $pathFirma,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => $e->getMessage(),
+                'errors' => ['firma' => [$e->getMessage()]],
+            ], 422);
+        }
         $detalles = $this->resolverImpuestosDetalle($data['detalles']);
         if ($detalles === null) {
             return response()->json([
@@ -218,7 +260,7 @@ class FacturacionController extends Controller
         ProcesarFacturaSriJob::dispatch(
             $transactionResult['comprobante_id'],
             $pathFirma,
-            Crypt::encryptString($request->input('password'))
+            Crypt::encryptString($passwordFirma)
         )->afterCommit();
 
         return response()->json([

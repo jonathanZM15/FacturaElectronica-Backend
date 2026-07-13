@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Enums\SriEstadoComprobante;
+use App\Exceptions\SriFirmaException;
 use App\Models\Comprobante;
 use App\Services\SriComprobanteLifecycleService;
 use App\Services\SriResponseParserService;
@@ -77,6 +78,8 @@ class ProcesarFacturaSriJob implements ShouldQueue
             return;
         }
 
+        $jobSucceeded = false;
+
         try {
             if ($comprobante->estado_sri !== SriEstadoComprobante::PROCESANDO->value) {
                 $comprobante = $lifecycle->transition($comprobante, SriEstadoComprobante::PROCESANDO->value, [
@@ -108,7 +111,16 @@ class ProcesarFacturaSriJob implements ShouldQueue
             }
 
             $rutaAbsoluta = Storage::disk(config('sri.certificate_disk'))->path($this->certificatePath);
-            $password = Crypt::decryptString($this->encryptedPassword);
+            $password = trim(Crypt::decryptString($this->encryptedPassword));
+
+            Log::info('Preparando firma XML del comprobante.', [
+                'comprobante_id' => $comprobante->id,
+                'certificate_path' => $this->certificatePath,
+                'ruta_absoluta' => $rutaAbsoluta,
+                'archivo_existe' => is_file($rutaAbsoluta),
+                'archivo_bytes' => is_file($rutaAbsoluta) ? filesize($rutaAbsoluta) : null,
+                'longitud_clave' => strlen($password),
+            ]);
 
             $xmlFirmado = $signatureService->firmarXml(
                 $xmlData['xml'],
@@ -170,6 +182,23 @@ class ProcesarFacturaSriJob implements ShouldQueue
             ]);
 
             ConsultarAutorizacionSriJob::dispatch($comprobante->id)->delay(now()->addSeconds((int) config('sri.retry_after_seconds')));
+
+            $jobSucceeded = true;
+        } catch (SriFirmaException $e) {
+            $lifecycle->transition($comprobante, SriEstadoComprobante::ERROR_FIRMA->value, [
+                'ultimo_error_sri' => $e->getMessage(),
+            ], [
+                'etapa' => 'firma',
+                'mensaje' => 'Error al abrir o usar el certificado P12.',
+                'detalles' => ['exception' => get_class($e)],
+            ]);
+
+            Log::error('Error de firma al procesar comprobante SRI.', [
+                'comprobante_id' => $comprobante->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            $this->deleteCertificate();
         } catch (Throwable $e) {
             $lifecycle->transition($comprobante, SriEstadoComprobante::ERROR_SISTEMA->value, [
                 'ultimo_error_sri' => $e->getMessage(),
@@ -186,8 +215,8 @@ class ProcesarFacturaSriJob implements ShouldQueue
 
             throw $e;
         } finally {
-            if (Storage::disk(config('sri.certificate_disk'))->exists($this->certificatePath)) {
-                Storage::disk(config('sri.certificate_disk'))->delete($this->certificatePath);
+            if ($jobSucceeded || $this->attempts() >= $this->tries) {
+                $this->deleteCertificate();
             }
 
             optional($lock)->release();
@@ -204,6 +233,11 @@ class ProcesarFacturaSriJob implements ShouldQueue
             'error' => $exception->getMessage(),
         ]);
         
+        $this->deleteCertificate();
+    }
+
+    private function deleteCertificate(): void
+    {
         if (Storage::disk(config('sri.certificate_disk'))->exists($this->certificatePath)) {
             Storage::disk(config('sri.certificate_disk'))->delete($this->certificatePath);
         }
