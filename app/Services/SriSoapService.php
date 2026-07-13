@@ -16,9 +16,8 @@ class SriSoapService
     {
         try {
             $client = $this->buildClient($this->recepcionWsdl());
-            $xmlBase64 = base64_encode($xmlFirmado);
 
-            $response = $client->validarComprobante(['xml' => $xmlBase64]);
+            $response = $client->validarComprobante(['xml' => $xmlFirmado]);
 
             return $this->parser->parseRecepcion($response);
         } catch (SoapFault $e) {

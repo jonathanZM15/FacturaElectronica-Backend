@@ -82,13 +82,42 @@ class SriXmlGeneratorService
         $totalConImpuestos = $dom->createElement('totalConImpuestos');
         $infoFactura->appendChild($totalConImpuestos);
 
-        foreach ($comprobante->impuestos ?? [] as $impuesto) {
+        // Los totales usan las filas resumen; las filas por detalle se emiten dentro de cada item.
+        $impuestosTotales = collect($comprobante->impuestos ?? [])
+            ->filter(fn ($impuesto) => $impuesto->comprobante_detalle_id === null);
+
+        if ($impuestosTotales->isEmpty()) {
+            $impuestosTotales = collect($comprobante->impuestos ?? []);
+        }
+
+        // 1. Consolidar impuestos en un array asociativo
+        $impuestosConsolidados = [];
+        foreach ($impuestosTotales as $impuesto) {
+            $codigo = $this->mapCodigoImpuesto($impuesto);
+            $porcentaje = $this->mapCodigoPorcentaje($impuesto);
+            $key = $codigo . '_' . $porcentaje;
+
+            if (!isset($impuestosConsolidados[$key])) {
+                $impuestosConsolidados[$key] = [
+                    'codigo' => $codigo,
+                    'codigoPorcentaje' => $porcentaje,
+                    'tarifa' => (float) ($impuesto->tarifa ?? 0),
+                    'baseImponible' => 0.0,
+                    'valor' => 0.0
+                ];
+            }
+            $impuestosConsolidados[$key]['baseImponible'] += (float) ($impuesto->base_imponible ?? 0);
+            $impuestosConsolidados[$key]['valor'] += (float) ($impuesto->valor ?? 0);
+        }
+
+        // 2. Crear los nodos a partir de los datos consolidados
+        foreach ($impuestosConsolidados as $imp) {
             $totalImpuesto = $dom->createElement('totalImpuesto');
-            $this->appendText($dom, $totalImpuesto, 'codigo', $this->mapCodigoImpuesto($impuesto));
-            $this->appendText($dom, $totalImpuesto, 'codigoPorcentaje', $this->mapCodigoPorcentaje($impuesto));
-            $this->appendText($dom, $totalImpuesto, 'baseImponible', $this->formatMoney($impuesto->base_imponible ?? 0));
-            $this->appendText($dom, $totalImpuesto, 'tarifa', $this->formatMoney($impuesto->tarifa ?? 0));
-            $this->appendText($dom, $totalImpuesto, 'valor', $this->formatMoney($impuesto->valor ?? 0));
+            $this->appendText($dom, $totalImpuesto, 'codigo', $imp['codigo']);
+            $this->appendText($dom, $totalImpuesto, 'codigoPorcentaje', $imp['codigoPorcentaje']);
+            $this->appendText($dom, $totalImpuesto, 'baseImponible', $this->formatMoney($imp['baseImponible']));
+            $this->appendText($dom, $totalImpuesto, 'tarifa', $this->formatMoney($imp['tarifa']));
+            $this->appendText($dom, $totalImpuesto, 'valor', $this->formatMoney($imp['valor']));
             $totalConImpuestos->appendChild($totalImpuesto);
         }
 
@@ -108,7 +137,10 @@ class SriXmlGeneratorService
 
         foreach ($comprobante->detalles ?? [] as $detalle) {
             $detalleNode = $dom->createElement('detalle');
-            $this->appendText($dom, $detalleNode, 'codigoPrincipal', (string) ($detalle->producto_id ?? ''));
+            $codigo = (string) ($detalle->producto_id ?? '');
+                if (!empty($codigo)) {
+                    $this->appendText($dom, $detalleNode, 'codigoPrincipal', $codigo);
+                }
             $this->appendText($dom, $detalleNode, 'descripcion', $detalle->descripcion ?? '');
             $this->appendText($dom, $detalleNode, 'cantidad', $this->formatCantidad($detalle->cantidad ?? 0));
             $this->appendText($dom, $detalleNode, 'precioUnitario', $this->formatCantidad($detalle->precio_unitario ?? 0));

@@ -7,6 +7,18 @@ use PHPUnit\Framework\TestCase;
 
 class SriSignatureServiceTest extends TestCase
 {
+    public function test_it_normalizes_hexadecimal_x509_serial_numbers_to_decimal(): void
+    {
+        $service = new SriSignatureService();
+        $method = new \ReflectionMethod($service, 'normalizeSerialNumber');
+        $method->setAccessible(true);
+
+        $this->assertSame(
+            '312711217100771915607426795927698173992237136496',
+            $method->invoke($service, '0x36C674B8DA0F7303566BD66BD644F38A3EB1FA70')
+        );
+    }
+
     public function test_it_signs_xml_with_a_pkcs12_certificate(): void
     {
         if (!function_exists('openssl_pkey_new')) {

@@ -35,33 +35,34 @@ class SriSignatureService
         $signedPropsId = 'SignedProperties-' . bin2hex(random_bytes(6));
         $qualifyingPropsId = 'QualifyingProperties-' . bin2hex(random_bytes(6));
 
-        $xades = $this->buildXadesObject($dom, $signatureId, $signedPropsId, $qualifyingPropsId, $publicCert);
-
         $dsig = new XMLSecurityDSig();
         $dsig->setCanonicalMethod(XMLSecurityDSig::C14N);
+        $dsig->sigNode->setAttribute('Id', $signatureId);
+
         $dsig->addReference(
             $dom,
             XMLSecurityDSig::SHA256,
             ['http://www.w3.org/2000/09/xmldsig#enveloped-signature'],
             ['force_uri' => true]
         );
+
+        $xades = $this->buildXadesObject($dsig->sigNode->ownerDocument, $signatureId, $signedPropsId, $qualifyingPropsId, $publicCert);
+        $dsig->sigNode->appendChild($xades['object']);
+
         $dsig->addReference(
             $xades['signedProps'],
             XMLSecurityDSig::SHA256,
-            null,
-            [
-                'uri' => '#' . $signedPropsId,
-                'type' => 'http://uri.etsi.org/01903#SignedProperties',
-            ]
+            [XMLSecurityDSig::C14N],
+            ['overwrite' => false]
         );
+        $this->setReferenceType($dsig->sigNode, '#' . $signedPropsId, 'http://uri.etsi.org/01903#SignedProperties');
 
         $key = new XMLSecurityKey(XMLSecurityKey::RSA_SHA256, ['type' => 'private']);
         $key->loadKey($privateKey, false);
         $dsig->sign($key);
         $dsig->add509Cert($publicCert, true, false, ['issuerSerial' => true]);
 
-        $dsig->sigNode->setAttribute('Id', $signatureId);
-        $dsig->sigNode->appendChild($xades['object']);
+        $this->normalizeX509SerialNumbers($dsig->sigNode);
 
         $dsig->appendSignature($dom->documentElement);
 
@@ -314,7 +315,7 @@ CNF;
         $serialNumber = $parsed['serialNumber'] ?? '';
 
         $this->appendText($dom, $issuerSerial, 'ds:X509IssuerName', $issuerText);
-        $this->appendText($dom, $issuerSerial, 'ds:X509SerialNumber', (string) $serialNumber);
+        $this->appendText($dom, $issuerSerial, 'ds:X509SerialNumber', $this->normalizeSerialNumber((string) $serialNumber));
 
         $cert->appendChild($certDigest);
         $cert->appendChild($issuerSerial);
@@ -363,5 +364,91 @@ CNF;
         }
 
         return implode(', ', $parts);
+    }
+
+    private function normalizeX509SerialNumbers(\DOMNode $node): void
+    {
+        $xpath = new \DOMXPath($node->ownerDocument ?? $node);
+        foreach ($xpath->query('.//*[local-name()="X509SerialNumber"]', $node) as $serialNode) {
+            $serialNode->nodeValue = $this->normalizeSerialNumber($serialNode->textContent);
+        }
+    }
+
+    private function setReferenceType(\DOMNode $signatureNode, string $uri, string $type): void
+    {
+        $xpath = new \DOMXPath($signatureNode->ownerDocument ?? $signatureNode);
+        foreach ($xpath->query('.//*[local-name()="Reference"][@URI="' . $uri . '"]', $signatureNode) as $referenceNode) {
+            $referenceNode->setAttribute('Type', $type);
+        }
+    }
+
+    private function normalizeSerialNumber(string $serial): string
+    {
+        $serial = trim($serial);
+        if ($serial === '') {
+            return '';
+        }
+
+        $hex = $serial;
+        $hasHexPrefix = str_starts_with(strtolower($hex), '0x');
+        if ($hasHexPrefix) {
+            $hex = substr($hex, 2);
+        }
+
+        $hex = str_replace([':', ' '], '', $hex);
+        if ($hex !== '' && ($hasHexPrefix || preg_match('/[a-f]/i', $hex)) && ctype_xdigit($hex)) {
+            return $this->hexToDecimalString($hex);
+        }
+
+        return $serial;
+    }
+
+    private function hexToDecimalString(string $hex): string
+    {
+        $decimal = '0';
+        foreach (str_split(strtolower($hex)) as $digit) {
+            $decimal = $this->decimalMultiplyByInt($decimal, 16);
+            $decimal = $this->decimalAddInt($decimal, hexdec($digit));
+        }
+
+        return ltrim($decimal, '0') ?: '0';
+    }
+
+    private function decimalMultiplyByInt(string $decimal, int $multiplier): string
+    {
+        $carry = 0;
+        $result = '';
+
+        for ($i = strlen($decimal) - 1; $i >= 0; $i--) {
+            $value = ((int) $decimal[$i] * $multiplier) + $carry;
+            $result = ($value % 10) . $result;
+            $carry = intdiv($value, 10);
+        }
+
+        while ($carry > 0) {
+            $result = ($carry % 10) . $result;
+            $carry = intdiv($carry, 10);
+        }
+
+        return ltrim($result, '0') ?: '0';
+    }
+
+    private function decimalAddInt(string $decimal, int $addend): string
+    {
+        $carry = $addend;
+        $result = '';
+
+        for ($i = strlen($decimal) - 1; $i >= 0; $i--) {
+            $value = ((int) $decimal[$i]) + ($carry % 10);
+            $carry = intdiv($carry, 10) + intdiv($value, 10);
+            $result = ($value % 10) . $result;
+        }
+
+        while ($carry > 0) {
+            $result = ($carry % 10) . $result;
+            $carry = intdiv($carry, 10);
+        }
+
+        return ltrim($result, '0') ?: '0';
     }
 }

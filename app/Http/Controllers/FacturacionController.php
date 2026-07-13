@@ -222,7 +222,7 @@ class FacturacionController extends Controller
                     'descuento' => $detalle['descuento'] ?? 0,
                     'subtotal' => $detalle['precio_total_sin_impuesto'],
                 ]);
-
+                
                 $impuesto = $detalle['impuesto'] ?? null;
                 if ($impuesto) {
                     $tarifa = (float) ($impuesto['tarifa'] ?? 0);
