@@ -247,15 +247,36 @@ CNF;
             return null;
         }
 
+        // Preparar el entorno para el proceso CLI: pasar OPENSSL_CONF apuntando
+        // al openssl.cnf del proyecto (con proveedor legacy activado).
+        // Los procesos hijos SÍ heredan variables de entorno, a diferencia del
+        // módulo OpenSSL de PHP que se carga al inicio del proceso.
+        $projectOpensslCnf = base_path('resources/openssl/openssl.cnf');
+        $env = array_merge($_ENV, $_SERVER);
+        if (file_exists($projectOpensslCnf)) {
+            $env['OPENSSL_CONF'] = $projectOpensslCnf;
+        }
+
+        // Resolver la ruta del proveedor legacy (legacy.dll / legacy.so)
+        // En Windows/XAMPP el legacy.dll no está junto al openssl.exe de Apache,
+        // sino en la carpeta extras/ssl de PHP.
+        $legacyProviderPath = $this->resolveLegacyProviderPath();
+
+        $command = [$opensslBin, 'pkcs12', '-in', $p12Path, '-nodes', '-passin', 'pass:' . $password, '-legacy'];
+        if ($legacyProviderPath !== null) {
+            // Pasar -provider-path antes de -legacy para que openssl sepa dónde buscar el .dll
+            $command = [$opensslBin, 'pkcs12', '-in', $p12Path, '-nodes', '-passin', 'pass:' . $password,
+                '-provider-path', $legacyProviderPath,
+                '-provider', 'default',
+                '-provider', 'legacy',
+            ];
+            $env['OPENSSL_MODULES'] = $legacyProviderPath;
+        }
+
         try {
-            $result = Process::timeout(30)->run([
-                $opensslBin,
-                'pkcs12',
-                '-in', $p12Path,
-                '-nodes',
-                '-passin', 'pass:' . $password,
-                '-legacy',
-            ]);
+            $result = Process::timeout(30)
+                ->env($env)
+                ->run($command);
         } catch (\Throwable $e) {
             Log::warning('CLI OpenSSL no disponible para P12.', ['error' => $e->getMessage()]);
 
@@ -270,6 +291,8 @@ CNF;
 
             return null;
         }
+
+
 
         $pemBundle = $result->output();
         $privateKey = null;
@@ -292,6 +315,7 @@ CNF;
 
     private function resolveOpenSslBinary(): ?string
     {
+        // 1. Primero buscar en el PATH del sistema
         foreach (['openssl', 'openssl.exe'] as $candidate) {
             try {
                 $check = Process::run([$candidate, 'version']);
@@ -303,8 +327,78 @@ CNF;
             }
         }
 
+        // 2. Buscar en rutas comunes de Windows (XAMPP, PHP standalone, Git, OpenSSL instalado)
+        $windowsCandidates = [
+            // XAMPP (Apache bundle)
+            'C:\\xampp\\apache\\bin\\openssl.exe',
+            'D:\\xampp\\apache\\bin\\openssl.exe',
+            // XAMPP (PHP folder)
+            'C:\\xampp\\php\\openssl.exe',
+            'D:\\xampp\\php\\openssl.exe',
+            // PHP standalone (chocolatey / winget)
+            'C:\\tools\\php\\openssl.exe',
+            // Git for Windows (incluye openssl)
+            'C:\\Program Files\\Git\\usr\\bin\\openssl.exe',
+            'C:\\Program Files (x86)\\Git\\usr\\bin\\openssl.exe',
+            // OpenSSL instalado directamente
+            'C:\\Program Files\\OpenSSL-Win64\\bin\\openssl.exe',
+            'C:\\Program Files\\OpenSSL-Win32\\bin\\openssl.exe',
+            'C:\\OpenSSL-Win64\\bin\\openssl.exe',
+            'C:\\OpenSSL-Win32\\bin\\openssl.exe',
+            // Junto al binario de PHP actual
+            dirname(PHP_BINARY) . DIRECTORY_SEPARATOR . 'openssl.exe',
+        ];
+
+        foreach ($windowsCandidates as $path) {
+            if (is_file($path)) {
+                try {
+                    $check = Process::run([$path, 'version']);
+                    if ($check->successful()) {
+                        Log::info('openssl.exe encontrado en ruta alternativa.', ['path' => $path]);
+                        return $path;
+                    }
+                } catch (\Throwable) {
+                    continue;
+                }
+            }
+        }
+
         return null;
     }
+
+    /**
+     * Resuelve el directorio que contiene el proveedor legacy (legacy.dll / legacy.so)
+     * para pasarlo al CLI openssl via -provider-path.
+     * Necesario en Windows/XAMPP donde el openssl.exe de Apache no incluye el módulo legacy.
+     */
+    private function resolveLegacyProviderPath(): ?string
+    {
+        $ext = PHP_OS_FAMILY === 'Windows' ? 'legacy.dll' : 'legacy.so';
+
+        $searchPaths = [
+            // XAMPP PHP extras/ssl (Windows)
+            'C:\\xampp\\php\\extras\\ssl',
+            'D:\\xampp\\php\\extras\\ssl',
+            // Junto al binario PHP actual
+            dirname(PHP_BINARY) . DIRECTORY_SEPARATOR . 'extras' . DIRECTORY_SEPARATOR . 'ssl',
+            dirname(PHP_BINARY) . DIRECTORY_SEPARATOR . 'ossl-modules',
+            // OpenSSL instalado en sistema (Linux/Mac)
+            '/usr/lib/x86_64-linux-gnu/ossl-modules',
+            '/usr/local/lib/ossl-modules',
+            '/usr/lib/ossl-modules',
+            '/opt/homebrew/lib/ossl-modules',   // Mac M1/M2
+            '/usr/local/opt/openssl/lib/ossl-modules', // Mac Intel
+        ];
+
+        foreach ($searchPaths as $dir) {
+            if (is_file($dir . DIRECTORY_SEPARATOR . $ext)) {
+                return $dir;
+            }
+        }
+
+        return null;
+    }
+
 
     private function collectOpenSslErrors(): array
     {
