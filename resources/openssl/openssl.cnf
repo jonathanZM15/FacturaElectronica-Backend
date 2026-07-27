@@ -1,0 +1,22 @@
+﻿# OpenSSL configuration file with legacy provider enabled.
+# This file is bundled with the project to allow reading old PKCS#12
+# certificates (RC2/SHA1-MAC based) that cannot be opened with
+# the default OpenSSL 3.x configuration.
+#
+# Referenced automatically via OPENSSL_CONF in bootstrap/app.php
+# or via the SRI_OPENSSL_CNF variable in .env
+
+openssl_conf = openssl_init
+
+[openssl_init]
+providers = provider_sect
+
+[provider_sect]
+default = default_sect
+legacy = legacy_sect
+
+[default_sect]
+activate = 1
+
+[legacy_sect]
+activate = 1

@@ -114,8 +114,27 @@ class SriSignatureService
             'openssl_version' => defined('OPENSSL_VERSION_TEXT') ? OPENSSL_VERSION_TEXT : 'desconocida',
         ]);
 
-        return $this->abrirPkcs12($p12, $password, $rutaFirmaP12);
+        // Asegurar que OPENSSL_CONF apunte al config del proyecto (con proveedor legacy)
+        // para poder abrir certificados P12 antiguos (RC2/SHA1-MAC) en OpenSSL 3.x.
+        // Este archivo viaja con el proyecto y no requiere configuración a nivel de sistema.
+        $projectOpensslCnf = base_path('resources/openssl/openssl.cnf');
+        $previousConf = getenv('OPENSSL_CONF');
+        if (file_exists($projectOpensslCnf) && (!$previousConf || $previousConf === '')) {
+            putenv('OPENSSL_CONF=' . $projectOpensslCnf);
+        }
+
+        try {
+            return $this->abrirPkcs12($p12, $password, $rutaFirmaP12);
+        } finally {
+            // Restaurar siempre el valor original de OPENSSL_CONF
+            if ($previousConf !== false && $previousConf !== '') {
+                putenv('OPENSSL_CONF=' . $previousConf);
+            } else {
+                putenv('OPENSSL_CONF');
+            }
+        }
     }
+
 
     private function normalizarPassword(string $password): string
     {
