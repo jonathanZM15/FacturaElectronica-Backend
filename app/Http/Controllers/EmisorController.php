@@ -395,13 +395,16 @@ class EmisorController extends Controller
         // there are any records with estado = 'AUTORIZADO' for this company, disallow.
         $rucEditable = true;
         try {
-            if (Schema::hasTable('comprobantes')) {
-                $exists = DB::table('comprobantes')
-                    ->where('company_id', $company->id)
-                    ->where('estado', 'AUTORIZADO')
-                    ->exists();
-                if ($exists) $rucEditable = false;
-            }
+                $emisorCol = Schema::hasColumn('comprobantes', 'emisor_id') ? 'emisor_id' : (Schema::hasColumn('comprobantes', 'company_id') ? 'company_id' : null);
+                $estadoCol = Schema::hasColumn('comprobantes', 'estado_sri') ? 'estado_sri' : (Schema::hasColumn('comprobantes', 'estado') ? 'estado' : null);
+                if ($emisorCol && $estadoCol) {
+                    $exists = DB::table('comprobantes')
+                        ->where($emisorCol, $company->id)
+                        ->where($estadoCol, 'AUTORIZADO')
+                        ->exists();
+                    if ($exists) $rucEditable = false;
+                }
+
         } catch (\Exception $e) {
             // If the table doesn't exist or query fails, assume editable (no comprobantes)
             Log::warning('Could not check comprobantes for company '.$company->id.': '.$e->getMessage());

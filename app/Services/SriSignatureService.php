@@ -19,6 +19,9 @@ class SriSignatureService
         try {
             $this->abrirPkcs12DesdeArchivo($rutaFirmaP12, $passwordFirma);
         } catch (SriFirmaException $e) {
+            if (str_contains($e->getMessage(), 'CADUCADO')) {
+                throw $e;
+            }
             if (app()->environment('local', 'testing')) {
                 Log::warning('P12 verification failed but bypassed for local testing.', [
                     'ruta' => $rutaFirmaP12,
@@ -29,6 +32,7 @@ class SriSignatureService
             throw $e;
         }
     }
+
 
     public function firmarXml(string $xmlPuro, string $rutaFirmaP12, string $passwordFirma): string
     {
@@ -52,11 +56,12 @@ class SriSignatureService
             $dsig->sigNode->setAttribute('Id', $signatureId);
 
             $dsig->addReference(
-                $dom,
+                $dom->documentElement,
                 XMLSecurityDSig::SHA256,
                 ['http://www.w3.org/2000/09/xmldsig#enveloped-signature'],
-                ['force_uri' => true]
+                ['id_name' => 'id', 'overwrite' => false]
             );
+
 
             $xades = $this->buildXadesObject($dsig->sigNode->ownerDocument, $signatureId, $signedPropsId, $qualifyingPropsId, $publicCert);
             $dsig->sigNode->appendChild($xades['object']);
@@ -67,7 +72,8 @@ class SriSignatureService
                 [XMLSecurityDSig::C14N],
                 ['overwrite' => false]
             );
-            $this->setReferenceType($dsig->sigNode, '#' . $signedPropsId, 'http://uri.etsi.org/01903#SignedProperties');
+            $this->setReferenceType($dsig->sigNode, '#' . $signedPropsId, 'http://uri.etsi.org/01903/v1.3.2#SignedProperties');
+
 
             $key = new XMLSecurityKey(XMLSecurityKey::RSA_SHA256, ['type' => 'private']);
             $key->loadKey($privateKey, false);
@@ -80,6 +86,9 @@ class SriSignatureService
 
             return $dom->saveXML();
         } catch (\Throwable $e) {
+            if (str_contains($e->getMessage(), 'CADUCADO')) {
+                throw $e;
+            }
             if (app()->environment('local', 'testing')) {
                 Log::warning('Signing XML failed. Returning unsigned XML for local testing.', [
                     'ruta' => $rutaFirmaP12,
@@ -87,6 +96,7 @@ class SriSignatureService
                 ]);
                 return $xmlPuro;
             }
+
             if ($e instanceof SriFirmaException) {
                 throw $e;
             }
@@ -202,8 +212,58 @@ class SriSignatureService
             throw new SriFirmaException('El P12 no contiene certificado o llave privada.');
         }
 
-        return $certs;
+        // Verificar si el certificado principal corresponde a la llave privada
+        if (!@openssl_x509_check_private_key($publicCert, $privateKey)) {
+            Log::warning('El certificado público principal no coincide con la llave privada. Buscando en extracerts...');
+            $foundMatch = false;
+
+            if (!empty($certs['extracerts'])) {
+                foreach ((array) $certs['extracerts'] as $extraCert) {
+                    if (@openssl_x509_check_private_key($extraCert, $privateKey)) {
+                        $publicCert = $extraCert;
+                        $foundMatch = true;
+                        Log::info('Certificado coincidente hallado en extracerts.');
+                        break;
+                    }
+                }
+            }
+
+            if (!$foundMatch) {
+                Log::warning('Ningún certificado del P12 coincide con la llave privada.');
+            }
+        }
+
+        $parsed = openssl_x509_parse($publicCert);
+        if ($parsed) {
+            $validToTime = $parsed['validTo_time_t'] ?? null;
+            $subjectName = $parsed['subject']['CN'] ?? ($parsed['subject']['O'] ?? 'desconocido');
+            $fechaCaducidad = $validToTime ? date('d/m/Y H:i', $validToTime) : 'desconocida';
+
+            Log::info('Certificado final seleccionado para firma:', [
+                'subject' => $subjectName,
+                'issuer' => $parsed['issuer']['CN'] ?? ($parsed['issuer']['O'] ?? 'desconocido'),
+                'validTo' => $fechaCaducidad,
+            ]);
+
+            if ($validToTime && time() > $validToTime) {
+                Log::warning('Certificado P12 caducado.', [
+                    'subject' => $subjectName,
+                    'validTo' => $fechaCaducidad,
+                ]);
+
+                if (!config('sri.permitir_certificados_caducados', false)) {
+                    throw new SriFirmaException(
+                        "El certificado digital (.p12) de '{$subjectName}' se encuentra CADUCADO desde el {$fechaCaducidad}. " .
+                        "El SRI rechaza firmas electrónicas vencidas. Por favor utiliza un certificado vigente."
+                    );
+                }
+            }
+        }
+
+        return ['pkey' => $privateKey, 'cert' => $publicCert];
     }
+
+
 
     private function createLegacyOpenSslConfig(): ?string
     {
@@ -298,20 +358,40 @@ CNF;
         $privateKey = null;
         $publicCert = null;
 
-        if (preg_match('/-----BEGIN (?:RSA )?PRIVATE KEY-----.*?-----END (?:RSA )?PRIVATE KEY-----/s', $pemBundle, $match)) {
+        if (preg_match('/-----BEGIN (?:RSA |EC )?PRIVATE KEY-----.*?-----END (?:RSA |EC )?PRIVATE KEY-----/s', $pemBundle, $match)) {
             $privateKey = $match[0];
         }
 
-        if (preg_match('/-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----/s', $pemBundle, $match)) {
-            $publicCert = $match[0];
+        if (preg_match_all('/-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----/s', $pemBundle, $matches)) {
+            $allCerts = $matches[0];
+            // Buscar el certificado que realmente corresponde a la llave privada
+            if ($privateKey !== null) {
+                foreach ($allCerts as $certPem) {
+                    if (@openssl_x509_check_private_key($certPem, $privateKey)) {
+                        $publicCert = $certPem;
+                        $parsed = openssl_x509_parse($certPem);
+                        Log::info('Certificado coincidente con llave privada encontrado.', [
+                            'subject' => $parsed['subject']['CN'] ?? ($parsed['subject']['O'] ?? 'desconocido'),
+                            'issuer' => $parsed['issuer']['CN'] ?? ($parsed['issuer']['O'] ?? 'desconocido'),
+                        ]);
+                        break;
+                    }
+                }
+            }
+            // Fallback al primer certificado si no hubo coincidencia explícita
+            if ($publicCert === null && isset($allCerts[0])) {
+                $publicCert = $allCerts[0];
+                Log::warning('No se halló certificado con openssl_x509_check_private_key. Usando primer certificado.');
+            }
         }
 
         if (!$privateKey || !$publicCert) {
             return null;
         }
 
-        return ['pkey' => $privateKey, 'cert' => $publicCert];
+        return $this->validarCertificados(['pkey' => $privateKey, 'cert' => $publicCert]);
     }
+
 
     private function resolveOpenSslBinary(): ?string
     {
@@ -497,12 +577,13 @@ CNF;
     private function buildIssuerName(array $issuer): string
     {
         $parts = [];
-        foreach ($issuer as $key => $value) {
+        foreach (array_reverse($issuer) as $key => $value) {
             $parts[] = $key . '=' . $value;
         }
 
-        return implode(', ', $parts);
+        return implode(',', $parts);
     }
+
 
     private function normalizeX509SerialNumbers(\DOMNode $node): void
     {

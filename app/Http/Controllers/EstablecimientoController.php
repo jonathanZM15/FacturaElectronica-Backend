@@ -293,12 +293,16 @@ class EstablecimientoController extends Controller
         $codigoEditable = true;
         try {
             if (Schema::hasTable('comprobantes')) {
-                $exists = DB::table('comprobantes')
-                    ->where('establecimiento_id', $est->id)
-                    ->where('estado', 'AUTORIZADO')
-                    ->exists();
-                if ($exists) $codigoEditable = false;
+                $estadoCol = Schema::hasColumn('comprobantes', 'estado_sri') ? 'estado_sri' : (Schema::hasColumn('comprobantes', 'estado') ? 'estado' : null);
+                if ($estadoCol) {
+                    $exists = DB::table('comprobantes')
+                        ->where('establecimiento_id', $est->id)
+                        ->where($estadoCol, 'AUTORIZADO')
+                        ->exists();
+                    if ($exists) $codigoEditable = false;
+                }
             }
+
         } catch (\Exception $e) {
             Log::warning('Could not check comprobantes for establecimiento '.$est->id.': '.$e->getMessage());
             $codigoEditable = true;
