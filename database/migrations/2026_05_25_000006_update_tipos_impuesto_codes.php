@@ -14,8 +14,15 @@ return new class extends Migration
         }
 
         if (Schema::hasColumn('tipos_impuesto', 'codigo')) {
-            DB::statement('ALTER TABLE tipos_impuesto DROP CONSTRAINT IF EXISTS tipos_impuesto_codigo_unique');
-            DB::statement('ALTER TABLE tipos_impuesto RENAME COLUMN codigo TO codigo_porcentaje');
+            if (DB::getDriverName() !== 'sqlite') {
+                DB::statement('ALTER TABLE tipos_impuesto DROP CONSTRAINT IF EXISTS tipos_impuesto_codigo_unique');
+                DB::statement('ALTER TABLE tipos_impuesto RENAME COLUMN codigo TO codigo_porcentaje');
+            } else {
+                // SQLite: recreate is handled by Schema, just rename
+                Schema::table('tipos_impuesto', function (Blueprint $table) {
+                    $table->renameColumn('codigo', 'codigo_porcentaje');
+                });
+            }
         }
 
         if (!Schema::hasColumn('tipos_impuesto', 'codigo_impuesto')) {

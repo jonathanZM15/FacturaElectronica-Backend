@@ -150,6 +150,33 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/company-deletion/restore-from-backup', [CompanyDeletionController::class, 'restoreFromBackup']);
     Route::get('/company-deletion/{company}/deletion-history', [CompanyDeletionController::class, 'getDeletionHistory']);
     Route::get('/company-deletion/inactive-companies', [CompanyDeletionController::class, 'getInactiveCompanies'])->middleware('admin');
+
+    // Rutas de Inventario (Bodegas y Productos)
+    Route::get('/emisores/{emisorId}/bodegas', [\App\Http\Controllers\Api\BodegaController::class, 'index']);
+    Route::post('/emisores/{emisorId}/bodegas', [\App\Http\Controllers\Api\BodegaController::class, 'store']);
+    Route::get('/emisores/{emisorId}/bodegas/{id}', [\App\Http\Controllers\Api\BodegaController::class, 'show']);
+    Route::put('/emisores/{emisorId}/bodegas/{id}', [\App\Http\Controllers\Api\BodegaController::class, 'update']);
+    Route::delete('/emisores/{emisorId}/bodegas/{id}', [\App\Http\Controllers\Api\BodegaController::class, 'destroy']);
+
+    Route::get('/emisores/{emisorId}/productos', [\App\Http\Controllers\Api\ProductoController::class, 'index']);
+    Route::post('/emisores/{emisorId}/productos', [\App\Http\Controllers\Api\ProductoController::class, 'store']);
+    Route::get('/emisores/{emisorId}/productos/{id}/stock-disponible', [\App\Http\Controllers\Api\ProductoController::class, 'stockDisponible']);
+    Route::get('/emisores/{emisorId}/productos/{id}', [\App\Http\Controllers\Api\ProductoController::class, 'show']);
+    Route::put('/emisores/{emisorId}/productos/{id}', [\App\Http\Controllers\Api\ProductoController::class, 'update']);
+    Route::delete('/emisores/{emisorId}/productos/{id}', [\App\Http\Controllers\Api\ProductoController::class, 'destroy']);
+
+    Route::post('/emisores/{emisorId}/movimientos/transferir', [\App\Http\Controllers\Api\MovimientoInventarioController::class, 'transferir']);
+    Route::post('/emisores/{emisorId}/movimientos/ajustar', [\App\Http\Controllers\Api\MovimientoInventarioController::class, 'ajustar']);
+    Route::get('/emisores/{emisorId}/movimientos/kardex', [\App\Http\Controllers\Api\MovimientoInventarioController::class, 'kardex']);
+
+    Route::get('/emisores/{emisorId}/categorias', [\App\Http\Controllers\Api\CategoriaController::class, 'index']);
+    Route::post('/emisores/{emisorId}/categorias', [\App\Http\Controllers\Api\CategoriaController::class, 'store']);
+    Route::put('/emisores/{emisorId}/categorias/{id}', [\App\Http\Controllers\Api\CategoriaController::class, 'update']);
+    Route::delete('/emisores/{emisorId}/categorias/{id}', [\App\Http\Controllers\Api\CategoriaController::class, 'destroy']);
+
+    Route::get('/emisores/{emisorId}/stock-parametros', [\App\Http\Controllers\Api\StockParametroController::class, 'index']);
+    Route::post('/emisores/{emisorId}/stock-parametros', [\App\Http\Controllers\Api\StockParametroController::class, 'store']);
+    Route::delete('/emisores/{emisorId}/stock-parametros/{id}', [\App\Http\Controllers\Api\StockParametroController::class, 'destroy']);
 });
 
 
