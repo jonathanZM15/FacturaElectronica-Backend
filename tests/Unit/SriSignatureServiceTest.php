@@ -3,7 +3,8 @@
 namespace Tests\Unit;
 
 use App\Services\SriSignatureService;
-use PHPUnit\Framework\TestCase;
+use Symfony\Component\Process\Process;
+use Tests\TestCase;
 
 class SriSignatureServiceTest extends TestCase
 {
@@ -21,76 +22,128 @@ class SriSignatureServiceTest extends TestCase
 
     public function test_it_signs_xml_with_a_pkcs12_certificate(): void
     {
-        if (!function_exists('openssl_pkey_new')) {
-            $this->markTestSkipped('OpenSSL no disponible en el entorno de pruebas.');
+        $opensslBin = $this->resolveOpenSslBinary();
+        if ($opensslBin === null) {
+            $this->markTestSkipped('No se encontró un binario openssl disponible para generar el P12 de prueba.');
         }
 
-        $opensslConfig = tempnam(sys_get_temp_dir(), 'openssl-');
-        $this->assertNotFalse($opensslConfig);
-        file_put_contents($opensslConfig, <<<'CNF'
-openssl_conf = openssl_init
+        $opensslConfig = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'resources' . DIRECTORY_SEPARATOR . 'openssl' . DIRECTORY_SEPARATOR . 'openssl.cnf';
 
-[openssl_init]
-providers = provider_sect
+        $tempDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'sri-signature-' . bin2hex(random_bytes(4));
+        $this->assertTrue(mkdir($tempDir));
 
-[provider_sect]
-default = default_sect
-
-[default_sect]
-activate = 1
-CNF);
-
-        $privateKey = openssl_pkey_new([
-            'private_key_bits' => 2048,
-            'private_key_type' => OPENSSL_KEYTYPE_RSA,
-            'config' => $opensslConfig,
-        ]);
-
-        if ($privateKey === false) {
-            $this->markTestSkipped('No se pudo generar una clave privada OpenSSL en este entorno.');
-        }
-
-        $csr = openssl_csr_new([
-            'commonName' => 'Test SRI',
-        ], $privateKey, ['digest_alg' => 'sha256', 'config' => $opensslConfig]);
-
-        if ($csr === false) {
-            $this->markTestSkipped('No se pudo generar el CSR OpenSSL en este entorno.');
-        }
-
-        $certificate = openssl_csr_sign($csr, null, $privateKey, 365, ['digest_alg' => 'sha256']);
-        if ($certificate === false) {
-            $this->markTestSkipped('No se pudo firmar el certificado OpenSSL en este entorno.');
-        }
-
-        $tempFile = tempnam(sys_get_temp_dir(), 'sri-p12-');
-        if ($tempFile === false) {
-            $this->markTestSkipped('No se pudo crear el archivo temporal P12.');
-        }
-
+        $keyFile = $tempDir . DIRECTORY_SEPARATOR . 'key.pem';
+        $certFile = $tempDir . DIRECTORY_SEPARATOR . 'cert.pem';
+        $p12File = $tempDir . DIRECTORY_SEPARATOR . 'test.p12';
         $password = 'secret123';
 
         try {
-            $exported = openssl_pkcs12_export_to_file($certificate, $tempFile, $privateKey, $password, [
-                'friendly_name' => 'test-sri',
+            $generateCert = new Process([
+                $opensslBin,
+                'req',
+                '-x509',
+                '-newkey',
+                'rsa:2048',
+                '-nodes',
+                '-keyout',
+                $keyFile,
+                '-out',
+                $certFile,
+                '-days',
+                '1',
+                '-subj',
+                '/CN=Test SRI',
             ]);
+            $generateCert->setEnv(['OPENSSL_CONF' => $opensslConfig]);
+            $generateCert->setTimeout(60);
+            $generateCert->run();
 
-            $this->assertTrue($exported);
+            if (!$generateCert->isSuccessful()) {
+                $this->markTestSkipped('No se pudo generar el certificado de prueba: ' . $generateCert->getErrorOutput());
+            }
+
+            $exportP12 = new Process([
+                $opensslBin,
+                'pkcs12',
+                '-export',
+                '-out',
+                $p12File,
+                '-inkey',
+                $keyFile,
+                '-in',
+                $certFile,
+                '-passout',
+                'pass:' . $password,
+            ]);
+            $exportP12->setEnv(['OPENSSL_CONF' => $opensslConfig]);
+            $exportP12->setTimeout(60);
+            $exportP12->run();
+
+            if (!$exportP12->isSuccessful()) {
+                $this->markTestSkipped('No se pudo exportar el P12 de prueba: ' . $exportP12->getErrorOutput());
+            }
 
             $xml = '<?xml version="1.0" encoding="UTF-8"?><factura id="comprobante" version="2.1.0"><infoTributaria><claveAcceso>1234567890123456789012345678901234567890123456789</claveAcceso></infoTributaria><infoFactura /><detalles /></factura>';
             $service = new SriSignatureService();
-            $signed = $service->firmarXml($xml, $tempFile, $password);
+            $signed = $service->firmarXml($xml, $p12File, $password);
 
             $this->assertStringContainsString('<ds:Signature', $signed);
             $this->assertStringContainsString('xades:SignedProperties', $signed);
+
+            $domSigned = new \DOMDocument();
+            $domSigned->loadXML($signed);
+
+            $xpath = new \DOMXPath($domSigned);
+            $xpath->registerNamespace('ds', 'http://www.w3.org/2000/09/xmldsig#');
+            $xpath->registerNamespace('xades', 'http://uri.etsi.org/01903/v1.3.2#');
+
+            $references = $xpath->query('//ds:Signature/ds:SignedInfo/ds:Reference');
+            $this->assertNotFalse($references);
+            $this->assertGreaterThanOrEqual(2, $references->length);
+
+            $originalDom = new \DOMDocument();
+            $originalDom->loadXML($xml);
+            $expectedRootDigest = base64_encode(hash('sha1', $originalDom->documentElement->C14N(false, false), true));
+            $this->assertSame($expectedRootDigest, $xpath->evaluate('string(//ds:Signature/ds:SignedInfo/ds:Reference[1]/ds:DigestValue)'));
+
+            $signedPropsNode = $xpath->query('//xades:SignedProperties')->item(0);
+            $this->assertNotNull($signedPropsNode);
+            $expectedSignedPropsDigest = base64_encode(hash('sha1', $signedPropsNode->C14N(false, false), true));
+            $this->assertSame($expectedSignedPropsDigest, $xpath->evaluate('string(//ds:Signature/ds:SignedInfo/ds:Reference[2]/ds:DigestValue)'));
         } finally {
-            if (is_file($tempFile)) {
-                unlink($tempFile);
+            foreach ([$keyFile, $certFile, $p12File] as $file) {
+                if (is_file($file)) {
+                    unlink($file);
+                }
             }
 
-            if (is_file($opensslConfig)) {
-                unlink($opensslConfig);
+            if (is_dir($tempDir)) {
+                rmdir($tempDir);
             }
         }
+    }
+
+    private function resolveOpenSslBinary(): ?string
+    {
+        $candidates = [
+            'C:\\xampp\\apache\\bin\\openssl.exe',
+            'C:\\xampp\\php\\openssl.exe',
+            'C:\\Program Files\\Git\\usr\\bin\\openssl.exe',
+            'C:\\Program Files (x86)\\Git\\usr\\bin\\openssl.exe',
+            'openssl.exe',
+            'openssl',
+        ];
+
+        foreach ($candidates as $candidate) {
+            $process = new Process([$candidate, 'version']);
+            $process->setTimeout(10);
+            $process->run();
+
+            if ($process->isSuccessful()) {
+                return $candidate;
+            }
+        }
+
+        return null;
     }
 }

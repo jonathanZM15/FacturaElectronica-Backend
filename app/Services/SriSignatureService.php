@@ -22,13 +22,6 @@ class SriSignatureService
             if (str_contains($e->getMessage(), 'CADUCADO')) {
                 throw $e;
             }
-            if (app()->environment('local', 'testing')) {
-                Log::warning('P12 verification failed but bypassed for local testing.', [
-                    'ruta' => $rutaFirmaP12,
-                    'error' => $e->getMessage()
-                ]);
-                return;
-            }
             throw $e;
         }
     }
@@ -54,10 +47,13 @@ class SriSignatureService
             $dsig = new XMLSecurityDSig();
             $dsig->setCanonicalMethod(XMLSecurityDSig::C14N);
             $dsig->sigNode->setAttribute('Id', $signatureId);
+            // FIX: Explicitly declare xmlns:xades on the signature node to prevent namespace hoisting issues
+            // which cause the SignedInfo hash to mismatch when the XML is parsed back.
+            $dsig->sigNode->setAttributeNS('http://www.w3.org/2000/xmlns/', 'xmlns:xades', 'http://uri.etsi.org/01903/v1.3.2#');
 
             $dsig->addReference(
                 $dom->documentElement,
-                XMLSecurityDSig::SHA256,
+                XMLSecurityDSig::SHA1,
                 ['http://www.w3.org/2000/09/xmldsig#enveloped-signature'],
                 ['id_name' => 'id', 'overwrite' => false]
             );
@@ -68,19 +64,22 @@ class SriSignatureService
 
             $dsig->addReference(
                 $xades['signedProps'],
-                XMLSecurityDSig::SHA256,
+                XMLSecurityDSig::SHA1,
                 [XMLSecurityDSig::C14N],
                 ['overwrite' => false]
             );
             $this->setReferenceType($dsig->sigNode, '#' . $signedPropsId, 'http://uri.etsi.org/01903/v1.3.2#SignedProperties');
 
 
-            $key = new XMLSecurityKey(XMLSecurityKey::RSA_SHA256, ['type' => 'private']);
+            $key = new XMLSecurityKey(XMLSecurityKey::RSA_SHA1, ['type' => 'private']);
             $key->loadKey($privateKey, false);
-            $dsig->sign($key);
             $dsig->add509Cert($publicCert, true, false, ['issuerSerial' => true]);
+            $keyInfo = $this->firstNodeByName($dsig->sigNode, 'KeyInfo');
+            if ($keyInfo instanceof \DOMNode) {
+                $this->normalizeX509SerialNumbers($keyInfo);
+            }
 
-            $this->normalizeX509SerialNumbers($dsig->sigNode);
+            $dsig->sign($key);
 
             $dsig->appendSignature($dom->documentElement);
 
@@ -89,14 +88,6 @@ class SriSignatureService
             if (str_contains($e->getMessage(), 'CADUCADO')) {
                 throw $e;
             }
-            if (app()->environment('local', 'testing')) {
-                Log::warning('Signing XML failed. Returning unsigned XML for local testing.', [
-                    'ruta' => $rutaFirmaP12,
-                    'error' => $e->getMessage()
-                ]);
-                return $xmlPuro;
-            }
-
             if ($e instanceof SriFirmaException) {
                 throw $e;
             }
@@ -506,34 +497,37 @@ CNF;
         string $qualifyingPropsId,
         string $publicCert
     ): array {
-        $object = $dom->createElementNS(XMLSecurityDSig::XMLDSIGNS, 'ds:Object');
-        $qualifyingProperties = $dom->createElementNS('http://uri.etsi.org/01903/v1.3.2#', 'xades:QualifyingProperties');
+        $xadesNS = 'http://uri.etsi.org/01903/v1.3.2#';
+        $dsNS = XMLSecurityDSig::XMLDSIGNS;
+
+        $object = $dom->createElementNS($dsNS, 'ds:Object');
+        $qualifyingProperties = $dom->createElementNS($xadesNS, 'xades:QualifyingProperties');
         $qualifyingProperties->setAttribute('Target', '#' . $signatureId);
         $qualifyingProperties->setAttribute('Id', $qualifyingPropsId);
 
-        $signedProps = $dom->createElement('xades:SignedProperties');
+        $signedProps = $dom->createElementNS($xadesNS, 'xades:SignedProperties');
         $signedProps->setAttribute('Id', $signedPropsId);
 
-        $signedSigProps = $dom->createElement('xades:SignedSignatureProperties');
-        $this->appendText($dom, $signedSigProps, 'xades:SigningTime', gmdate('c'));
+        $signedSigProps = $dom->createElementNS($xadesNS, 'xades:SignedSignatureProperties');
+        $this->appendText($dom, $signedSigProps, 'xades:SigningTime', gmdate('c'), $xadesNS);
 
-        $signingCertificate = $dom->createElement('xades:SigningCertificate');
-        $cert = $dom->createElement('xades:Cert');
-        $certDigest = $dom->createElement('xades:CertDigest');
-        $digestMethod = $dom->createElementNS(XMLSecurityDSig::XMLDSIGNS, 'ds:DigestMethod');
-        $digestMethod->setAttribute('Algorithm', XMLSecurityDSig::SHA256);
-        $digestValue = $dom->createElementNS(XMLSecurityDSig::XMLDSIGNS, 'ds:DigestValue', $this->certDigest($publicCert));
+        $signingCertificate = $dom->createElementNS($xadesNS, 'xades:SigningCertificate');
+        $cert = $dom->createElementNS($xadesNS, 'xades:Cert');
+        $certDigest = $dom->createElementNS($xadesNS, 'xades:CertDigest');
+        $digestMethod = $dom->createElementNS($dsNS, 'ds:DigestMethod');
+        $digestMethod->setAttribute('Algorithm', XMLSecurityDSig::SHA1);
+        $digestValue = $dom->createElementNS($dsNS, 'ds:DigestValue', $this->certDigest($publicCert));
         $certDigest->appendChild($digestMethod);
         $certDigest->appendChild($digestValue);
 
-        $issuerSerial = $dom->createElement('xades:IssuerSerial');
+        $issuerSerial = $dom->createElementNS($xadesNS, 'xades:IssuerSerial');
         $parsed = openssl_x509_parse($publicCert) ?: [];
         $issuerName = $parsed['issuer'] ?? [];
         $issuerText = $this->buildIssuerName($issuerName);
         $serialNumber = $parsed['serialNumber'] ?? '';
 
-        $this->appendText($dom, $issuerSerial, 'ds:X509IssuerName', $issuerText);
-        $this->appendText($dom, $issuerSerial, 'ds:X509SerialNumber', $this->normalizeSerialNumber((string) $serialNumber));
+        $this->appendText($dom, $issuerSerial, 'ds:X509IssuerName', $issuerText, $dsNS);
+        $this->appendText($dom, $issuerSerial, 'ds:X509SerialNumber', $this->normalizeSerialNumber((string) $serialNumber), $dsNS);
 
         $cert->appendChild($certDigest);
         $cert->appendChild($issuerSerial);
@@ -541,7 +535,7 @@ CNF;
         $signedSigProps->appendChild($signingCertificate);
         $signedProps->appendChild($signedSigProps);
 
-        $signedDataObjectProps = $dom->createElement('xades:SignedDataObjectProperties');
+        $signedDataObjectProps = $dom->createElementNS($xadesNS, 'xades:SignedDataObjectProperties');
         $signedProps->appendChild($signedDataObjectProps);
 
         $qualifyingProperties->appendChild($signedProps);
@@ -553,18 +547,19 @@ CNF;
         ];
     }
 
-    private function appendText(DOMDocument $dom, $parent, string $name, string $value): void
+    private function appendText(DOMDocument $dom, $parent, string $name, string $value, ?string $ns = null): void
     {
-        $node = $dom->createElement($name);
+        $node = $ns ? $dom->createElementNS($ns, $name) : $dom->createElement($name);
         $node->appendChild($dom->createTextNode($value));
         $parent->appendChild($node);
     }
+
 
     private function certDigest(string $pem): string
     {
         $der = $this->pemToDer($pem);
 
-        return base64_encode(hash('sha256', $der, true));
+        return base64_encode(hash('sha1', $der, true));
     }
 
     private function pemToDer(string $pem): string
@@ -591,6 +586,15 @@ CNF;
         foreach ($xpath->query('.//*[local-name()="X509SerialNumber"]', $node) as $serialNode) {
             $serialNode->nodeValue = $this->normalizeSerialNumber($serialNode->textContent);
         }
+    }
+
+    private function firstNodeByName(\DOMNode $node, string $localName): ?\DOMNode
+    {
+        $xpath = new \DOMXPath($node->ownerDocument ?? $node);
+        $query = './/*[local-name()="' . $localName . '"]';
+        $found = $xpath->query($query, $node);
+
+        return $found?->item(0) ?: null;
     }
 
     private function setReferenceType(\DOMNode $signatureNode, string $uri, string $type): void
