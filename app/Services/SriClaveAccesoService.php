@@ -74,7 +74,11 @@ class SriClaveAccesoService
 
     public function normalizarAmbiente(string $ambiente): string
     {
-        return strtoupper($ambiente) === 'PRUEBAS' ? '1' : '2';
+        $ambiente = strtoupper(trim($ambiente));
+        if ($ambiente === '1' || $ambiente === 'PRUEBAS') {
+            return '1';
+        }
+        return '2';
     }
 
     public function normalizarTipoEmision(string $tipoEmision): string

@@ -35,55 +35,162 @@ class SriSignatureService
             $privateKey = $certs['pkey'];
             $publicCert = $certs['cert'];
 
-            $dom = new DOMDocument('1.0', 'UTF-8');
-            $dom->preserveWhiteSpace = false;
-            $dom->formatOutput = false;
-            $dom->loadXML($xmlPuro);
+            // ── 1. Extraer datos del certificado ──
+            $certData = openssl_x509_parse($publicCert);
+            $certDer = $this->pemToDer($publicCert);
+            $certDigestValue = base64_encode(sha1($certDer, true));
+            $certBase64 = base64_encode($certDer);
+            $certFormatted = "\n" . chunk_split($certBase64, 76, "\n");
 
-            $signatureId = 'Signature-' . bin2hex(random_bytes(6));
-            $signedPropsId = 'SignedProperties-' . bin2hex(random_bytes(6));
-            $qualifyingPropsId = 'QualifyingProperties-' . bin2hex(random_bytes(6));
+            $issuerDN = $this->buildIssuerName($certData['issuer'] ?? []);
+            $serialNumber = $this->normalizeSerialNumber((string) ($certData['serialNumber'] ?? ''));
 
-            $dsig = new XMLSecurityDSig();
-            $dsig->setCanonicalMethod(XMLSecurityDSig::C14N);
-            $dsig->sigNode->setAttribute('Id', $signatureId);
-            // FIX: Explicitly declare xmlns:xades on the signature node to prevent namespace hoisting issues
-            // which cause the SignedInfo hash to mismatch when the XML is parsed back.
-            $dsig->sigNode->setAttributeNS('http://www.w3.org/2000/xmlns/', 'xmlns:xades', 'http://uri.etsi.org/01903/v1.3.2#');
+            // ── 2. Extraer datos RSA (Modulus y Exponent) ──
+            $privateKeyResource = openssl_pkey_get_private($privateKey);
+            $keyDetails = openssl_pkey_get_details($privateKeyResource);
+            $modulus = "\n" . chunk_split(base64_encode($keyDetails['rsa']['n']), 76, "\n");
+            $exponent = base64_encode($keyDetails['rsa']['e']);
 
-            $dsig->addReference(
-                $dom->documentElement,
-                XMLSecurityDSig::SHA1,
-                ['http://www.w3.org/2000/09/xmldsig#enveloped-signature'],
-                ['id_name' => 'id', 'overwrite' => false]
-            );
+            // ── 3. Generar IDs únicos ──
+            $certNum = mt_rand(100000, 999999);
+            $sigNum  = mt_rand(100000, 999999);
 
+            $signatureId        = "Signature{$sigNum}";
+            $signedInfoId       = "Signature-SignedInfo{$sigNum}";
+            $signedPropertiesId = "SignedProperties-Signature{$sigNum}";
+            $keyInfoId          = "Certificate{$certNum}-KeyInfo";
+            $signatureValueId   = "SignatureValue-Signature{$sigNum}";
+            $signatureObjectId  = "SignatureObject{$sigNum}";
+            $referenceId        = "Reference-ID-{$sigNum}";
 
-            $xades = $this->buildXadesObject($dsig->sigNode->ownerDocument, $signatureId, $signedPropsId, $qualifyingPropsId, $publicCert);
-            $dsig->sigNode->appendChild($xades['object']);
+            // ── 4. Cargar documento y calcular digest ──
+            $doc = new DOMDocument('1.0', 'UTF-8');
+            $doc->preserveWhiteSpace = true;
+            $doc->formatOutput = false;
+            $doc->loadXML($xmlPuro);
 
-            $dsig->addReference(
-                $xades['signedProps'],
-                XMLSecurityDSig::SHA1,
-                [XMLSecurityDSig::C14N],
-                ['overwrite' => false]
-            );
-            $this->setReferenceType($dsig->sigNode, '#' . $signedPropsId, 'http://uri.etsi.org/01903/v1.3.2#SignedProperties');
+            $docDigest = base64_encode(sha1($doc->C14N(false, false), true));
 
+            // ── 5. Construir SignedProperties (con DataObjectFormat) ──
+            $signingTime = date('Y-m-d\TH:i:sP');
 
-            $key = new XMLSecurityKey(XMLSecurityKey::RSA_SHA1, ['type' => 'private']);
-            $key->loadKey($privateKey, false);
-            $dsig->add509Cert($publicCert, true, false, ['issuerSerial' => true]);
-            $keyInfo = $this->firstNodeByName($dsig->sigNode, 'KeyInfo');
-            if ($keyInfo instanceof \DOMNode) {
-                $this->normalizeX509SerialNumbers($keyInfo);
+            $signedPropertiesXml = '<xades:SignedProperties Id="' . $signedPropertiesId . '">'
+                . '<xades:SignedSignatureProperties>'
+                . '<xades:SigningTime>' . $signingTime . '</xades:SigningTime>'
+                . '<xades:SigningCertificate>'
+                . '<xades:Cert>'
+                . '<xades:CertDigest>'
+                . '<ds:DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"></ds:DigestMethod>'
+                . '<ds:DigestValue>' . $certDigestValue . '</ds:DigestValue>'
+                . '</xades:CertDigest>'
+                . '<xades:IssuerSerial>'
+                . '<ds:X509IssuerName>' . $issuerDN . '</ds:X509IssuerName>'
+                . '<ds:X509SerialNumber>' . $serialNumber . '</ds:X509SerialNumber>'
+                . '</xades:IssuerSerial>'
+                . '</xades:Cert>'
+                . '</xades:SigningCertificate>'
+                . '</xades:SignedSignatureProperties>'
+                . '<xades:SignedDataObjectProperties>'
+                . '<xades:DataObjectFormat ObjectReference="#' . $referenceId . '">'
+                . '<xades:Description>contenido comprobante</xades:Description>'
+                . '<xades:MimeType>text/xml</xades:MimeType>'
+                . '</xades:DataObjectFormat>'
+                . '</xades:SignedDataObjectProperties>'
+                . '</xades:SignedProperties>';
+
+            // Digest de SignedProperties (canonicalizado con namespaces)
+            $spDoc = new DOMDocument('1.0', 'UTF-8');
+            $spXmlWithNs = '<xades:SignedProperties xmlns:ds="http://www.w3.org/2000/09/xmldsig#" xmlns:xades="http://uri.etsi.org/01903/v1.3.2#" Id="' . $signedPropertiesId . '">'
+                . substr($signedPropertiesXml, strpos($signedPropertiesXml, '>') + 1);
+            $spDoc->loadXML($spXmlWithNs);
+            $signedPropsDigest = base64_encode(sha1($spDoc->C14N(false, false), true));
+
+            // ── 6. Construir KeyInfo (con RSAKeyValue) ──
+            $keyInfoXml = '<ds:KeyInfo Id="' . $keyInfoId . '">' . "\n"
+                . '<ds:X509Data>' . "\n"
+                . '<ds:X509Certificate>' . "\n"
+                . $certFormatted
+                . '</ds:X509Certificate>' . "\n"
+                . '</ds:X509Data>' . "\n"
+                . '<ds:KeyValue>' . "\n"
+                . '<ds:RSAKeyValue>' . "\n"
+                . '<ds:Modulus>' . "\n"
+                . $modulus . "\n"
+                . '</ds:Modulus>' . "\n"
+                . '<ds:Exponent>' . $exponent . '</ds:Exponent>' . "\n"
+                . '</ds:RSAKeyValue>' . "\n"
+                . '</ds:KeyValue>' . "\n"
+                . '</ds:KeyInfo>';
+
+            // Digest de KeyInfo (canonicalizado)
+            $kiDoc = new DOMDocument('1.0', 'UTF-8');
+            $kiXmlWithNs = '<ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#" xmlns:xades="http://uri.etsi.org/01903/v1.3.2#" Id="' . $keyInfoId . '">'
+                . substr($keyInfoXml, strpos($keyInfoXml, '>') + 1);
+            $kiDoc->loadXML($kiXmlWithNs);
+            $keyInfoDigest = base64_encode(sha1($kiDoc->C14N(false, false), true));
+
+            // ── 7. Construir SignedInfo (3 references) ──
+            $signedInfoXml = '<ds:SignedInfo Id="' . $signedInfoId . '">'
+                . '<ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"></ds:CanonicalizationMethod>'
+                . '<ds:SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"></ds:SignatureMethod>'
+                // Reference al comprobante
+                . '<ds:Reference Id="' . $referenceId . '" URI="#comprobante">'
+                . '<ds:Transforms>'
+                . '<ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"></ds:Transform>'
+                . '</ds:Transforms>'
+                . '<ds:DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"></ds:DigestMethod>'
+                . '<ds:DigestValue>' . $docDigest . '</ds:DigestValue>'
+                . '</ds:Reference>'
+                // Reference a SignedProperties (sin Transforms, Type corregido)
+                . '<ds:Reference Type="http://uri.etsi.org/01903#SignedProperties" URI="#' . $signedPropertiesId . '">'
+                . '<ds:DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"></ds:DigestMethod>'
+                . '<ds:DigestValue>' . $signedPropsDigest . '</ds:DigestValue>'
+                . '</ds:Reference>'
+                // Reference a KeyInfo
+                . '<ds:Reference URI="#' . $keyInfoId . '">'
+                . '<ds:DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"></ds:DigestMethod>'
+                . '<ds:DigestValue>' . $keyInfoDigest . '</ds:DigestValue>'
+                . '</ds:Reference>'
+                . '</ds:SignedInfo>';
+
+            // ── 8. Canonicalizar SignedInfo y firmar ──
+            $siDoc = new DOMDocument('1.0', 'UTF-8');
+            $siXmlWithNs = '<ds:SignedInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#" xmlns:xades="http://uri.etsi.org/01903/v1.3.2#" Id="' . $signedInfoId . '">'
+                . substr($signedInfoXml, strpos($signedInfoXml, '>') + 1);
+            $siDoc->loadXML($siXmlWithNs);
+            $canonicalSignedInfo = $siDoc->C14N(false, false);
+
+            $signatureRaw = '';
+            if (!openssl_sign($canonicalSignedInfo, $signatureRaw, $privateKeyResource, OPENSSL_ALGO_SHA1)) {
+                throw new SriFirmaException('Error al generar la firma digital: ' . openssl_error_string());
             }
+            $signatureValue = "\n" . chunk_split(base64_encode($signatureRaw), 76, "\n");
 
-            $dsig->sign($key);
+            // ── 9. Ensamblar firma completa ──
+            $dsSignature = '<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#" xmlns:xades="http://uri.etsi.org/01903/v1.3.2#" Id="' . $signatureId . '">' . "\n"
+                . $signedInfoXml . "\n"
+                . '<ds:SignatureValue Id="' . $signatureValueId . '">' . "\n"
+                . $signatureValue
+                . '</ds:SignatureValue>' . "\n"
+                . $keyInfoXml . "\n"
+                . '<ds:Object Id="' . $signatureObjectId . '">'
+                . '<xades:QualifyingProperties xmlns:xades="http://uri.etsi.org/01903/v1.3.2#" Target="#' . $signatureId . '">'
+                . $signedPropertiesXml
+                . '</xades:QualifyingProperties>'
+                . '</ds:Object>'
+                . '</ds:Signature>';
 
-            $dsig->appendSignature($dom->documentElement);
+            // ── 10. Insertar firma en el documento ──
+            $signedDoc = new DOMDocument('1.0', 'UTF-8');
+            $signedDoc->preserveWhiteSpace = true;
+            $signedDoc->formatOutput = false;
+            $signedDoc->loadXML($xmlPuro);
 
-            return $dom->saveXML();
+            $sigFragment = $signedDoc->createDocumentFragment();
+            $sigFragment->appendXML($dsSignature);
+            $signedDoc->documentElement->appendChild($sigFragment);
+
+            return $signedDoc->saveXML();
         } catch (\Throwable $e) {
             if (str_contains($e->getMessage(), 'CADUCADO')) {
                 throw $e;
@@ -569,14 +676,34 @@ CNF;
         return base64_decode($clean) ?: '';
     }
 
-    private function buildIssuerName(array $issuer): string
+    private function buildIssuerName(array $issuerMap): string
     {
-        $parts = [];
-        foreach (array_reverse($issuer) as $key => $value) {
-            $parts[] = $key . '=' . $value;
+        $issuer = [];
+        
+        // El validador del SRI (Java) espera el formato RFC2253 estricto.
+        // Esto implica invertir el orden del arreglo devuelto por openssl.
+        $keys = array_reverse(array_keys($issuerMap));
+        
+        foreach ($keys as $key) {
+            $value = $issuerMap[$key];
+            if (is_array($value)) {
+                $value = $value[0];
+            }
+            
+            // Java X500Principal formatea OIDs desconocidos o específicos (como organizationIdentifier)
+            // usando su OID numérico y el valor codificado en ASN.1 (DER) en formato hexadecimal precedido por '#'.
+            if ($key === 'organizationIdentifier' || $key === '2.5.4.97') {
+                $key = '2.5.4.97';
+                // Codificamos como UTF8String (Tag 0x0C).
+                // sprintf('%02x', strlen) funciona para valores de hasta 127 bytes.
+                $hex = '0c' . sprintf('%02x', strlen($value)) . bin2hex($value);
+                $value = '#' . $hex;
+            }
+            
+            $issuer[] = $key . '=' . $value;
         }
-
-        return implode(',', $parts);
+        
+        return implode(',', $issuer);
     }
 
 
