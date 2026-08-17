@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Cliente;
+use App\Models\Company;
 use App\Models\Comprobante;
 use App\Models\ComprobanteDetalle;
 use App\Models\ComprobanteImpuesto;
@@ -179,6 +180,7 @@ class FacturacionController extends Controller
             ]);
             $cliente->save();
 
+            $company = Company::findOrFail($emisorId);
             $establecimiento = Establecimiento::where('emisor_id', $emisorId)->findOrFail($establecimientoId);
             $punto = PuntoEmision::where('emisor_id', $emisorId)
                 ->where('establecimiento_id', $establecimientoId)
@@ -208,8 +210,8 @@ class FacturacionController extends Controller
                 'total_impuestos' => $calculo['totales']['total_iva'],
                 'total' => $calculo['totales']['importe_total'],
                 'estado_sri' => 'BORRADOR',
-                'ambiente' => 'PRUEBAS',
-                'tipo_emision' => 'NORMAL',
+                'ambiente' => $company->ambiente ?? 'PRUEBAS',
+                'tipo_emision' => $company->tipo_emision ?? 'NORMAL',
             ]);
 
             foreach ($calculo['detalles'] as $detalle) {
