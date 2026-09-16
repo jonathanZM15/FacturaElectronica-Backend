@@ -10,7 +10,7 @@ class Establecimiento extends Model
     protected $table = 'establecimientos';
 
     protected $fillable = [
-        'emisor_id', 'codigo', 'estado', 'nombre', 'nombre_comercial', 'direccion', 'correo', 'telefono', 'logo_path', 'actividades_economicas', 'fecha_inicio_actividades', 'fecha_reinicio_actividades', 'fecha_cierre_establecimiento', 'created_by', 'updated_by'
+        'emisor_id', 'codigo', 'estado', 'nombre', 'nombre_comercial', 'direccion', 'provincia', 'ciudad', 'correo', 'telefono', 'logo_path', 'actividades_economicas', 'fecha_inicio_actividades', 'fecha_reinicio_actividades', 'fecha_cierre_establecimiento', 'created_by', 'updated_by'
     ];
 
     protected $casts = [

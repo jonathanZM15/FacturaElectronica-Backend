@@ -1,0 +1,12 @@
+<?php
+
+namespace App\Enums;
+
+enum EstadoOperativoRecepcion: string
+{
+    case PENDIENTE_DE_DESCARGA = 'PENDIENTE_DE_DESCARGA';
+    case DESCARGA_REGISTRADA = 'DESCARGA_REGISTRADA';
+    case RECEPCION_CORRECTA = 'RECEPCION_CORRECTA';
+    case RECEPCION_CON_INCIDENCIA = 'RECEPCION_CON_INCIDENCIA';
+}
+

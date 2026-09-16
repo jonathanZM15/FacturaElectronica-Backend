@@ -9,9 +9,12 @@ use Illuminate\Validation\Rule;
 
 class CategoriaController extends Controller
 {
+    use \App\Traits\ResolvesEmisor;
+
     public function index($emisorId)
     {
-        $categorias = Categoria::where('emisor_id', $emisorId)
+        $resolvedId = $this->resolveEmisorId($emisorId);
+        $categorias = Categoria::where('emisor_id', $resolvedId)
             ->withCount('productos')
             ->get();
             
@@ -20,13 +23,14 @@ class CategoriaController extends Controller
 
     public function store(Request $request, $emisorId)
     {
+        $resolvedId = $this->resolveEmisorId($emisorId);
         $validated = $request->validate([
             'nombre' => [
                 'required',
                 'string',
                 'max:255',
-                Rule::unique('categorias')->where(function ($query) use ($emisorId) {
-                    return $query->where('emisor_id', $emisorId);
+                Rule::unique('categorias')->where(function ($query) use ($resolvedId) {
+                    return $query->where('emisor_id', $resolvedId);
                 })
             ],
             'descripcion' => 'nullable|string',
@@ -35,7 +39,7 @@ class CategoriaController extends Controller
         ]);
 
         $categoria = Categoria::create([
-            'emisor_id' => $emisorId,
+            'emisor_id' => $resolvedId,
             'nombre' => $validated['nombre'],
             'descripcion' => $validated['descripcion'] ?? null,
             'estado' => $validated['estado'] ?? true,
@@ -47,15 +51,16 @@ class CategoriaController extends Controller
 
     public function update(Request $request, $emisorId, $id)
     {
-        $categoria = Categoria::where('emisor_id', $emisorId)->findOrFail($id);
+        $resolvedId = $this->resolveEmisorId($emisorId);
+        $categoria = Categoria::where('emisor_id', $resolvedId)->findOrFail($id);
 
         $validated = $request->validate([
             'nombre' => [
                 'required',
                 'string',
                 'max:255',
-                Rule::unique('categorias')->where(function ($query) use ($emisorId) {
-                    return $query->where('emisor_id', $emisorId);
+                Rule::unique('categorias')->where(function ($query) use ($resolvedId) {
+                    return $query->where('emisor_id', $resolvedId);
                 })->ignore($id)
             ],
             'descripcion' => 'nullable|string',
@@ -70,7 +75,8 @@ class CategoriaController extends Controller
 
     public function destroy($emisorId, $id)
     {
-        $categoria = Categoria::where('emisor_id', $emisorId)->findOrFail($id);
+        $resolvedId = $this->resolveEmisorId($emisorId);
+        $categoria = Categoria::where('emisor_id', $resolvedId)->findOrFail($id);
 
         if ($categoria->productos()->count() > 0) {
             return response()->json(['message' => 'No se puede eliminar la categoría porque tiene productos asociados.'], 409);

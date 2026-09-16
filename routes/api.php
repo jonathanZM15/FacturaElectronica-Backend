@@ -165,9 +165,21 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/emisores/{emisorId}/productos/{id}', [\App\Http\Controllers\Api\ProductoController::class, 'update']);
     Route::delete('/emisores/{emisorId}/productos/{id}', [\App\Http\Controllers\Api\ProductoController::class, 'destroy']);
 
-    Route::post('/emisores/{emisorId}/movimientos/transferir', [\App\Http\Controllers\Api\MovimientoInventarioController::class, 'transferir']);
+    Route::post('/emisores/{emisorId}/movimientos/transferir', [\App\Http\Controllers\Api\TransferenciaController::class, 'store']);
+    Route::get('/emisores/{emisorId}/movimientos/despachar-sucursal', [\App\Http\Controllers\Api\TransferenciaSucursalController::class, 'index']);
+    Route::get('/emisores/{emisorId}/movimientos/despachar-sucursal/{movimientoId}', [\App\Http\Controllers\Api\TransferenciaSucursalController::class, 'show']);
+    Route::post('/emisores/{emisorId}/movimientos/despachar-sucursal', [\App\Http\Controllers\Api\TransferenciaSucursalController::class, 'despachar']);
+    Route::post('/emisores/{emisorId}/movimientos/despachar-sucursal/{movimientoId}/descargar', [\App\Http\Controllers\Api\TransferenciaSucursalController::class, 'descargar']);
+    Route::post('/emisores/{emisorId}/movimientos/despachar-sucursal/{movimientoId}/recibir', [\App\Http\Controllers\Api\TransferenciaSucursalController::class, 'recibir']);
     Route::post('/emisores/{emisorId}/movimientos/ajustar', [\App\Http\Controllers\Api\MovimientoInventarioController::class, 'ajustar']);
-    Route::get('/emisores/{emisorId}/movimientos/kardex', [\App\Http\Controllers\Api\MovimientoInventarioController::class, 'kardex']);
+    Route::post('/emisores/{emisorId}/movimientos/inventario-inicial', [\App\Http\Controllers\Api\MovimientoInventarioController::class, 'inventarioInicial']);
+    Route::post('/emisores/{emisorId}/movimientos/reacondicionar', [\App\Http\Controllers\Api\MovimientoInventarioController::class, 'reacondicionar']);
+    Route::get('/emisores/{emisorId}/movimientos/kardex', [\App\Http\Controllers\Api\KardexController::class, 'index']);
+    
+    // FASE 2: Consultas Read-Only
+    Route::get('/emisores/{emisorId}/existencias', [\App\Http\Controllers\Api\ExistenciaInventarioController::class, 'consolidado']);
+    Route::get('/emisores/{emisorId}/existencias/lotes', [\App\Http\Controllers\Api\ExistenciaInventarioController::class, 'lotes']);
+    Route::get('/emisores/{emisorId}/existencias/series', [\App\Http\Controllers\Api\ExistenciaInventarioController::class, 'series']);
 
     Route::get('/emisores/{emisorId}/categorias', [\App\Http\Controllers\Api\CategoriaController::class, 'index']);
     Route::post('/emisores/{emisorId}/categorias', [\App\Http\Controllers\Api\CategoriaController::class, 'store']);
@@ -192,6 +204,11 @@ Route::get('/emisores/{id}/establecimientos/{est}/logo-file', [LogoController::c
 Route::post('/facturacion/emitir', [FacturacionController::class, 'emitirFactura']);
 Route::get('/facturacion/comprobantes/{comprobante}', [FacturacionController::class, 'estadoComprobante'])->middleware('auth:sanctum');
 Route::post('/facturacion/comprobantes/{comprobante}/reintentar', [FacturacionController::class, 'reintentarProcesamiento'])->middleware('auth:sanctum');
+
+
+
+
+
 
 
 

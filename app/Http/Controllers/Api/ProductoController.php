@@ -15,18 +15,24 @@ use App\Exceptions\InvalidInventoryControlException;
 
 class ProductoController extends Controller
 {
+    use \App\Traits\ResolvesEmisor;
+
     public function index(string $emisorId): JsonResponse
     {
-        $productos = Producto::with(['categoria', 'bodegas'])->where('emisor_id', $emisorId)->get();
+        $resolvedId = $this->resolveEmisorId($emisorId);
+        \Illuminate\Support\Facades\Log::info("ProductoController::index called with emisorId: " . $emisorId . " resolved to: " . $resolvedId);
+        $productos = Producto::with(['categoria', 'bodegas'])->where('emisor_id', $resolvedId)->get();
+        \Illuminate\Support\Facades\Log::info("ProductoController::index returning count: " . $productos->count());
         return response()->json(['data' => $productos]);
     }
 
     public function store(StoreProductoRequest $request, string $emisorId, ProductoStockService $stockService): JsonResponse
     {
+        $resolvedId = $this->resolveEmisorId($emisorId);
         try {
-            $producto = DB::transaction(function () use ($request, $emisorId, $stockService) {
+            $producto = DB::transaction(function () use ($request, $resolvedId, $stockService) {
                 $data = $request->validated();
-                $data['emisor_id'] = $emisorId;
+                $data['emisor_id'] = $resolvedId;
                 
                 $producto = Producto::create($data);
 
@@ -51,13 +57,15 @@ class ProductoController extends Controller
 
     public function show(string $emisorId, string $id): JsonResponse
     {
-        $producto = Producto::with(['categoria', 'bodegas'])->where('emisor_id', $emisorId)->findOrFail($id);
+        $resolvedId = $this->resolveEmisorId($emisorId);
+        $producto = Producto::with(['categoria', 'bodegas'])->where('emisor_id', $resolvedId)->findOrFail($id);
         return response()->json(['data' => $producto]);
     }
 
     public function update(UpdateProductoRequest $request, string $emisorId, string $id): JsonResponse
     {
-        $producto = Producto::where('emisor_id', $emisorId)->findOrFail($id);
+        $resolvedId = $this->resolveEmisorId($emisorId);
+        $producto = Producto::where('emisor_id', $resolvedId)->findOrFail($id);
         $producto->update($request->validated());
 
         return response()->json([
@@ -68,7 +76,8 @@ class ProductoController extends Controller
 
     public function destroy(string $emisorId, string $id): JsonResponse
     {
-        $producto = Producto::where('emisor_id', $emisorId)->findOrFail($id);
+        $resolvedId = $this->resolveEmisorId($emisorId);
+        $producto = Producto::where('emisor_id', $resolvedId)->findOrFail($id);
         $producto->delete();
 
         return response()->json(['message' => 'Producto eliminado exitosamente']);
@@ -76,7 +85,8 @@ class ProductoController extends Controller
 
     public function stockDisponible(string $emisorId, string $id): JsonResponse
     {
-        $producto = Producto::where('emisor_id', $emisorId)->findOrFail($id);
+        $resolvedId = $this->resolveEmisorId($emisorId);
+        $producto = Producto::where('emisor_id', $resolvedId)->findOrFail($id);
 
         // Si es servicio o sin control, no hay stock que devolver
         if ($producto->tipo->value === 'SERVICIO' || $producto->tipo_control_inventario->value === 'SIN_CONTROL') {

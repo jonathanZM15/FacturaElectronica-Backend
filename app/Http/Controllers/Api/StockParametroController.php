@@ -13,10 +13,13 @@ use Illuminate\Validation\Rules\Enum;
 
 class StockParametroController extends Controller
 {
+    use \App\Traits\ResolvesEmisor;
+
     // GET /emisores/{emisorId}/stock-parametros - List all with product and bodega names
     public function index(string $emisorId): JsonResponse
     {
-        $parametros = ProductoBodegaStock::whereHas('producto', fn($q) => $q->where('emisor_id', $emisorId))
+        $resolvedId = $this->resolveEmisorId($emisorId);
+        $parametros = ProductoBodegaStock::whereHas('producto', fn($q) => $q->where('emisor_id', $resolvedId))
             ->with(['producto:id,nombre,codigo', 'bodega:id,nombre,tipo'])
             ->get();
         return response()->json(['data' => $parametros]);
@@ -53,7 +56,8 @@ class StockParametroController extends Controller
     // DELETE /emisores/{emisorId}/stock-parametros/{id}
     public function destroy(string $emisorId, string $id): JsonResponse
     {
-        $parametro = ProductoBodegaStock::whereHas('producto', fn($q) => $q->where('emisor_id', $emisorId))->findOrFail($id);
+        $resolvedId = $this->resolveEmisorId($emisorId);
+        $parametro = ProductoBodegaStock::whereHas('producto', fn($q) => $q->where('emisor_id', $resolvedId))->findOrFail($id);
         $parametro->delete();
         return response()->json(['message' => 'Parámetro de stock eliminado exitosamente']);
     }

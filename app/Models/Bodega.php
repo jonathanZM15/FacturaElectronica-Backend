@@ -13,19 +13,29 @@ class Bodega extends Model
     protected $table = 'bodegas';
 
     protected $fillable = [
-        'emisor_id',
+        'establecimiento_id',
+        'codigo',
         'nombre',
         'tipo',
+        'permite_venta',
         'creador_id',
     ];
 
     protected $casts = [
         'tipo' => TipoBodega::class,
+        'permite_venta' => 'boolean',
     ];
 
-    public function company()
+    protected $appends = ['emisor_id'];
+
+    public function getEmisorIdAttribute(): ?int
     {
-        return $this->belongsTo(Company::class, 'emisor_id');
+        return $this->establecimiento?->emisor_id;
+    }
+
+    public function establecimiento()
+    {
+        return $this->belongsTo(Establecimiento::class, 'establecimiento_id');
     }
 
     public function creador()
@@ -42,6 +52,10 @@ class Bodega extends Model
                 'base_comparacion',
                 'activo',
                 'observacion',
+                'fecha_registro',
+                'stock_fisico',
+                'stock_disponible',
+                'stock_reservado',
             ])
             ->withTimestamps();
     }
