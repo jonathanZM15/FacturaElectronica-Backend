@@ -78,7 +78,9 @@
                             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin: 30px 0;">
                                 <tr>
                                     <td align="center">
-                                        <a href="{{ $url }}" style="display: inline-block; padding: 16px 40px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; transition: transform 0.3s ease;">👉 Verificar mi correo electrónico</a>
+                                        <a href="{{ $url }}" style="display: inline-block; padding: 16px 40px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; transition: transform 0.3s ease; margin-bottom: 12px; width: 80%;">💻 Verificar en la Web</a>
+                                        <br>
+                                        <a href="{{ str_replace(config('app.frontend_url', 'http://localhost:3000'), 'facturatesis:/', $url) }}" style="display: inline-block; padding: 16px 40px; background: linear-gradient(135deg, #059669 0%, #10B981 100%); color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; transition: transform 0.3s ease; width: 80%;">📱 Verificar en la App Móvil</a>
                                     </td>
                                 </tr>
                             </table>

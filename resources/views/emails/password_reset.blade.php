@@ -36,7 +36,9 @@
                             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin: 30px 0;">
                                 <tr>
                                     <td align="center">
-                                        <a href="{{ $url }}" style="display: inline-block; padding: 16px 40px; background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%); color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; transition: transform 0.3s ease;">👉 Restablecer mi contraseña</a>
+                                        <a href="{{ $url }}" style="display: inline-block; padding: 16px 40px; background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%); color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; transition: transform 0.3s ease; margin-bottom: 12px; width: 80%;">💻 Restablecer en la Web</a>
+                                        <br>
+                                        <a href="{{ str_replace(config('app.frontend_url', 'http://localhost:3000'), 'facturatesis:/', $url) }}" style="display: inline-block; padding: 16px 40px; background: linear-gradient(135deg, #059669 0%, #10B981 100%); color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; transition: transform 0.3s ease; width: 80%;">📱 Restablecer en la App Móvil</a>
                                     </td>
                                 </tr>
                             </table>
