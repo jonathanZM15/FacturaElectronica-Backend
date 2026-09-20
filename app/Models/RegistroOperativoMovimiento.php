@@ -50,4 +50,19 @@ class RegistroOperativoMovimiento extends Model
     {
         return $this->belongsTo(User::class, 'usuario_id');
     }
+
+    public function motivo()
+    {
+        return $this->belongsTo(MotivoMovimiento::class, 'motivo_id');
+    }
+
+    public function origen()
+    {
+        return $this->belongsTo(Bodega::class, 'bodega_origen_id');
+    }
+
+    public function destino()
+    {
+        return $this->belongsTo(Bodega::class, 'bodega_destino_id');
+    }
 }

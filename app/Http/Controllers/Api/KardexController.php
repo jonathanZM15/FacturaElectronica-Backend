@@ -19,7 +19,10 @@ class KardexController extends Controller
         $query = Kardex::with([
             'producto:id,codigo,nombre',
             'bodega:id,codigo,nombre,establecimiento_id',
-            'bodega.establecimiento:id,codigo,nombre'
+            'bodega.establecimiento:id,codigo,nombre',
+            'registroOperativo:id,numero,motivo_id,observacion',
+            'registroOperativo.motivo:id,codigo,descripcion,tipo_movimiento',
+            'registroOperativo.detalles:id,registro_operativo_id,producto_id,costo_unitario,costo_total'
         ])->whereHas('bodega.establecimiento', function ($q) use ($resolvedId) {
             $q->where('emisor_id', $resolvedId);
         });
@@ -44,6 +47,14 @@ class KardexController extends Controller
         // 4. Filtro por Tipo de Movimiento
         if ($request->filled('tipo_movimiento')) {
             $query->where('tipo_movimiento', $request->tipo_movimiento);
+        }
+
+        // 5. Filtro por Motivo (v6) - Blindado exclusivamente a documentos tipo RegistroOperativo
+        if ($request->filled('motivo_id')) {
+            $query->where('documento_origen_tipo', 'RegistroOperativo')
+                ->whereHas('registroOperativo', function ($q) use ($request) {
+                    $q->where('motivo_id', $request->motivo_id);
+                });
         }
 
         // 5. Filtro por Fechas

@@ -24,7 +24,8 @@ class TransferenciaRequest extends FormRequest
         return [
             'bodega_origen_id' => ['required', 'integer', 'exists:bodegas,id'],
             'bodega_destino_id' => ['required', 'integer', 'exists:bodegas,id', 'different:bodega_origen_id'],
-            'observacion' => ['required', 'string', 'max:255'],
+            'motivo_id' => ['nullable', 'integer', 'exists:motivos_movimiento,id'],
+            'observacion' => ['nullable', 'string', 'max:255'],
             
             'detalles' => ['required', 'array', 'min:1'],
             'detalles.*.producto_id' => ['required', 'integer', 'exists:productos,id'],
@@ -44,6 +45,7 @@ class TransferenciaRequest extends FormRequest
         return [
             'bodega_origen_id' => 'bodega de origen',
             'bodega_destino_id' => 'bodega de destino',
+            'motivo_id' => 'motivo del movimiento',
             'detalles.*.producto_id' => 'producto',
             'detalles.*.cantidad' => 'cantidad del producto',
             'detalles.*.lotes.*.numero_lote' => 'número de lote',
@@ -52,9 +54,82 @@ class TransferenciaRequest extends FormRequest
         ];
     }
 
+    public function messages(): array
+    {
+        return [
+            'motivo_id.required' => 'El motivo del movimiento es obligatorio.',
+            'motivo_id.exists' => 'El motivo seleccionado no es válido o no existe.',
+        ];
+    }
+
     public function withValidator(Validator $validator): void
     {
         $validator->after(function ($validator) {
+            $isReacondicionar = str_contains($this->path(), 'reacondicionar');
+            $motivoId = $this->input('motivo_id');
+            $bodegaOrigenId = $this->input('bodega_origen_id');
+            $bodegaDestinoId = $this->input('bodega_destino_id');
+
+            $origen = $bodegaOrigenId ? \App\Models\Bodega::find($bodegaOrigenId) : null;
+            $destino = $bodegaDestinoId ? \App\Models\Bodega::find($bodegaDestinoId) : null;
+
+            $origenTipo = $origen ? ($origen->tipo instanceof \BackedEnum ? $origen->tipo->value : (string)$origen->tipo) : null;
+            $destinoTipo = $destino ? ($destino->tipo instanceof \BackedEnum ? $destino->tipo->value : (string)$destino->tipo) : null;
+
+            if ($isReacondicionar) {
+                if ($origenTipo && $origenTipo !== 'MERMAS') {
+                    $validator->errors()->add('bodega_origen_id', 'Para un reacondicionamiento (MOV-12), la bodega origen debe ser de tipo MERMAS.');
+                }
+                if ($destinoTipo && $destinoTipo === 'MERMAS') {
+                    $validator->errors()->add('bodega_destino_id', 'Para un reacondicionamiento (MOV-12), la bodega destino no puede ser de tipo MERMAS.');
+                }
+                if (!$motivoId) {
+                    $validator->errors()->add('motivo_id', 'El motivo del movimiento es obligatorio.');
+                } else {
+                    $motivo = \App\Models\MotivoMovimiento::find($motivoId);
+                    $tipoEnum = $motivo?->tipo_movimiento instanceof \BackedEnum ? $motivo->tipo_movimiento->value : (string)$motivo?->tipo_movimiento;
+                    if ($tipoEnum !== \App\Enums\TipoMovimientoInventario::MOV_12_REACONDICIONAMIENTO_MERMAS->value) {
+                        $validator->errors()->add('motivo_id', 'El motivo seleccionado no corresponde a Reacondicionamiento (MOV-12).');
+                    }
+                    if ($motivo?->codigo === 'REC-99' && empty(trim((string)$this->input('observacion')))) {
+                        $validator->errors()->add('observacion', 'La observación general es obligatoria cuando el motivo seleccionado es Otro (REC-99).');
+                    }
+                }
+            } elseif ($destinoTipo === 'MERMAS') {
+                if ($origenTipo === 'MERMAS') {
+                    $validator->errors()->add('bodega_origen_id', 'La bodega origen no puede ser de tipo MERMAS para un envío a mermas (MOV-11).');
+                }
+                if ($origenTipo === 'TRANSITO') {
+                    $validator->errors()->add('bodega_origen_id', 'La bodega origen no puede ser de tipo TRÁNSITO.');
+                }
+                if (!$motivoId) {
+                    $validator->errors()->add('motivo_id', 'El motivo del movimiento es obligatorio.');
+                } else {
+                    $motivo = \App\Models\MotivoMovimiento::find($motivoId);
+                    $tipoEnum = $motivo?->tipo_movimiento instanceof \BackedEnum ? $motivo->tipo_movimiento->value : (string)$motivo?->tipo_movimiento;
+                    if ($tipoEnum !== \App\Enums\TipoMovimientoInventario::MOV_11_ENVIO_MERMAS->value) {
+                        $validator->errors()->add('motivo_id', 'El motivo seleccionado no corresponde a Envío a mermas (MOV-11).');
+                    }
+                    if ($motivo?->codigo === 'MER-99' && empty(trim((string)$this->input('observacion')))) {
+                        $validator->errors()->add('observacion', 'La observación general es obligatoria cuando el motivo seleccionado es Otro (MER-99).');
+                    }
+                }
+            } else {
+                if ($origenTipo === 'MERMAS') {
+                    $validator->errors()->add('bodega_origen_id', 'Para retirar productos de mermas debe usarse Reacondicionamiento (MOV-12).');
+                }
+                if ($motivoId) {
+                    $motivo = \App\Models\MotivoMovimiento::find($motivoId);
+                    $tipoEnum = $motivo?->tipo_movimiento instanceof \BackedEnum ? $motivo->tipo_movimiento->value : (string)$motivo?->tipo_movimiento;
+                    if ($tipoEnum !== \App\Enums\TipoMovimientoInventario::MOV_06_TRANSFERENCIA_INTERNA->value) {
+                        $validator->errors()->add('motivo_id', 'El motivo seleccionado no corresponde a Transferencia Interna (MOV-06).');
+                    }
+                    if ($motivo?->codigo === 'TRA-99' && empty(trim((string)$this->input('observacion')))) {
+                        $validator->errors()->add('observacion', 'La observación general es obligatoria cuando el motivo seleccionado es Otro (TRA-99).');
+                    }
+                }
+            }
+
             $detalles = $this->input('detalles', []);
             
             if (!is_array($detalles)) {

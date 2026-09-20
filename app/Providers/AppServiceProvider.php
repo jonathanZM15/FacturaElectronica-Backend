@@ -51,8 +51,8 @@ class AppServiceProvider extends ServiceProvider
                     return (string) $userCompany->id;
                 }
             }
-            $first = \App\Models\Company::first();
-            return $first ? (string) $first->id : (string) $value;
+            // No hay emisor válido — devolver el valor original para que el controlador lo maneje
+            return (string) $value;
         });
     }
 }

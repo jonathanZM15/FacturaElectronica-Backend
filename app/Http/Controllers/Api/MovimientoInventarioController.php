@@ -34,7 +34,7 @@ class MovimientoInventarioController extends Controller
             $usuarioId = $request->user()->id;
 
             $movimiento = $this->movimientoService->inventarioInicial(
-                $bodega, $request->detalles, $request->observacion ?? 'Inventario Inicial', $usuarioId
+                $bodega, $request->detalles, $request->observacion ?? 'Inventario Inicial', $usuarioId, $request->motivo_id
             );
 
             return response()->json(['message' => 'Inventario inicial registrado con éxito', 'data' => $movimiento], 201);
@@ -61,7 +61,7 @@ class MovimientoInventarioController extends Controller
             $usuarioId = $request->user()->id;
 
             $movimiento = $this->movimientoService->transferirReacondicionado(
-                $origen, $destino, $request->detalles, $request->observacion ?? '', $usuarioId
+                $origen, $destino, $request->detalles, $request->observacion ?? '', $usuarioId, $request->motivo_id
             );
 
             return response()->json(['message' => 'Reacondicionamiento realizado con éxito', 'data' => $movimiento], 201);
@@ -87,11 +87,11 @@ class MovimientoInventarioController extends Controller
             $tipo = $request->tipo;
             if (str_contains($tipo, 'POSITIVO')) {
                 $movimiento = $this->movimientoService->ajustarPositivo(
-                    $bodega, $request->detalles, $request->observacion, $usuarioId
+                    $bodega, $request->detalles, $request->observacion, $usuarioId, $request->motivo_id
                 );
             } else {
                 $movimiento = $this->movimientoService->ajustarNegativo(
-                    $bodega, $request->detalles, $request->observacion, $usuarioId
+                    $bodega, $request->detalles, $request->observacion, $usuarioId, $request->motivo_id
                 );
             }
 

@@ -32,7 +32,8 @@ class TransferenciaController extends Controller
             $destino,
             $detalles,
             $observacion,
-            $usuarioId
+            $usuarioId,
+            $validated['motivo_id'] ?? null
         );
 
         $tipoGrabado = $movimiento->tipo_movimiento instanceof \BackedEnum 

@@ -32,7 +32,7 @@ class MovimientoInventarioService
         return $prefijo . '-' . str_pad($count + 1, 6, '0', STR_PAD_LEFT);
     }
 
-    public function transferir(Bodega $origen, Bodega $destino, array $detalles, ?string $justificacion, int $usuarioId): RegistroOperativoMovimiento
+    public function transferir(Bodega $origen, Bodega $destino, array $detalles, ?string $justificacion, int $usuarioId, ?int $motivoId = null): RegistroOperativoMovimiento
     {
         if ($origen->establecimiento_id !== $destino->establecimiento_id) {
             throw new InvalidWarehouseOperationException("Las transferencias internas (MOV-06) solo están permitidas entre bodegas del mismo establecimiento.");
@@ -42,7 +42,7 @@ class MovimientoInventarioService
             throw new InvalidWarehouseOperationException("La bodega origen y destino no pueden ser la misma.");
         }
 
-        return DB::transaction(function () use ($origen, $destino, $detalles, $justificacion, $usuarioId) {
+        return DB::transaction(function () use ($origen, $destino, $detalles, $justificacion, $usuarioId, $motivoId) {
             $emisorId = $origen->establecimiento->emisor_id;
             $destinoTipo = $destino->tipo instanceof \BackedEnum ? $destino->tipo->value : $destino->tipo;
             $tipoEnum = ($destinoTipo === 'MERMAS') 
@@ -54,6 +54,7 @@ class MovimientoInventarioService
                 'numero' => $this->generarNumero($tipoEnum, $emisorId),
                 'fecha' => now(),
                 'tipo_movimiento' => $tipoEnum,
+                'motivo_id' => $motivoId,
                 'estado' => EstadoRegistroOperativo::CONFIRMADO,
                 'establecimiento_origen_id' => $origen->establecimiento_id,
                 'bodega_origen_id' => $origen->id,
@@ -85,9 +86,15 @@ class MovimientoInventarioService
                 $this->descontarStock($origen, $producto->id, $detalle['cantidad']);
                 $this->incrementarStock($destino, $producto->id, $detalle['cantidad']);
                 
+                $costoUnitario = isset($detalle['costo_unitario']) ? floatval($detalle['costo_unitario']) : 0;
+                $costoTotal = round(floatval($detalle['cantidad']) * $costoUnitario, 6);
+
                 $registroDetalle = $movimiento->detalles()->create([
                     'producto_id' => $producto->id,
                     'cantidad' => $detalle['cantidad'],
+                    'costo_unitario' => $costoUnitario,
+                    'costo_total' => $costoTotal,
+                    'observacion_detalle' => $detalle['observacion_detalle'] ?? null,
                 ]);
 
                 // 2. Kardex (Doble asiento)
@@ -165,10 +172,19 @@ class MovimientoInventarioService
                             throw new InvalidWarehouseOperationException("La serie {$serieData['numero_serie']} no está disponible en la bodega de origen para transferir.");
                         }
                         
-                        // Mover serie a la nueva bodega
-                        $serie->update([
-                            'bodega_actual_id' => $destino->id
-                        ]);
+                        // Mover serie a la nueva bodega y si es MOV-11 actualizar estado a DAÑADA (v6)
+                        if ($tipoEnum === TipoMovimientoInventario::MOV_11_ENVIO_MERMAS) {
+                            $serie->update([
+                                'bodega_actual_id' => $destino->id,
+                                'estado' => EstadoSerie::DANADA,
+                                'fecha_actualizacion_manual_estado' => now(),
+                                'usuario_actualizacion_manual_id' => $usuarioId,
+                            ]);
+                        } else {
+                            $serie->update([
+                                'bodega_actual_id' => $destino->id,
+                            ]);
+                        }
 
                         $registroDetalle->series()->create(['serie_id' => $serie->id]);
                     }
@@ -178,7 +194,7 @@ class MovimientoInventarioService
             return $movimiento;
         });
     }
-    public function transferirReacondicionado(Bodega $origen, Bodega $destino, array $detalles, string $justificacion, int $usuarioId): RegistroOperativoMovimiento
+    public function transferirReacondicionado(Bodega $origen, Bodega $destino, array $detalles, string $justificacion, int $usuarioId, ?int $motivoId = null): RegistroOperativoMovimiento
     {
         if (empty(trim($justificacion))) {
             throw new InvalidWarehouseOperationException("El reacondicionamiento (MOV-12) requiere obligatoriamente una justificación.");
@@ -196,7 +212,7 @@ class MovimientoInventarioService
             throw new InvalidWarehouseOperationException("Para un reacondicionamiento, la bodega destino NO puede ser de tipo MERMAS.");
         }
 
-        return DB::transaction(function () use ($origen, $destino, $detalles, $justificacion, $usuarioId) {
+        return DB::transaction(function () use ($origen, $destino, $detalles, $justificacion, $usuarioId, $motivoId) {
             $emisorId = $origen->establecimiento->emisor_id;
             $tipoEnum = TipoMovimientoInventario::MOV_12_REACONDICIONAMIENTO_MERMAS;
             
@@ -205,6 +221,7 @@ class MovimientoInventarioService
                 'numero' => $this->generarNumero($tipoEnum, $emisorId),
                 'fecha' => now(),
                 'tipo_movimiento' => $tipoEnum,
+                'motivo_id' => $motivoId,
                 'estado' => EstadoRegistroOperativo::CONFIRMADO,
                 'establecimiento_origen_id' => $origen->establecimiento_id,
                 'bodega_origen_id' => $origen->id,
@@ -236,9 +253,15 @@ class MovimientoInventarioService
                 $this->descontarStock($origen, $producto->id, $detalle['cantidad']);
                 $this->incrementarStock($destino, $producto->id, $detalle['cantidad']);
                 
+                $costoUnitario = isset($detalle['costo_unitario']) ? floatval($detalle['costo_unitario']) : 0;
+                $costoTotal = round(floatval($detalle['cantidad']) * $costoUnitario, 6);
+
                 $registroDetalle = $movimiento->detalles()->create([
                     'producto_id' => $producto->id,
                     'cantidad' => $detalle['cantidad'],
+                    'costo_unitario' => $costoUnitario,
+                    'costo_total' => $costoTotal,
+                    'observacion_detalle' => $detalle['observacion_detalle'] ?? null,
                 ]);
 
                 // 2. Kardex (Doble asiento)
@@ -333,23 +356,23 @@ class MovimientoInventarioService
         });
     }
 
-    public function inventarioInicial(Bodega $destino, array $detalles, string $justificacion, int $usuarioId): RegistroOperativoMovimiento
+    public function inventarioInicial(Bodega $destino, array $detalles, string $justificacion, int $usuarioId, ?int $motivoId = null): RegistroOperativoMovimiento
     {
-        return $this->procesarEntrada(TipoMovimientoInventario::MOV_01_INVENTARIO_INICIAL, $destino, $detalles, $justificacion, $usuarioId);
+        return $this->procesarEntrada(TipoMovimientoInventario::MOV_01_INVENTARIO_INICIAL, $destino, $detalles, $justificacion, $usuarioId, $motivoId);
     }
 
-    public function ajustarPositivo(Bodega $destino, array $detalles, string $justificacion, int $usuarioId): RegistroOperativoMovimiento
+    public function ajustarPositivo(Bodega $destino, array $detalles, string $justificacion, int $usuarioId, ?int $motivoId = null): RegistroOperativoMovimiento
     {
-        return $this->procesarEntrada(TipoMovimientoInventario::MOV_09_AJUSTE_POSITIVO, $destino, $detalles, $justificacion, $usuarioId);
+        return $this->procesarEntrada(TipoMovimientoInventario::MOV_09_AJUSTE_POSITIVO, $destino, $detalles, $justificacion, $usuarioId, $motivoId);
     }
 
-    private function procesarEntrada(TipoMovimientoInventario $tipoEnum, Bodega $destino, array $detalles, string $justificacion, int $usuarioId): RegistroOperativoMovimiento
+    private function procesarEntrada(TipoMovimientoInventario $tipoEnum, Bodega $destino, array $detalles, string $justificacion, int $usuarioId, ?int $motivoId = null): RegistroOperativoMovimiento
     {
         if (empty(trim($justificacion))) {
             throw new InvalidWarehouseOperationException("Las entradas (ajustes o inventario inicial) requieren justificación.");
         }
 
-        return DB::transaction(function () use ($tipoEnum, $destino, $detalles, $justificacion, $usuarioId) {
+        return DB::transaction(function () use ($tipoEnum, $destino, $detalles, $justificacion, $usuarioId, $motivoId) {
             $emisorId = $destino->establecimiento->emisor_id;
             
             $movimiento = RegistroOperativoMovimiento::create([
@@ -357,6 +380,7 @@ class MovimientoInventarioService
                 'numero' => $this->generarNumero($tipoEnum, $emisorId),
                 'fecha' => now(),
                 'tipo_movimiento' => $tipoEnum,
+                'motivo_id' => $motivoId,
                 'estado' => EstadoRegistroOperativo::CONFIRMADO,
                 'establecimiento_destino_id' => $destino->establecimiento_id,
                 'bodega_destino_id' => $destino->id,
@@ -366,6 +390,21 @@ class MovimientoInventarioService
 
             foreach ($detalles as $detalle) {
                 $producto = Producto::find($detalle['producto_id']);
+                if (!$producto) {
+                    throw new InvalidWarehouseOperationException("Producto no encontrado.");
+                }
+
+                // VALIDACIÓN MOV-01 (v6): Solo se permite antes de que dicha bodega haya tenido movimientos confirmados para este producto
+                if ($tipoEnum === TipoMovimientoInventario::MOV_01_INVENTARIO_INICIAL) {
+                    $tieneHistorial = Kardex::where('producto_id', $producto->id)
+                        ->where('bodega_id', $destino->id)
+                        ->exists();
+                    if ($tieneHistorial) {
+                        throw new InvalidWarehouseOperationException(
+                            "El producto '{$producto->nombre}' (Código: {$producto->codigo}) ya registra movimientos previos en la bodega '{$destino->nombre}'. El Inventario Inicial (MOV-01) solo se permite antes de que la bodega tenga movimientos confirmados para este producto. Utilice MOV-09 Ajuste positivo en su lugar."
+                        );
+                    }
+                }
                 
                 // VALIDACIONES DE CONSISTENCIA
                 if ($producto->tipo_control_inventario->value === 'LOTE') {
@@ -382,12 +421,23 @@ class MovimientoInventarioService
                     }
                 }
 
+                // Stock previo y cálculo de costos (v6)
+                $cantidadActual = ProductoBodegaStock::where('producto_id', $producto->id)->where('bodega_id', $destino->id)->value('stock_disponible') ?? 0;
+                $cantidadFinal = floatval($cantidadActual) + floatval($detalle['cantidad']);
+                $costoUnitario = isset($detalle['costo_unitario']) ? floatval($detalle['costo_unitario']) : 0;
+                $costoTotal = round(floatval($detalle['cantidad']) * $costoUnitario, 6);
+
                 // 1. Stock General
                 $this->incrementarStock($destino, $producto->id, $detalle['cantidad']);
                 
                 $registroDetalle = $movimiento->detalles()->create([
                     'producto_id' => $producto->id,
                     'cantidad' => $detalle['cantidad'],
+                    'costo_unitario' => $costoUnitario,
+                    'costo_total' => $costoTotal,
+                    'cantidad_actual' => $cantidadActual,
+                    'cantidad_final' => $cantidadFinal,
+                    'observacion_detalle' => $detalle['observacion_detalle'] ?? null,
                 ]);
 
                 // 2. Kardex
@@ -463,13 +513,13 @@ class MovimientoInventarioService
         });
     }
 
-    public function ajustarNegativo(Bodega $origen, array $detalles, string $justificacion, int $usuarioId): RegistroOperativoMovimiento
+    public function ajustarNegativo(Bodega $origen, array $detalles, string $justificacion, int $usuarioId, ?int $motivoId = null): RegistroOperativoMovimiento
     {
         if (empty(trim($justificacion))) {
             throw new InvalidWarehouseOperationException("Los ajustes requieren justificación.");
         }
 
-        return DB::transaction(function () use ($origen, $detalles, $justificacion, $usuarioId) {
+        return DB::transaction(function () use ($origen, $detalles, $justificacion, $usuarioId, $motivoId) {
             $emisorId = $origen->establecimiento->emisor_id;
             $tipoEnum = TipoMovimientoInventario::MOV_10_AJUSTE_NEGATIVO;
             
@@ -478,6 +528,7 @@ class MovimientoInventarioService
                 'numero' => $this->generarNumero($tipoEnum, $emisorId),
                 'fecha' => now(),
                 'tipo_movimiento' => $tipoEnum,
+                'motivo_id' => $motivoId,
                 'estado' => EstadoRegistroOperativo::CONFIRMADO,
                 'establecimiento_origen_id' => $origen->establecimiento_id,
                 'bodega_origen_id' => $origen->id,
@@ -503,12 +554,23 @@ class MovimientoInventarioService
                     }
                 }
 
+                // Stock previo y cálculo de costos (v6)
+                $cantidadActual = ProductoBodegaStock::where('producto_id', $producto->id)->where('bodega_id', $origen->id)->value('stock_disponible') ?? 0;
+                $cantidadFinal = floatval($cantidadActual) - floatval($detalle['cantidad']);
+                $costoUnitario = isset($detalle['costo_unitario']) ? floatval($detalle['costo_unitario']) : 0;
+                $costoTotal = round(floatval($detalle['cantidad']) * $costoUnitario, 6);
+
                 // 1. Stock General
                 $this->descontarStock($origen, $producto->id, $detalle['cantidad']);
                 
                 $registroDetalle = $movimiento->detalles()->create([
                     'producto_id' => $producto->id,
                     'cantidad' => $detalle['cantidad'],
+                    'costo_unitario' => $costoUnitario,
+                    'costo_total' => $costoTotal,
+                    'cantidad_actual' => $cantidadActual,
+                    'cantidad_final' => $cantidadFinal,
+                    'observacion_detalle' => $detalle['observacion_detalle'] ?? null,
                 ]);
 
                 // 2. Kardex
@@ -649,13 +711,13 @@ class MovimientoInventarioService
 
     // --- FASE 5: TRANSFERENCIAS POR SUCURSAL (MOV-07 y MOV-08) ---
 
-    public function despacharTransferencia(Bodega $origen, Bodega $destino, array $detalles, string $justificacion, int $usuarioId): RegistroOperativoMovimiento
+    public function despacharTransferencia(Bodega $origen, Bodega $destino, array $detalles, string $justificacion, int $usuarioId, ?int $motivoId = null): RegistroOperativoMovimiento
     {
         if ($origen->establecimiento_id === $destino->establecimiento_id) {
             throw new InvalidWarehouseOperationException("Para enviar entre la misma sucursal, use una transferencia interna (MOV-06).");
         }
 
-        return DB::transaction(function () use ($origen, $destino, $detalles, $justificacion, $usuarioId) {
+        return DB::transaction(function () use ($origen, $destino, $detalles, $justificacion, $usuarioId, $motivoId) {
             $emisorId = $origen->establecimiento->emisor_id;
             
             // Buscar Bodega Tránsito del emisor
@@ -674,6 +736,7 @@ class MovimientoInventarioService
                 'numero' => $this->generarNumero($tipoEnum, $emisorId),
                 'fecha' => now(),
                 'tipo_movimiento' => $tipoEnum,
+                'motivo_id' => $motivoId,
                 'estado' => \App\Enums\EstadoRegistroOperativo::EN_PROCESO,
                 'estado_operativo_transferencia' => \App\Enums\EstadoOperativoTransferencia::EN_TRANSITO,
                 'estado_operativo_recepcion' => \App\Enums\EstadoOperativoRecepcion::PENDIENTE_DE_DESCARGA,
@@ -699,7 +762,15 @@ class MovimientoInventarioService
                 $this->descontarStock($origen, $producto->id, $detalle['cantidad']);
                 $this->incrementarStock($bodegaTransito, $producto->id, $detalle['cantidad']);
                 
-                $registroDetalle = $movimiento->detalles()->create(['producto_id' => $producto->id, 'cantidad' => $detalle['cantidad']]);
+                $costoUnitario = isset($detalle['costo_unitario']) ? floatval($detalle['costo_unitario']) : 0;
+                $costoTotal = round(floatval($detalle['cantidad']) * $costoUnitario, 4);
+
+                $registroDetalle = $movimiento->detalles()->create([
+                    'producto_id' => $producto->id,
+                    'cantidad' => $detalle['cantidad'],
+                    'costo_unitario' => $costoUnitario,
+                    'costo_total' => $costoTotal,
+                ]);
 
                 // Kardex Origen -> Transito
                 $saldoOrigen = ProductoBodegaStock::where('producto_id', $producto->id)->where('bodega_id', $origen->id)->value('stock_fisico');

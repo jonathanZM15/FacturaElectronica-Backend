@@ -175,6 +175,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/emisores/{emisorId}/movimientos/inventario-inicial', [\App\Http\Controllers\Api\MovimientoInventarioController::class, 'inventarioInicial']);
     Route::post('/emisores/{emisorId}/movimientos/reacondicionar', [\App\Http\Controllers\Api\MovimientoInventarioController::class, 'reacondicionar']);
     Route::get('/emisores/{emisorId}/movimientos/kardex', [\App\Http\Controllers\Api\KardexController::class, 'index']);
+    Route::get('/emisores/{emisorId}/motivos-movimiento', [\App\Http\Controllers\Api\MotivoMovimientoController::class, 'index']);
     
     // FASE 2: Consultas Read-Only
     Route::get('/emisores/{emisorId}/existencias', [\App\Http\Controllers\Api\ExistenciaInventarioController::class, 'consolidado']);

@@ -17,12 +17,20 @@ class RegistroOperativoDetalle extends Model
         'cantidad',
         'cantidad_sobrante',
         'tipo_incidencia',
-        'observacion_detalle'
+        'observacion_detalle',
+        'costo_unitario',
+        'costo_total',
+        'cantidad_actual',
+        'cantidad_final'
     ];
 
     protected $casts = [
         'cantidad' => 'decimal:6',
         'cantidad_sobrante' => 'decimal:6',
+        'costo_unitario' => 'decimal:6',
+        'costo_total' => 'decimal:6',
+        'cantidad_actual' => 'decimal:6',
+        'cantidad_final' => 'decimal:6',
     ];
 
     public function movimiento()

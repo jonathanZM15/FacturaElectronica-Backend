@@ -19,14 +19,15 @@ class BodegaController extends Controller
     public function index(Request $request, string $emisorId): JsonResponse
     {
         $resolvedId = $this->resolveEmisorId($emisorId);
+        \Illuminate\Support\Facades\Log::info("BodegaController::index called with emisorId: {$emisorId} resolved: " . ($resolvedId ?? 'NULL'));
         if (!$resolvedId) {
             return response()->json(['data' => []]);
         }
 
+        $estIds = Establecimiento::where('emisor_id', $resolvedId)->pluck('id');
+
         $query = Bodega::with(['creador:id,name', 'establecimiento:id,codigo,nombre,emisor_id'])
-            ->whereHas('establecimiento', function ($q) use ($resolvedId) {
-                $q->where('emisor_id', $resolvedId);
-            });
+            ->whereIn('establecimiento_id', $estIds);
 
         if ($request->filled('establecimiento_id')) {
             $query->where('establecimiento_id', $request->input('establecimiento_id'));
@@ -101,7 +102,10 @@ class BodegaController extends Controller
 
     public function show(string $emisorId, string $id): JsonResponse
     {
-        $resolvedId = $this->resolveEmisorId($emisorId) ?? (int)$emisorId;
+        $resolvedId = $this->resolveEmisorId($emisorId);
+        if (!$resolvedId) {
+            return response()->json(['message' => 'Emisor no encontrado.'], 404);
+        }
 
         $bodega = Bodega::with(['creador:id,name', 'establecimiento:id,codigo,nombre,emisor_id'])
             ->whereHas('establecimiento', function ($q) use ($resolvedId) {
@@ -113,7 +117,10 @@ class BodegaController extends Controller
 
     public function update(Request $request, string $emisorId, string $id): JsonResponse
     {
-        $resolvedId = $this->resolveEmisorId($emisorId) ?? (int)$emisorId;
+        $resolvedId = $this->resolveEmisorId($emisorId);
+        if (!$resolvedId) {
+            return response()->json(['message' => 'Emisor no encontrado.'], 404);
+        }
 
         $bodega = Bodega::whereHas('establecimiento', function ($q) use ($resolvedId) {
             $q->where('emisor_id', $resolvedId);
@@ -148,7 +155,10 @@ class BodegaController extends Controller
 
     public function destroy(string $emisorId, string $id): JsonResponse
     {
-        $resolvedId = $this->resolveEmisorId($emisorId) ?? (int)$emisorId;
+        $resolvedId = $this->resolveEmisorId($emisorId);
+        if (!$resolvedId) {
+            return response()->json(['message' => 'Emisor no encontrado.'], 404);
+        }
 
         $bodega = Bodega::whereHas('establecimiento', function ($q) use ($resolvedId) {
             $q->where('emisor_id', $resolvedId);

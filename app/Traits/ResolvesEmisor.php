@@ -27,8 +27,7 @@ trait ResolvesEmisor
             }
         }
 
-        // Fallback al primer emisor registrado en la base de datos
-        $first = Company::first();
-        return $first ? (int) $first->id : null;
+        // No hay emisor válido — los controladores deben manejar null
+        return null;
     }
 }

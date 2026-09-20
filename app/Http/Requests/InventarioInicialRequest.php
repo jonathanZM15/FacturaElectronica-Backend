@@ -13,7 +13,8 @@ class InventarioInicialRequest extends FormRequest
     {
         return [
             'bodega_id' => ['required', 'integer', 'exists:bodegas,id'],
-            'observacion' => ['required', 'string', 'max:255'],
+            'motivo_id' => ['required', 'integer', 'exists:motivos_movimiento,id'],
+            'observacion' => ['nullable', 'string', 'max:255'],
             'detalles' => ['required', 'array', 'min:1'],
             'detalles.*.producto_id' => ['required', 'integer', 'exists:productos,id'],
             'detalles.*.cantidad' => ['required', 'numeric', 'gt:0'],
@@ -25,9 +26,32 @@ class InventarioInicialRequest extends FormRequest
         ];
     }
 
+    public function messages(): array
+    {
+        return [
+            'motivo_id.required' => 'El motivo del movimiento es obligatorio.',
+            'motivo_id.exists' => 'El motivo seleccionado no es válido o no existe.',
+        ];
+    }
+
     public function withValidator(Validator $validator): void
     {
         $validator->after(function ($validator) {
+            // Validación de Motivo MOV-01 (v6)
+            $motivoId = $this->input('motivo_id');
+            if ($motivoId) {
+                $motivo = \App\Models\MotivoMovimiento::find($motivoId);
+                if ($motivo) {
+                    $tipoEnum = $motivo->tipo_movimiento instanceof \BackedEnum ? $motivo->tipo_movimiento->value : (string)$motivo->tipo_movimiento;
+                    if ($tipoEnum !== \App\Enums\TipoMovimientoInventario::MOV_01_INVENTARIO_INICIAL->value) {
+                        $validator->errors()->add('motivo_id', 'El motivo seleccionado no corresponde a Inventario Inicial (MOV-01).');
+                    }
+                    if ($motivo->codigo === 'INI-99' && empty(trim((string)$this->input('observacion')))) {
+                        $validator->errors()->add('observacion', 'La observación general es obligatoria cuando el motivo seleccionado es Otro (INI-99).');
+                    }
+                }
+            }
+
             $detalles = $this->input('detalles', []);
             if (!is_array($detalles)) return;
 

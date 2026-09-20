@@ -54,4 +54,19 @@ class Kardex extends Model
     {
         return $this->morphTo(__FUNCTION__, 'documento_origen_tipo', 'documento_origen_id');
     }
+
+    public function registroOperativo()
+    {
+        return $this->belongsTo(RegistroOperativoMovimiento::class, 'documento_origen_id');
+    }
+
+    public function setRelation($relation, $value)
+    {
+        // En eager loading (with), evita asignar RegistroOperativo a registros con otro documento_origen_tipo
+        if ($relation === 'registroOperativo' && $this->documento_origen_tipo !== 'RegistroOperativo') {
+            return parent::setRelation($relation, null);
+        }
+
+        return parent::setRelation($relation, $value);
+    }
 }
