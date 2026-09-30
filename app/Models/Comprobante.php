@@ -17,6 +17,8 @@ class Comprobante extends Model
         'establecimiento_id',
         'punto_emision_id',
         'cliente_id',
+        'comprobante_modificado_id',
+        'motivo_modificacion',
         'tipo_comprobante',
         'secuencial',
         'secuencial_formateado',
@@ -107,6 +109,11 @@ class Comprobante extends Model
     public function cliente()
     {
         return $this->belongsTo(Cliente::class, 'cliente_id');
+    }
+
+    public function comprobanteModificado()
+    {
+        return $this->belongsTo(Comprobante::class, 'comprobante_modificado_id');
     }
 
     public function detalles()

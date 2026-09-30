@@ -176,6 +176,167 @@ class SriXmlGeneratorService
         ];
     }
 
+    public function generarXmlNotaCredito(Comprobante $comprobante): array
+    {
+        $company = $comprobante->company;
+        $cliente = $comprobante->cliente;
+        $establecimiento = $comprobante->establecimiento;
+        $comprobanteModificado = $comprobante->comprobanteModificado;
+
+        $fechaEmision = $this->formatFechaEmision($comprobante->fecha_emision);
+        $fechaClave = $this->formatFechaClave($comprobante->fecha_emision);
+        $tipoComprobante = '04'; // Nota de Crédito
+        $ruc = (string) ($company->ruc ?? '');
+        $ambiente = $this->mapAmbiente($comprobante->ambiente ?? $company->ambiente ?? 'PRODUCCION');
+        $serie = $this->buildSerie($comprobante);
+        $secuencial = $this->padLeft((string) $comprobante->secuencial, 9);
+        $codigoNumerico = $this->padLeft((string) ($comprobante->secuencial ?? random_int(1, 99999999)), 8);
+        $tipoEmision = '1';
+
+        $claveAcceso = $comprobante->clave_acceso ?: (new SriClaveAccesoService())->generarFactura(
+            $fechaClave,
+            $ruc,
+            $ambiente,
+            $serie,
+            $secuencial,
+            $codigoNumerico,
+            $tipoComprobante,
+            $tipoEmision
+        );
+
+        $dom = new DOMDocument('1.0', 'UTF-8');
+        $dom->formatOutput = false;
+
+        $notaCredito = $dom->createElement('notaCredito');
+        $notaCredito->setAttribute('id', 'comprobante');
+        $notaCredito->setAttribute('version', '1.1.0');
+        $dom->appendChild($notaCredito);
+
+        $infoTributaria = $dom->createElement('infoTributaria');
+        $notaCredito->appendChild($infoTributaria);
+
+        $this->appendText($dom, $infoTributaria, 'ambiente', $ambiente);
+        $this->appendText($dom, $infoTributaria, 'tipoEmision', $tipoEmision);
+        $this->appendText($dom, $infoTributaria, 'razonSocial', $company->razon_social ?? '');
+        $this->appendText($dom, $infoTributaria, 'nombreComercial', $company->nombre_comercial ?? $company->razon_social ?? '');
+        $this->appendText($dom, $infoTributaria, 'ruc', $ruc);
+        $this->appendText($dom, $infoTributaria, 'claveAcceso', $claveAcceso);
+        $this->appendText($dom, $infoTributaria, 'codDoc', $tipoComprobante);
+        $this->appendText($dom, $infoTributaria, 'estab', $comprobante->codigo_establecimiento ?? substr($serie, 0, 3));
+        $this->appendText($dom, $infoTributaria, 'ptoEmi', $comprobante->punto_emision_codigo ?? substr($serie, 3, 3));
+        $this->appendText($dom, $infoTributaria, 'secuencial', $secuencial);
+        $this->appendText($dom, $infoTributaria, 'dirMatriz', $company->direccion_matriz ?? '');
+
+        if (($company->agente_retencion ?? 'NO') === 'SI') {
+            $this->appendText($dom, $infoTributaria, 'agenteRetencion', $company->numero_resolucion_agente_retencion ?? '');
+        }
+
+        $contribuyenteRimpe = $this->buildRimpe($company->regimen_tributario ?? '');
+        if ($contribuyenteRimpe) {
+            $this->appendText($dom, $infoTributaria, 'contribuyenteRimpe', $contribuyenteRimpe);
+        }
+
+        $infoNotaCredito = $dom->createElement('infoNotaCredito');
+        $notaCredito->appendChild($infoNotaCredito);
+
+        $this->appendText($dom, $infoNotaCredito, 'fechaEmision', $fechaEmision);
+        $this->appendText($dom, $infoNotaCredito, 'dirEstablecimiento', $establecimiento->direccion ?? $company->direccion_matriz ?? '');
+        $this->appendText($dom, $infoNotaCredito, 'tipoIdentificacionComprador', $this->mapTipoIdentificacion($cliente));
+        $this->appendText($dom, $infoNotaCredito, 'razonSocialComprador', $cliente->razon_social ?? 'CONSUMIDOR FINAL');
+        $this->appendText($dom, $infoNotaCredito, 'identificacionComprador', $cliente->identificacion ?? '9999999999999');
+        $this->appendText($dom, $infoNotaCredito, 'obligadoContabilidad', $company->obligado_contabilidad ?? 'NO');
+        
+        $this->appendText($dom, $infoNotaCredito, 'codDocModificado', $comprobanteModificado ? '01' : '01');
+        $this->appendText($dom, $infoNotaCredito, 'numDocModificado', $comprobanteModificado ? $comprobanteModificado->secuencial_formateado : '000-000-000000000');
+        $this->appendText($dom, $infoNotaCredito, 'fechaEmisionDocSustento', $comprobanteModificado ? $this->formatFechaEmision($comprobanteModificado->fecha_emision) : $fechaEmision);
+        $this->appendText($dom, $infoNotaCredito, 'totalSinImpuestos', $this->formatMoney($comprobante->subtotal_sin_impuestos ?? 0));
+        $this->appendText($dom, $infoNotaCredito, 'valorModificacion', $this->formatMoney($comprobante->total ?? 0));
+        $this->appendText($dom, $infoNotaCredito, 'moneda', 'DOLAR');
+
+        $totalConImpuestos = $dom->createElement('totalConImpuestos');
+        $infoNotaCredito->appendChild($totalConImpuestos);
+
+        $impuestosTotales = collect($comprobante->impuestos ?? [])
+            ->filter(fn ($impuesto) => $impuesto->comprobante_detalle_id === null);
+
+        if ($impuestosTotales->isEmpty()) {
+            $impuestosTotales = collect($comprobante->impuestos ?? []);
+        }
+
+        $impuestosConsolidados = [];
+        foreach ($impuestosTotales as $impuesto) {
+            $codigo = $this->mapCodigoImpuesto($impuesto);
+            $porcentaje = $this->mapCodigoPorcentaje($impuesto);
+            $key = $codigo . '_' . $porcentaje;
+
+            if (!isset($impuestosConsolidados[$key])) {
+                $impuestosConsolidados[$key] = [
+                    'codigo' => $codigo,
+                    'codigoPorcentaje' => $porcentaje,
+                    'baseImponible' => 0.0,
+                    'valor' => 0.0,
+                ];
+            }
+
+            $impuestosConsolidados[$key]['baseImponible'] += (float) ($impuesto->base_imponible ?? 0);
+            $impuestosConsolidados[$key]['valor'] += (float) ($impuesto->valor ?? 0);
+        }
+
+        foreach ($impuestosConsolidados as $impCons) {
+            $totalImpuesto = $dom->createElement('totalImpuesto');
+            $this->appendText($dom, $totalImpuesto, 'codigo', $impCons['codigo']);
+            $this->appendText($dom, $totalImpuesto, 'codigoPorcentaje', $impCons['codigoPorcentaje']);
+            $this->appendText($dom, $totalImpuesto, 'baseImponible', $this->formatMoney($impCons['baseImponible']));
+            $this->appendText($dom, $totalImpuesto, 'valor', $this->formatMoney($impCons['valor']));
+            $totalConImpuestos->appendChild($totalImpuesto);
+        }
+        
+        $this->appendText($dom, $infoNotaCredito, 'motivo', $comprobante->motivo_modificacion ?? 'Devolucion');
+
+        $detalles = $dom->createElement('detalles');
+        $notaCredito->appendChild($detalles);
+
+        foreach ($comprobante->detalles ?? [] as $detalle) {
+            $detalleNode = $dom->createElement('detalle');
+            $codigo = $detalle->producto ? $detalle->producto->codigo : null;
+            if ($codigo) {
+                $this->appendText($dom, $detalleNode, 'codigoInterno', $codigo);
+            }
+            $this->appendText($dom, $detalleNode, 'descripcion', $detalle->descripcion ?? '');
+            $this->appendText($dom, $detalleNode, 'cantidad', $this->formatCantidad($detalle->cantidad ?? 0));
+            $this->appendText($dom, $detalleNode, 'precioUnitario', $this->formatCantidad($detalle->precio_unitario ?? 0));
+            $this->appendText($dom, $detalleNode, 'descuento', $this->formatMoney($detalle->descuento ?? 0));
+            $this->appendText($dom, $detalleNode, 'precioTotalSinImpuesto', $this->formatMoney($detalle->subtotal ?? 0));
+
+            $impuestosNode = $dom->createElement('impuestos');
+            foreach ($detalle->impuestos ?? [] as $imp) {
+                $impuestoNode = $dom->createElement('impuesto');
+                $this->appendText($dom, $impuestoNode, 'codigo', $this->mapCodigoImpuesto($imp));
+                $this->appendText($dom, $impuestoNode, 'codigoPorcentaje', $this->mapCodigoPorcentaje($imp));
+                $this->appendText($dom, $impuestoNode, 'tarifa', $this->formatMoney($imp->tarifa ?? 0));
+                $this->appendText($dom, $impuestoNode, 'baseImponible', $this->formatMoney($imp->base_imponible ?? 0));
+                $this->appendText($dom, $impuestoNode, 'valor', $this->formatMoney($imp->valor ?? 0));
+                $impuestosNode->appendChild($impuestoNode);
+            }
+            $detalleNode->appendChild($impuestosNode);
+
+            $detalles->appendChild($detalleNode);
+        }
+
+        if (!empty($cliente->email ?? null)) {
+            $infoAdicional = $dom->createElement('infoAdicional');
+            $notaCredito->appendChild($infoAdicional);
+            $campoAdicional = $dom->createElement('campoAdicional', $cliente->email);
+            $campoAdicional->setAttribute('nombre', 'Email');
+            $infoAdicional->appendChild($campoAdicional);
+        }
+
+        return [
+            'xml' => $dom->saveXML(),
+            'clave_acceso' => $claveAcceso,
+        ];
+    }
+
     private function generarClaveAcceso(
         string $fechaEmision,
         string $tipoComprobante,
