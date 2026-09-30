@@ -411,4 +411,28 @@ class FacturacionController extends Controller
 
         return $detalles;
     }
+
+    public function downloadPdf(Comprobante $comprobante, \App\Services\PdfRideService $pdfService): mixed
+    {
+        if ($comprobante->estado_sri !== 'AUTORIZADO') {
+            return response()->json(['message' => 'El comprobante no está autorizado.'], 403);
+        }
+
+        $pdfContent = $pdfService->generateRide($comprobante);
+
+        return response($pdfContent)
+            ->header('Content-Type', 'application/pdf')
+            ->header('Content-Disposition', 'attachment; filename="' . $comprobante->clave_acceso . '.pdf"');
+    }
+
+    public function downloadXml(Comprobante $comprobante): mixed
+    {
+        if ($comprobante->estado_sri !== 'AUTORIZADO' || !$comprobante->xml_autorizado) {
+            return response()->json(['message' => 'El comprobante no está autorizado o no tiene XML.'], 403);
+        }
+
+        return response($comprobante->xml_autorizado)
+            ->header('Content-Type', 'application/xml')
+            ->header('Content-Disposition', 'attachment; filename="' . $comprobante->clave_acceso . '.xml"');
+    }
 }

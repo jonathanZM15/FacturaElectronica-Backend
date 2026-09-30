@@ -7,12 +7,14 @@
     "license": "MIT",
     "require": {
         "php": "^8.2",
+        "barryvdh/laravel-dompdf": "^3.1",
         "intervention/image": "^3.11",
         "jenssegers/agent": "^2.6",
         "laravel/framework": "^12.0",
         "laravel/sanctum": "^4.2",
         "laravel/tinker": "^2.10.1",
         "maatwebsite/excel": "^3.1",
+        "picqer/php-barcode-generator": "^3.3",
         "robrichards/xmlseclibs": "^3.1"
     },
     "require-dev": {

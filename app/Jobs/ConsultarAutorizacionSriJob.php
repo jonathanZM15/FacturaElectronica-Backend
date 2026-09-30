@@ -13,6 +13,9 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
+use App\Services\PdfRideService;
+use App\Mail\FacturaAutorizadaMail;
 use Throwable;
 
 class ConsultarAutorizacionSriJob implements ShouldQueue
@@ -26,7 +29,7 @@ class ConsultarAutorizacionSriJob implements ShouldQueue
     {
     }
 
-    public function handle(SriSoapService $soapService, SriComprobanteLifecycleService $lifecycle): void
+    public function handle(SriSoapService $soapService, SriComprobanteLifecycleService $lifecycle, PdfRideService $pdfService): void
     {
         $comprobante = Comprobante::find($this->comprobanteId);
 
@@ -66,6 +69,21 @@ class ConsultarAutorizacionSriJob implements ShouldQueue
                     'solicitud_payload' => $comprobante->clave_acceso,
                     'respuesta_payload' => json_encode($autorizacion, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                 ]);
+
+                // Generar PDF y Enviar Correo
+                try {
+                    $pdfContent = $pdfService->generateRide($comprobante);
+                    
+                    if ($comprobante->cliente && $comprobante->cliente->email) {
+                        Mail::to($comprobante->cliente->email)->send(new FacturaAutorizadaMail($comprobante, $pdfContent));
+                        Log::info('Correo de factura autorizada enviado', ['comprobante_id' => $comprobante->id, 'email' => $comprobante->cliente->email]);
+                    }
+                } catch (Throwable $e) {
+                    Log::error('Error al generar PDF o enviar correo de factura', [
+                        'comprobante_id' => $comprobante->id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
 
                 return;
             }

@@ -205,6 +205,8 @@ Route::get('/emisores/{id}/establecimientos/{est}/logo-file', [LogoController::c
 Route::post('/facturacion/emitir', [FacturacionController::class, 'emitirFactura']);
 Route::get('/facturacion/comprobantes/{comprobante}', [FacturacionController::class, 'estadoComprobante'])->middleware('auth:sanctum');
 Route::post('/facturacion/comprobantes/{comprobante}/reintentar', [FacturacionController::class, 'reintentarProcesamiento'])->middleware('auth:sanctum');
+Route::get('/facturacion/comprobantes/{comprobante}/pdf', [FacturacionController::class, 'downloadPdf'])->middleware('auth:sanctum');
+Route::get('/facturacion/comprobantes/{comprobante}/xml', [FacturacionController::class, 'downloadXml'])->middleware('auth:sanctum');
 
 
 
