@@ -202,14 +202,12 @@ Route::post('/companies/{company}/logo', [LogoController::class, 'store'])->midd
 Route::get('/emisores/{id}/establecimientos/{est}/logo-file', [LogoController::class, 'establecimientos_file'])->name('establecimientos.logo.file');
 
 // Ruta para emitir la factura electronica
-Route::post('/facturacion/emitir', [FacturacionController::class, 'emitirFactura']);
-Route::post('/facturacion/emitir-nota-credito', [FacturacionController::class, 'emitirNotaCredito']);
+Route::post('/facturacion/emitir', [FacturacionController::class, 'emitirFactura'])->middleware('auth:sanctum');
+Route::post('/facturacion/emitir-nota-credito', [FacturacionController::class, 'emitirNotaCredito'])->middleware('auth:sanctum');
 Route::get('/facturacion/comprobantes/{comprobante}', [FacturacionController::class, 'estadoComprobante'])->middleware('auth:sanctum');
 Route::post('/facturacion/comprobantes/{comprobante}/reintentar', [FacturacionController::class, 'reintentarProcesamiento'])->middleware('auth:sanctum');
 Route::get('/facturacion/comprobantes/{comprobante}/pdf', [FacturacionController::class, 'downloadPdf'])->middleware('auth:sanctum');
 Route::get('/facturacion/comprobantes/{comprobante}/xml', [FacturacionController::class, 'downloadXml'])->middleware('auth:sanctum');
-
-
 
 
 
