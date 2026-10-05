@@ -102,7 +102,7 @@ class PuntoEmision extends Model
 
             $current = (int) $row->secuencial_nota_credito;
             if ($current <= 0 || $current > self::MAX_SECUENCIAL) {
-                $current = 1; // Fallback to 1 if not set
+                $current = 1;
             }
 
             $next = $current + 1;
@@ -111,6 +111,34 @@ class PuntoEmision extends Model
             }
 
             $row->secuencial_nota_credito = $next;
+            $row->save();
+
+            return [
+                'secuencial' => $current,
+                'secuencial_formateado' => str_pad((string) $current, 9, '0', STR_PAD_LEFT),
+            ];
+        });
+    }
+
+    public function nextSecuencialNotaDebito(): array
+    {
+        return DB::transaction(function () {
+            $row = self::where('id', $this->id)->lockForUpdate()->first();
+            if (!$row) {
+                throw new \RuntimeException('Punto de emision no encontrado para secuencial.');
+            }
+
+            $current = (int) $row->secuencial_nota_debito;
+            if ($current <= 0 || $current > self::MAX_SECUENCIAL) {
+                $current = 1;
+            }
+
+            $next = $current + 1;
+            if ($next > self::MAX_SECUENCIAL) {
+                throw new \RuntimeException('Secuencial maximo alcanzado.');
+            }
+
+            $row->secuencial_nota_debito = $next;
             $row->save();
 
             return [

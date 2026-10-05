@@ -93,6 +93,8 @@ class ProcesarFacturaSriJob implements ShouldQueue
 
             if ($comprobante->tipo_comprobante === 'NOTA_CREDITO') {
                 $xmlData = $xmlService->generarXmlNotaCredito($comprobante);
+            } elseif ($comprobante->tipo_comprobante === 'NOTA_DEBITO') {
+                $xmlData = $xmlService->generarXmlNotaDebito($comprobante);
             } else {
                 $xmlData = $xmlService->generarXmlFactura($comprobante);
             }

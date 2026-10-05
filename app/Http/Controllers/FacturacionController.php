@@ -517,6 +517,249 @@ public function emitirNotaCredito(Request $request): JsonResponse
         ], 202);
     }
 
+    public function emitirNotaDebito(Request $request): JsonResponse
+    {
+        $request->validate([
+            'firma' => ['required', 'file', 'extensions:p12,pfx'],
+            'password' => ['required', 'string'],
+            'payload' => ['required', 'json'],
+        ]);
+
+        $payloadData = json_decode($request->input('payload'), true);
+
+        $rules = [
+            'emisor_id' => ['required', 'integer', 'exists:emisores,id'],
+            'establecimiento_id' => ['required', 'integer', 'exists:establecimientos,id'],
+            'punto_emision_id' => ['required', 'integer', 'exists:puntos_emision,id'],
+            'cliente.tipo_identificacion' => ['required', 'string'],
+            'cliente.identificacion' => ['required', 'string'],
+            'cliente.razon_social' => ['required', 'string', 'max:255'],
+            'cliente.direccion' => ['required', 'string', 'max:500'],
+            'cliente.email' => ['required', 'email', 'max:255'],
+            'cliente.telefono' => ['nullable', 'string', 'max:50'],
+            'detalles' => ['required', 'array', 'min:1'],
+            'detalles.*.descripcion' => ['required', 'string', 'max:500'],
+            'detalles.*.cantidad' => ['required', 'numeric', 'min:0.000001'],
+            'detalles.*.precio_unitario' => ['required', 'numeric', 'min:0'],
+            'detalles.*.descuento' => ['nullable', 'numeric', 'min:0'],
+            'detalles.*.impuesto.tipo_impuesto_id' => ['nullable', 'integer', 'exists:tipos_impuesto,id'],
+            'detalles.*.impuesto.tarifa' => ['nullable', 'numeric', 'min:0'],
+            'detalles.*.impuesto.tipo' => ['nullable', 'string'],
+            'detalles.*.impuesto.codigo_porcentaje' => ['nullable', 'numeric'],
+            'detalles.*.impuesto.codigo_impuesto' => ['nullable', 'numeric'],
+            'detalles.*.impuesto.codigo' => ['nullable', 'numeric'],
+        ];
+
+        $validator = Validator::make($payloadData, $rules);
+        $validator->after(function ($v) use ($payloadData) {
+            $cliente = $payloadData['cliente'] ?? [];
+            $tipo = strtoupper((string) ($cliente['tipo_identificacion'] ?? ''));
+            $id = (string) ($cliente['identificacion'] ?? '');
+
+            if ($tipo === 'RUC') {
+                if (!EcuadorIdentificationValidator::validateRuc($id)) {
+                    $v->errors()->add('cliente.identificacion', 'RUC no valido segun reglas del SRI.');
+                }
+                return;
+            }
+
+            if ($tipo === 'CEDULA') {
+                if (!EcuadorIdentificationValidator::validateCedula($id)) {
+                    $v->errors()->add('cliente.identificacion', 'Cedula no valida segun reglas del Registro Civil.');
+                }
+                return;
+            }
+
+            if ($tipo === 'CONSUMIDOR_FINAL') {
+                if ($id !== '9999999999999') {
+                    $v->errors()->add('cliente.identificacion', 'Consumidor final debe usar 9999999999999.');
+                }
+                return;
+            }
+        });
+
+        if ($validator->fails()) {
+            return response()->json(['message' => 'Validation error', 'errors' => $validator->errors()], 422);
+        }
+
+        $data = $validator->validated();
+
+        $archivoFirma = $request->file('firma');
+        $passwordFirma = trim((string) $request->input('password'));
+        $extension = strtolower($archivoFirma->getClientOriginalExtension() ?: 'p12');
+        $nombreAlmacenado = uniqid('cert_', true) . '.' . $extension;
+        $disk = config('sri.certificate_disk', 'local');
+
+        Log::info('Recibiendo certificado P12 para emision SRI.', [
+            'nombre_original' => $archivoFirma->getClientOriginalName(),
+            'extension' => $extension,
+            'mime' => $archivoFirma->getMimeType(),
+            'tamanio_bytes' => $archivoFirma->getSize(),
+            'longitud_clave' => strlen($passwordFirma),
+        ]);
+
+        $pathFirma = $archivoFirma->storeAs('sri/certificados', $nombreAlmacenado, $disk);
+        $rutaAbsoluta = Storage::disk($disk)->path($pathFirma);
+
+        Log::info('Certificado P12 almacenado temporalmente.', [
+            'path_relativo' => $pathFirma,
+            'ruta_absoluta' => $rutaAbsoluta,
+            'bytes_en_disco' => is_file($rutaAbsoluta) ? filesize($rutaAbsoluta) : null,
+        ]);
+
+        try {
+            $this->signatureService->verificarP12($rutaAbsoluta, $passwordFirma);
+        } catch (SriFirmaException $e) {
+            Storage::disk($disk)->delete($pathFirma);
+
+            Log::error('Validacion temprana de P12 fallida.', [
+                'path' => $pathFirma,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => $e->getMessage(),
+                'errors' => ['firma' => [$e->getMessage()]],
+            ], 422);
+        }
+        $detalles = $this->resolverImpuestosDetalle($data['detalles']);
+        if ($detalles === null) {
+            return response()->json([
+                'message' => 'Validation error',
+                'errors' => ['detalles' => ['No se pudo resolver el tipo de impuesto para uno o mas detalles.']],
+            ], 422);
+        }
+        $data['detalles'] = $detalles;
+        $emisorId = (int) $data['emisor_id'];
+        $establecimientoId = (int) $data['establecimiento_id'];
+        $puntoEmisionId = (int) $data['punto_emision_id'];
+
+        $transactionResult = DB::transaction(function () use ($data, $detalles, $emisorId, $establecimientoId, $puntoEmisionId) {
+            $calculo = $this->calculator->calcularComprobante($detalles);
+
+            $clienteData = $data['cliente'];
+            $cliente = Cliente::firstOrCreate(
+                [
+                    'emisor_id' => $emisorId,
+                    'tipo_identificacion' => $clienteData['tipo_identificacion'],
+                    'identificacion' => $clienteData['identificacion'],
+                ],
+                [
+                    'razon_social' => $clienteData['razon_social'],
+                    'nombre_comercial' => $clienteData['razon_social'],
+                    'direccion' => $clienteData['direccion'],
+                    'email' => $clienteData['email'],
+                    'telefono' => $clienteData['telefono'] ?? null,
+                    'created_by' => Auth::id(),
+                    'updated_by' => Auth::id(),
+                ]
+            );
+
+            $cliente->fill([
+                'razon_social' => $clienteData['razon_social'],
+                'direccion' => $clienteData['direccion'],
+                'email' => $clienteData['email'],
+                'telefono' => $clienteData['telefono'] ?? null,
+                'updated_by' => Auth::id(),
+            ]);
+            $cliente->save();
+
+            $company = Company::findOrFail($emisorId);
+            $establecimiento = Establecimiento::where('emisor_id', $emisorId)->findOrFail($establecimientoId);
+            $punto = PuntoEmision::where('emisor_id', $emisorId)
+                ->where('establecimiento_id', $establecimientoId)
+                ->findOrFail($puntoEmisionId);
+
+            $secuencialData = $punto->nextSecuencialNotaDebito();
+            $subtotales = $this->buildSubtotales($calculo['detalles']);
+
+            $comprobante = Comprobante::create([
+                'emisor_id' => $emisorId,
+                'establecimiento_id' => $establecimientoId,
+                'punto_emision_id' => $puntoEmisionId,
+                'cliente_id' => $cliente->id,
+                'tipo_comprobante' => 'NOTA_DEBITO',
+                'comprobante_modificado_id' => $data['comprobante_modificado_id'],
+                'motivo_modificacion' => $data['motivo_modificacion'],
+                'secuencial' => $secuencialData['secuencial'],
+                'secuencial_formateado' => $secuencialData['secuencial_formateado'],
+                'codigo_establecimiento' => $establecimiento->codigo,
+                'punto_emision_codigo' => $punto->codigo,
+                'fecha_emision' => now()->toDateString(),
+                'subtotal_sin_impuestos' => $calculo['totales']['subtotal_sin_impuestos'],
+                'subtotal_iva_0' => $subtotales['subtotal_iva_0'],
+                'subtotal_iva' => $subtotales['subtotal_iva'],
+                'subtotal_no_objeto' => $subtotales['subtotal_no_objeto'],
+                'subtotal_exento' => $subtotales['subtotal_exento'],
+                'total_descuento' => $calculo['totales']['total_descuento'],
+                'total_iva' => $calculo['totales']['total_iva'],
+                'total_impuestos' => $calculo['totales']['total_iva'],
+                'total' => $calculo['totales']['importe_total'],
+                'estado_sri' => 'BORRADOR',
+                'ambiente' => $company->ambiente ?? 'PRUEBAS',
+                'tipo_emision' => $company->tipo_emision ?? 'NORMAL',
+            ]);
+
+            foreach ($calculo['detalles'] as $detalle) {
+                $detalleModel = ComprobanteDetalle::create([
+                    'comprobante_id' => $comprobante->id,
+                    'producto_id' => $detalle['producto_id'] ?? null,
+                    'descripcion' => $detalle['descripcion'],
+                    'cantidad' => $detalle['cantidad'],
+                    'precio_unitario' => $detalle['precio_unitario'],
+                    'descuento' => $detalle['descuento'] ?? 0,
+                    'subtotal' => $detalle['precio_total_sin_impuesto'],
+                ]);
+                
+                $impuesto = $detalle['impuesto'] ?? null;
+                if ($impuesto) {
+                    $tarifa = (float) ($impuesto['tarifa'] ?? 0);
+                    $valor = round($detalle['precio_total_sin_impuesto'] * ($tarifa / 100), 2, PHP_ROUND_HALF_UP);
+
+                    ComprobanteImpuesto::create([
+                        'comprobante_id' => $comprobante->id,
+                        'comprobante_detalle_id' => $detalleModel->id,
+                        'tipo_impuesto_id' => $impuesto['tipo_impuesto_id'] ?? null,
+                        'base_imponible' => $detalle['precio_total_sin_impuesto'],
+                        'tarifa' => $tarifa,
+                        'valor' => $valor,
+                    ]);
+                }
+            }
+
+            foreach ($calculo['impuestos'] as $impuesto) {
+                ComprobanteImpuesto::create([
+                    'comprobante_id' => $comprobante->id,
+                    'comprobante_detalle_id' => null,
+                    'tipo_impuesto_id' => $impuesto['tipo_impuesto_id'] ?? null,
+                    'base_imponible' => $impuesto['base_imponible'],
+                    'tarifa' => $impuesto['tarifa'],
+                    'valor' => $impuesto['valor'],
+                ]);
+            }
+
+            return [
+                'comprobante_id' => $comprobante->id,
+                'secuencial' => $secuencialData['secuencial'],
+                'secuencial_formateado' => $secuencialData['secuencial_formateado'],
+            ];
+        });
+
+        ProcesarFacturaSriJob::dispatch(
+            $transactionResult['comprobante_id'],
+            $pathFirma,
+            Crypt::encryptString($passwordFirma)
+        )->afterCommit();
+
+        return response()->json([
+            'success' => true,
+            'estado' => 'PROCESANDO',
+            'comprobante_id' => $transactionResult['comprobante_id'],
+            'secuencial' => $transactionResult['secuencial'],
+            'secuencial_formateado' => $transactionResult['secuencial_formateado'],
+        ], 202);
+    }
+
     public function estadoComprobante(Comprobante $comprobante): JsonResponse
     {
         return response()->json([
