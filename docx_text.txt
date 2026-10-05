@@ -1,0 +1,2530 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+1️⃣ Catálogo de movimientos de inventario
+
+1.1 Movimientos operativos
+
+
+1.2 Movimientos de transferencia
+
+
+1.3 Movimientos de ajuste y control
+
+2️⃣ Conceptos generales de stock
+
+2.1 Definiciones
+
+Stock físico
+El stock físico representa la cantidad real registrada en el sistema como existente dentro de una bodega.
+Este stock indica que el producto se encuentra físicamente en una ubicación determinada, aunque no necesariamente significa que esté disponible para venderse.
+Ejemplo:
+Esto significa que, según el sistema, existen 100 unidades físicas del producto en la bodega ALMACÉN MANTA.
+
+
+Stock reservado
+El stock reservado representa la cantidad de productos que siguen físicamente en una bodega, pero que ya están comprometidos para una venta, despacho u otro proceso pendiente.
+El stock reservado no debe estar disponible para nuevas ventas, transferencias o ajustes que puedan dejar sin respaldo una operación ya comprometida.
+Ejemplo:
+Esto significa que existen 100 unidades físicas, pero 20 ya están separadas o comprometidas para un proceso pendiente.
+
+
+Stock disponible
+El stock disponible representa la cantidad que puede utilizarse para nuevas operaciones permitidas por el sistema.
+De forma general:
+Stock disponible = Stock físico - Stock reservado
+Ejemplo:
+En este caso, aunque físicamente existen 100 unidades, solo 80 pueden usarse para nuevas operaciones.
+
+
+2.2 Stock disponible no siempre significa stock vendible
+Es importante diferenciar entre stock disponible y stock vendible.
+El stock disponible indica que el producto no está reservado ni comprometido, pero para que pueda venderse también deben cumplirse otras condiciones, como:
+que la bodega permita venta;
+que el producto no tenga venta suspendida;
+que el producto esté en un estado válido;
+que el tipo de control del producto permita identificar lote o serie cuando aplique.
+que el lote no esté vencido.
+Ejemplo:
+Por lo tanto, el sistema puede manejar stock disponible a nivel de inventario, pero la venta debe validar también las reglas comerciales y operativas de la bodega y del producto.
+
+
+2.3 Existencias por bodega
+El inventario se controla por producto + bodega.
+Esto significa que un mismo producto puede tener stock en varias bodegas, y cada bodega mantiene sus propias cantidades de stock físico, reservado y disponible.
+Ejemplo:
+Aunque el producto sea el mismo, cada bodega representa una ubicación distinta y debe controlar su stock de forma independiente.
+
+
+2.4 Existencia según tipo de control del producto
+La forma de interpretar la existencia depende del tipo de control de inventario configurado en el producto.
+El sistema manejará principalmente los siguientes casos:
+
+Producto sin control de inventario
+Los productos sin control de inventario no manejan stock físico, reservado ni disponible.
+Normalmente aplica para servicios o productos que no requieren control de existencias.
+Ejemplo:
+Estos productos pueden venderse sin afectar inventario ni generar Kardex de stock.
+
+
+Producto con control estándar
+En productos con control estándar, el sistema controla únicamente cantidades por producto y bodega.
+No requiere lote ni serie.
+Ejemplo:
+Este tipo de control es adecuado para productos comunes donde no es necesario identificar fecha de vencimiento, lote de fabricación o unidad individual.
+
+
+Producto con control por lote
+En productos con control por lote, el sistema mantiene una existencia general por producto y bodega, pero además controla el detalle por lote.
+
+Ejemplo de existencia general:
+
+Ejemplo de existencia por lote:
+La suma de los lotes debe coincidir con la existencia general del producto en esa bodega.
+
+
+Producto con control por serie
+En productos con control por serie, cada unidad física se identifica mediante una serie única.
+Cada serie representa una unidad individual y debe tener una bodega actual y un estado.
+Ejemplo:
+Para productos por serie, la existencia se obtiene a partir del conteo de series según su bodega y estado.
+
+
+2.5 Estados de serie y su impacto en stock
+En productos con control por serie, el estado de la serie afecta si la unidad cuenta como stock físico, stock disponible o stock reservado.
+
+
+2.6 Reglas generales sobre stock
+El stock vive en la bodega, no únicamente en el producto.
+Un producto puede tener stock en varias bodegas al mismo tiempo.
+Cada bodega debe controlar de forma independiente su stock físico, reservado y disponible.
+El stock físico representa la existencia registrada en una bodega.
+El stock reservado representa la cantidad comprometida en procesos pendientes.
+El stock disponible representa la cantidad que puede utilizarse en nuevas operaciones permitidas.
+No se debe vender, reservar, transferir ni ajustar negativamente más del stock disponible.
+Una operación puede mover stock físico, pero el límite debe validarse contra el stock disponible.
+El stock reservado no debe modificarse por transferencias, ajustes negativos o envíos a mermas, salvo que el movimiento corresponda directamente a una reserva o liberación de reserva.
+En productos por lote, las validaciones deben realizarse tanto a nivel de producto como a nivel de lote.
+En productos por serie, las validaciones deben realizarse por cada serie seleccionada.
+Una serie no puede estar ubicada en más de una bodega al mismo tiempo.
+Una serie no debe eliminarse del sistema; debe conservarse para trazabilidad, historial y auditoría.
+
+
+2.7 Matriz general de efectos sobre stock
+
+Esta matriz resume el efecto general de los principales movimientos de inventario sobre el stock físico, stock reservado y stock disponible.
+Los detalles específicos de cada movimiento se explicarán en las secciones correspondientes.
+
+
+
+
+
+2.8 Reglas de validación por tipo de stock
+
+Validación contra stock físico
+El stock físico se utiliza para conocer cuántas unidades existen registradas en una bodega.
+Sin embargo, no siempre debe usarse como límite operativo, porque puede incluir unidades reservadas, bloqueadas, dañadas o no aptas para venta.
+
+
+Validación contra stock reservado
+El stock reservado se utiliza para proteger productos comprometidos.
+Una unidad reservada no debe ser vendida nuevamente, transferida, enviada a mermas ni ajustada negativamente mientras la reserva siga vigente.
+
+
+Validación contra stock disponible
+El stock disponible debe ser la base principal para validar operaciones como:
+ventas;
+reservas;
+transferencias;
+ajustes negativos;
+envíos a mermas;
+devoluciones a proveedor.
+
+Regla general:
+La cantidad seleccionada en un movimiento no puede superar el stock disponible actual de la bodega origen.
+En productos por lote: La cantidad seleccionada no puede superar el stock disponible actual del lote en la bodega origen.
+En productos por serie: Solo se pueden seleccionar series con estado válido para el movimiento registrado.
+
+
+2.9 Nota de diseño
+La sección de stock define conceptos funcionales.
+La estructura técnica de las tablas, campos reales de base de datos, vistas de consulta y filtros se definirá en la sección de Existencias y modelo base de inventario.
+El Kardex se definirá posteriormente como el historial que registra los movimientos que afectan estas existencias.
+
+
+
+
+
+3️⃣ Existencias y modelo base del inventario
+3.1 ¿Qué es la sección de Existencias?
+La sección de Existencias representa la consulta del stock actual de los productos dentro del sistema.
+Permite conocer cuántas unidades existen en cada bodega, cuántas están reservadas y cuántas se encuentran disponibles para nuevas operaciones.
+Esta sección no registra movimientos por sí misma. Su función es mostrar el resultado actualizado de los movimientos de inventario confirmados.
+Por ejemplo, una compra, una venta, una transferencia, un ajuste o una recepción de transferencia pueden modificar las existencias. La sección de Existencias muestra el resultado final de esos cambios.
+En términos simples:
+
+
+3.2 Objetivo
+El objetivo de la sección de Existencias es permitir la consulta clara y confiable del inventario actual.
+Esta sección debe ayudar al usuario a responder preguntas como:
+¿Cuánto stock tiene un producto?
+¿En qué bodegas se encuentra?
+¿Cuánto stock físico existe?
+¿Cuánto stock está reservado?
+¿Cuánto stock está disponible?
+¿Qué lotes existen y en qué bodegas están?
+¿Qué series existen, en qué bodega se encuentran y cuál es su estado?
+¿Qué productos tienen stock bajo, sobrante o no disponible?
+La sección de Existencias también sirve como base para validar operaciones del sistema, como ventas, reservas, transferencias, ajustes negativos, envíos a mermas y devoluciones a proveedor.
+
+
+3.3 Regla principal
+La regla principal del modelo de existencias es que el stock vive en la bodega.
+Esto significa que el sistema no debe manejar el inventario únicamente como una cantidad general del producto, sino como una cantidad asociada a una ubicación específica.
+Un mismo producto puede existir en varias bodegas al mismo tiempo, y cada bodega debe manejar sus propias cantidades de stock físico, stock reservado y stock disponible.
+Ejemplo:
+Aunque se trate del mismo producto, cada bodega tiene su propio stock.
+Por lo tanto, las existencias deben controlarse como mínimo por:
+Producto + Bodega
+Cuando el producto maneja lote o serie, se agregan niveles adicionales de control.
+
+
+3.4 Entidades principales del modelo de existencias
+El modelo de existencias se construye a partir de varias entidades relacionadas entre sí.
+Estas entidades permiten controlar el stock actual según el tipo de producto y el nivel de trazabilidad requerido.
+
+La relación entre estas entidades depende del tipo de control de inventario configurado en el producto.
+
+La existencia general funciona como resumen principal del stock por producto y bodega.En productos controlados por lote o serie, además de la existencia general, el sistema debe mantener el detalle correspondiente para garantizar trazabilidad y consistencia.
+
+
+
+
+3.5 Tabla de lotes: estructura de la entidad Lote
+
+La tabla de lotes define la estructura de datos de la entidad Lote.
+Un lote representa un grupo de unidades de un mismo producto que comparten una identificación común, normalmente asociada a fabricación, vencimiento, ingreso o trazabilidad del producto.
+Esta tabla no controla directamente la cantidad existente del lote en cada bodega. Su función principal es identificar el lote y almacenar sus datos propios.
+El stock del lote por bodega se controlará en la tabla de Existencia por lote.
+
+
+Regla principal
+La tabla de lotes identifica el lote, pero no almacena stock.
+Esto significa que la tabla de lotes no debe guardar cantidades físicas, reservadas ni disponibles.
+La cantidad existente de un lote dependerá de las bodegas donde ese lote tenga stock.
+
+Ejemplo:
+En este ejemplo, el lote es uno solo: LOTE-001.Sin embargo, su stock está distribuido en dos bodegas distintas.
+
+Por lo tanto:
+
+
+Estructura propuesta de la tabla de lotes
+
+
+
+Clave única recomendada
+No se debe permitir registrar el mismo número de lote más de una vez para el mismo producto.
+Por lo tanto, se recomienda manejar una restricción única sobre:
+id_producto + numero_lote
+Ejemplo:
+
+
+Campos que no deben estar en la tabla de lotes
+La tabla de lotes no debe incluir campos relacionados con stock por bodega.
+Por lo tanto, no debería contener:
+
+
+
+Cuando se crea un lote
+Un lote puede crearse cuando ingresa inventario al sistema.
+Los escenarios más comunes son:
+
+Un lote nace a partir de un movimiento de entrada de inventario.
+Mientras el movimiento que origina el lote se encuentre en estado BORRADOR, los datos del lote podrán modificarse o eliminarse como parte de la edición del movimiento.
+Una vez confirmado el movimiento origen, el lote queda formalmente registrado y no debe permitirse su edición, ya que sus datos forman parte de la trazabilidad del inventario.
+
+
+Reglas generales de la entidad Lote
+Un lote pertenece a un solo producto.
+Un mismo producto puede tener varios lotes.
+Un mismo lote puede tener stock en varias bodegas.
+La tabla de lotes no almacena cantidades.
+La cantidad del lote por bodega se controla en la tabla de Existencia por lote.
+La fecha de vencimiento es obligatoria para productos controlados por lote.
+La fecha de fabricación es opcional.
+No se debe permitir duplicar el mismo número de lote para el mismo producto.
+No se debe eliminar un lote que ya haya sido usado en movimientos de inventario.
+Si un lote queda con stock cero, debe conservarse para trazabilidad e historial.
+En movimientos de salida, transferencia, venta, ajuste negativo o envío a mermas, el lote debe existir previamente y tener stock disponible en la bodega correspondiente.
+
+
+Nota de diseño
+La tabla de lotes representa la identidad del lote, no su existencia actual.
+La existencia actual del lote se controlará en la tabla de Existencia por lote, donde se relacionan:
+Producto + Bodega + Lote
+De esta forma, el sistema puede saber no solo qué lotes existen, sino también en qué bodegas se encuentran y cuánto stock tiene cada uno.
+
+
+3.6 Tabla de series: estructura de la entidad Serie
+
+La tabla de series define la estructura de datos de la entidad Serie.
+Una serie representa una unidad física individual de un producto. A diferencia del lote, que agrupa varias unidades, la serie identifica una unidad específica e irrepetible.
+Este tipo de control se utiliza para productos donde es necesario conocer exactamente qué unidad se encuentra en inventario, en qué bodega está ubicada y cuál es su estado operativo.
+Ejemplo:
+
+
+Regla principal
+Cada serie representa una sola unidad física.
+Por lo tanto:
+una serie no puede estar en más de una bodega al mismo tiempo;
+una serie no puede representar más de una unidad;
+una misma serie no debe duplicarse para el mismo producto;
+una serie debe conservarse para trazabilidad, historial y auditoría;
+una serie no debe eliminarse una vez utilizada en movimientos de inventario.
+A diferencia del lote, la serie sí mantiene una bodega actual y un estado operativo, ya que representa una unidad individual.
+
+
+Estructura propuesta de la tabla de series
+
+
+
+Clave única recomendada
+No se debe permitir registrar el mismo número de serie más de una vez para el mismo producto.
+Por lo tanto, se recomienda manejar una restricción única sobre:
+id_producto + numero_serie
+Ejemplo:
+
+
+Campo Estado de la serie
+El campo estado indica la situación operativa actual de una unidad serializada.
+Este estado no reemplaza a la bodega. La bodega indica dónde se encuentra físicamente la serie, mientras que el estado indica en qué condición operativa se encuentra.
+Ejemplo:
+
+
+
+Estados permitidos de una serie
+
+
+
+
+Cambio de estado DISPONIBLE / BLOQUEADA
+El sistema puede permitir cambiar una serie entre los estados DISPONIBLE y BLOQUEADA sin generar movimiento de inventario, ya que este cambio no representa traslado físico ni entrada o salida de stock.
+Sin embargo, este cambio sí debe generar auditoría.
+Ejemplo:
+Este cambio solo afecta la disponibilidad operativa de la serie, no su ubicación física.
+
+
+Cuándo se crea una serie
+Una serie puede crearse cuando ingresa inventario al sistema.
+Los escenarios más comunes son:
+
+
+Reglas de edición de series
+Los datos principales de una serie solo podrán modificarse mientras el movimiento que origina la serie se encuentre en estado BORRADOR.
+Una vez que el movimiento origen sea CONFIRMADO, la serie quedará formalmente registrada en el sistema y sus datos principales no podrán editarse libremente.
+Esta restricción aplica principalmente para:
+
+Después de confirmar el movimiento origen, los datos propios de identificación y registro de la serie no deben editarse libremente.Los cambios posteriores deben realizarse mediante movimientos de inventario, procesos autorizados o acciones controladas del sistema.
+
+
+
+Campos que no deben estar en la tabla de series
+La tabla de series no debe incluir campos de cantidades, porque cada serie representa una sola unidad.
+Por lo tanto, no debería contener:
+
+
+Reglas generales de la entidad Serie
+Una serie pertenece a un solo producto.
+Una serie representa una sola unidad física.
+Una serie no puede estar ubicada en más de una bodega al mismo tiempo.
+Una serie debe tener una bodega actual cuando se encuentre físicamente dentro del inventario.
+Una serie debe tener un estado operativo.
+El campo numero_lote_referencial es opcional y solo sirve como información adicional de trazabilidad cuando la unidad serializada tiene un lote visible o informado por el fabricante/proveedor.
+No se debe permitir duplicar el mismo número de serie para el mismo producto.
+Una serie no debe eliminarse si ya fue utilizada en movimientos de inventario.
+La bodega actual de la serie debe actualizarse únicamente mediante movimientos confirmados.
+El estado de la serie debe cambiar únicamente mediante movimientos confirmados o acciones controladas permitidas.
+Las series en estado VENDIDA, DEVUELTA A PROVEEDOR, BAJA POR AJUSTE o FALTANTE no deben contar como stock físico ni disponible.
+Las series en estado DAÑADA deben ubicarse en una bodega de MERMAS / DAÑOS.
+Las series en estado RESERVADA deben estar asociadas a una venta, despacho o proceso pendiente.
+El campo fecha_actualizacion se actualizará cada vez que la serie tenga cualquier cambio relevante, ya sea por un movimiento de inventario, una venta, una reserva, una transferencia, un envío a mermas o una acción manual controlada.
+Cuando el cambio corresponda específicamente a una modificación manual entre los estados DISPONIBLE y BLOQUEADA, además de actualizar fecha_actualizacion, también se actualizarán los campos fecha_actualizacion_manual_estado e id_usuario_actualizacion_manual_estado.
+
+
+Nota de diseño
+La tabla de series representa la unidad física individual y su estado actual.
+En productos serializados, la existencia general del producto en una bodega debe ser coherente con el conteo de series ubicadas en dicha bodega y con los estados que correspondan.
+Por esta razón, la tabla de series funciona como la fuente principal de trazabilidad para productos con control por serie.
+
+
+
+3.7 Tabla real de Existencias
+
+La tabla real de Existencias almacena el stock actual de cada producto en cada bodega.
+Esta tabla representa el resumen principal del inventario y permite conocer, de forma rápida, cuánto stock físico, reservado y disponible existe para un producto dentro de una bodega específica.
+La existencia general se controla siempre bajo la relación:
+Producto + Bodega
+Esto significa que un mismo producto puede tener varios registros de existencia, uno por cada bodega donde tenga o haya tenido stock.
+
+
+Regla principal
+La tabla real de Existencias no representa el historial del inventario.
+Su función es guardar el estado actual del stock.
+El historial de cambios debe consultarse en el Kardex.
+
+
+Estructura propuesta de la tabla real de Existencias
+
+
+
+Clave única recomendada
+La tabla debe evitar registros duplicados para el mismo producto en la misma bodega.
+Por lo tanto, debe existir una restricción única sobre:
+id_producto + id_bodega
+Ejemplo:
+
+
+Aplicación según tipo de control del producto
+La tabla real de Existencias aplica para productos que manejan inventario.
+
+
+Reglas de actualización
+La tabla real de Existencias debe actualizarse únicamente como consecuencia de movimientos de inventario confirmados.
+No debe editarse manualmente desde una pantalla común.
+
+
+Efectos generales sobre la tabla de Existencias
+
+
+Reglas de validación
+La tabla real de Existencias debe cumplir las siguientes reglas:
+No debe existir más de un registro para el mismo producto y la misma bodega.
+El stock físico no debe ser menor que cero.
+El stock reservado no debe ser menor que cero.
+El stock disponible no debe ser menor que cero, salvo que en una versión futura se permita stock negativo de forma controlada.
+El stock reservado no debe superar el stock físico.
+El stock disponible debe recalcularse cada vez que cambie el stock físico o el stock reservado.
+Los productos sin control de inventario no deben generar registros en esta tabla.
+Los movimientos en estado BORRADOR no deben afectar esta tabla.
+Los movimientos confirmados o etapas con efecto real de inventario sí deben actualizar esta tabla.
+Los registros de existencia no deben eliminarse automáticamente cuando el stock llegue a cero, ya que pueden ser útiles para consultas, historial y trazabilidad.
+
+
+Relación con stock disponible
+El stock disponible representa la cantidad que puede usarse para nuevas operaciones permitidas.
+De forma general:
+stock_disponible = stock_fisico - stock_reservado
+Sin embargo, que exista stock disponible no significa necesariamente que el producto pueda venderse.
+La venta también dependerá de reglas adicionales, como:
+que la bodega permita venta;
+que el producto no tenga venta suspendida;
+que el lote seleccionado esté disponible y vigente, si aplica;
+que la serie seleccionada tenga un estado válido para venta, si aplica.
+
+
+Consideración para productos por lote
+En productos controlados por lote, la tabla real de Existencias funciona como resumen general del stock por producto y bodega.
+El detalle real por lote se controlará en la tabla de Existencia por lote.
+La suma de las existencias por lote debe coincidir con la existencia general del producto en la bodega.
+
+
+Consideración para productos por serie
+En productos controlados por serie, la tabla real de Existencias funciona como resumen general del stock por producto y bodega.
+El stock físico, reservado y disponible debe ser coherente con las series ubicadas en esa bodega y con sus estados.
+Ejemplo:
+
+
+Nota de diseño
+La tabla real de Existencias debe concentrarse únicamente en el stock actual del producto por bodega.
+Esta tabla funciona como resumen operativo del inventario y permite consultar rápidamente el stock físico, reservado y disponible sin recalcular cada vez desde el Kardex.
+En productos con control por lote o serie, la existencia general debe mantenerse sincronizada con sus respectivos detalles.
+
+
+3.8 Tabla real de Existencia por lote
+La tabla real de Existencia por lote almacena el stock actual de cada lote de un producto dentro de una bodega específica.
+
+Esta tabla solo aplica para productos que tienen configurado el tipo de control:
+Control por lote
+Su función es permitir conocer cuántas unidades existen, están reservadas y están disponibles de un lote específico en una bodega determinada.
+
+La existencia por lote se controla bajo la relación:
+Producto + Bodega + Lote
+
+
+Regla principal
+La tabla de Existencia por lote no reemplaza a la tabla real de Existencias.
+La tabla real de Existencias mantiene el resumen general por producto y bodega.
+La tabla de Existencia por lote mantiene el detalle específico por lote.
+Ejemplo:
+
+Resumen en tabla real de Existencias:
+
+Estructura propuesta de la tabla real de Existencia por lote
+
+
+Clave única recomendada
+La tabla debe evitar registros duplicados para el mismo producto, bodega y lote.
+Por lo tanto, se recomienda manejar una restricción única sobre:
+id_producto + id_bodega + id_lote
+
+Ejemplo:
+
+
+Relación con la tabla de lotes
+La tabla de Lotes identifica el lote y guarda sus datos propios.
+La tabla de Existencia por lote controla cuánto stock existe de ese lote en cada bodega.
+Por esta razón, la tabla de Existencia por lote no debe repetir datos propios del lote como número de lote, fecha de fabricación o fecha de vencimiento. Esos datos deben obtenerse desde la tabla de Lotes.
+
+
+Reglas de actualización
+La tabla de Existencia por lote debe actualizarse únicamente como consecuencia de movimientos de inventario confirmados o etapas operativas que generen efecto real sobre el stock.
+
+
+Efectos generales sobre la Existencia por lote
+
+
+
+Reglas de consistencia
+La tabla de Existencia por lote debe mantenerse coherente con la tabla real de Existencias.
+Para cada producto y bodega, la suma de los lotes debe coincidir con la existencia general.
+
+Ejemplo:
+
+Entonces, en la tabla real de Existencias:
+
+Reglas:
+La suma del stock_fisico por lote debe coincidir con el stock_fisico general del producto en la bodega.
+La suma del stock_reservado por lote debe coincidir con el stock_reservado general del producto en la bodega.
+La suma del stock_disponible por lote debe coincidir con el stock_disponible general del producto en la bodega.
+No debe existir existencia por lote para productos sin control por lote.
+No debe existir existencia por lote sin lote registrado.
+No debe existir existencia por lote sin bodega.
+No debe existir existencia por lote con stock físico negativo.
+No debe existir existencia por lote con stock reservado negativo.
+El stock reservado del lote no debe superar el stock físico del lote.
+Los movimientos en estado BORRADOR no deben afectar esta tabla.
+Los registros no deben eliminarse automáticamente cuando el stock llegue a cero, ya que pueden ser útiles para consultas, historial y trazabilidad.
+
+
+
+Nota de diseño
+La tabla real de Existencia por lote permite manejar el detalle del stock por lote sin mezclarlo con la identidad del lote.
+El lote identifica el grupo de productos.
+La existencia por lote indica cuánto stock de ese lote existe en cada bodega.
+Esta separación permite que un mismo lote pueda estar distribuido en varias bodegas sin duplicar los datos propios del lote.
+La tabla no debe incluir costos, precios, promociones, fecha de fabricación ni fecha de vencimiento, porque esos datos pertenecen a otras estructuras.
+Su responsabilidad principal es representar el stock actual del lote bajo la relación:
+Producto + Bodega + Lote
+
+
+3.9 Existencia según tipo de control del producto
+
+La forma de controlar las existencias depende del tipo de control de inventario configurado en el producto.
+Un producto debe tener un solo tipo de control principal. Esto evita mezclar reglas y permite que el sistema sepa claramente cómo validar, mover y consultar el stock.
+Los tipos de control definidos son:
+
+
+Regla principal
+El tipo de control del producto determina cómo se registran sus existencias.
+La tabla real de Existencias funciona como resumen general para los productos que manejan inventario.
+En productos por lote o por serie, además del resumen general, debe existir un detalle que permita validar la trazabilidad.
+
+
+3.9.1 Productos sin control de inventario
+Los productos sin control de inventario no generan stock físico, reservado ni disponible.
+Este caso aplica principalmente para servicios o conceptos que pueden venderse sin afectar inventario.
+Ejemplos:
+Reglas:
+No genera registro en la tabla real de Existencias.
+No genera Kardex.
+No requiere bodega.
+No valida stock disponible.
+Puede venderse sin afectar inventario.
+Ejemplo:
+
+
+3.9.2 Productos con control estándar / por cantidad
+Los productos con control estándar se manejan por cantidad acumulada en cada bodega.
+La existencia se controla directamente en la tabla real de Existencias bajo la relación:
+Producto + Bodega
+Ejemplo:
+Reglas:
+Genera registro en la tabla real de Existencias.
+No requiere lote.
+No requiere serie.
+El stock disponible se calcula de forma general como stock físico menos stock reservado.
+Las ventas, reservas, transferencias y ajustes se validan contra el stock disponible.
+
+
+3.9.3 Productos con control por lote
+Los productos con control por lote se manejan con una trazabilidad adicional.
+La tabla real de Existencias mantiene el resumen general por producto y bodega.
+La tabla real de Existencia por lote mantiene el detalle por lote.
+
+Relación general:
+Producto + Bodega
+
+Relación detallada:
+Producto + Bodega + Lote
+
+Ejemplo de detalle por lote:
+
+Resumen en tabla real de Existencias:
+
+Reglas:
+Genera registro en la tabla real de Existencias.
+Genera detalle en la tabla real de Existencia por lote.
+Cada movimiento debe identificar el lote afectado.
+No se debe vender, reservar, transferir o ajustar un producto por lote sin seleccionar lote.
+La suma de los lotes debe coincidir con la existencia general del producto en la bodega.
+El lote contiene datos de trazabilidad como número de lote, fecha de fabricación y fecha de vencimiento.
+El stock del lote se controla en la tabla de Existencia por lote, no en la tabla de Lotes.
+
+
+3.9.4 Productos con control por serie
+Los productos con control por serie se manejan unidad por unidad.
+Cada serie representa una unidad física individual.
+La tabla real de Existencias mantiene el resumen general por producto y bodega.
+La tabla de Series mantiene el detalle de cada unidad, su bodega actual y su estado operativo.
+
+Relación general:
+Producto + Bodega
+
+Relación detallada:
+Producto + Bodega + Serie
+
+Ejemplo de series:
+
+Resumen en tabla real de Existencias:
+
+Interpretación:
+
+Reglas:
+Genera registro en la tabla real de Existencias.
+Cada serie representa una unidad.
+No se debe vender, reservar, transferir o ajustar una serie sin identificar la unidad específica.
+La bodega actual de la serie debe coincidir con la bodega de la existencia general.
+El estado de la serie determina si cuenta como stock físico, reservado o disponible.
+Las series vendidas, devueltas a proveedor, dadas de baja o faltantes no deben contar como stock físico ni disponible.
+El número de lote referencial, si existe, será solo un dato informativo y no convierte al producto en control por lote.
+
+
+Resumen comparativo
+
+
+Nota de diseño
+El tipo de control del producto debe definirse antes de que el producto tenga movimientos de inventario.
+Una vez que el producto tenga historial, no debería cambiarse libremente su tipo de control, porque podría generar inconsistencias entre existencias, lotes, series y Kardex.
+La tabla real de Existencias siempre actúa como resumen general del stock por producto y bodega.
+Cuando el producto maneja lote o serie, el sistema debe mantener coherencia entre el resumen general y el detalle correspondiente.
+De esta forma:
+El objetivo es que el sistema tenga una sola forma principal de controlar cada producto, evitando mezclas entre cantidad, lote y serie.
+
+
+3.10 Vista de consulta de Existencias
+
+La vista de consulta general de Existencias permite revisar el stock actual de los productos en las diferentes bodegas del sistema.
+Esta vista muestra la información resumida bajo la relación principal:
+Producto + Bodega
+Su objetivo es permitir una consulta rápida del stock físico, stock reservado y stock disponible, sin mezclar directamente el detalle de lotes o series en la tabla principal.
+Cuando el producto tenga control por lote o por serie, el sistema podrá mostrar el detalle mediante acciones o subfilas, sin perder el resumen general de la existencia.
+
+
+3.10.1 Campos de la vista general de Existencias
+
+
+3.10.2 Acciones según tipo de control
+La columna Acción debe adaptarse al tipo de control del producto.
+Cuando se seleccione Ver lotes, el sistema mostrará el detalle bajo la relación:
+Producto + Bodega + Lote
+Cuando se seleccione Ver series, el sistema mostrará el detalle bajo la relación:
+Producto + Bodega + Serie
+
+
+3.10.3 Totales consolidados de la consulta
+
+La vista general de Existencias podrá mostrar totales consolidados del stock consultado.
+Estos totales se calcularán sumando los registros de existencias que se encuentren visibles según los filtros aplicados por el usuario.
+
+Los valores consolidados principales serán:
+La consolidación no genera movimientos, no modifica inventario y no crea registros nuevos. Su función es únicamente mostrar un resumen de los saldos actuales consultados.
+
+Regla:
+Primero el sistema aplica los filtros seleccionados. Luego calcula los totales consolidados sobre los registros resultantes.
+
+
+3.10.4 Columnas del detalle “Ver lotes”
+El detalle Ver lotes se mostrará cuando el producto tenga configurado el tipo de control Control por lote.
+Este detalle permite consultar los lotes que componen la existencia general de un producto dentro de una bodega específica.
+La relación del detalle será:
+Producto + Bodega + Lote
+
+
+
+Acción disponible
+Regla:
+En el detalle de lotes, la acción Ver Kardex debe abrir el Kardex filtrado por Producto + Bodega + Lote.
+
+
+Reglas para determinar la Situación del lote
+La Situación del lote será un campo calculado por el sistema. No se almacenará como dato fijo en la tabla de Existencia por lote.
+Este valor se calculará cada vez que el sistema consulte o muestre los lotes, usando:
+fecha actual;
+fecha de vencimiento del lote;
+stock físico;
+stock reservado;
+stock disponible;
+rango de días de alerta configurado para considerar un lote como próximo a vencer.
+
+
+Cuando un lote cumpla más de una condición, el sistema debe aplicar un orden de prioridad para evitar resultados ambiguos.
+Orden recomendado:
+
+Ejemplo:
+Si un lote tiene stock_fisico = 0, aunque su fecha de vencimiento ya haya pasado, se mostrará como SIN STOCK, porque ya no existe inventario físico que controlar.
+Si un lote tiene stock físico y la fecha de vencimiento ya pasó, se mostrará como VENCIDO, aunque también tenga stock reservado.
+
+
+
+3.10.5 Columnas del detalle “Ver series”
+El detalle Ver series se mostrará cuando el producto tenga configurado el tipo de control Control por serie.
+Este detalle permite consultar las unidades individuales que componen la existencia general de un producto dentro de una bodega específica.
+La relación del detalle será:
+Producto + Bodega + Serie
+
+
+
+Acciones disponibles
+
+
+Reglas
+En el detalle de series, la acción Ver Kardex debe abrir el Kardex filtrado por Producto + Bodega + Serie, cuando la serie esté asociada a una bodega actual.
+El cambio DISPONIBLE ↔ BLOQUEADA no genera Kardex ni movimiento de inventario, porque no existe entrada, salida ni traslado físico. Sin embargo, sí debe generar auditoría.
+El campo Fecha actualización se actualiza ante cualquier cambio relevante de la serie, ya sea por movimiento de inventario, venta, reserva, transferencia, envío a mermas o acción manual controlada.
+Los campos Usuario actualización manual de estado y Fecha actualización manual de estado solo se actualizan cuando el usuario realiza un cambio manual controlado entre los estados:
+DISPONIBLE → BLOQUEADA
+BLOQUEADA → DISPONIBLE
+Los cambios generados por ventas, reservas, transferencias, ajustes o envíos a mermas no actualizan los campos específicos de actualización manual de estado, ya que dichos cambios deben consultarse desde el Kardex y el movimiento origen.
+
+
+3.11 Filtros de búsqueda
+
+La vista general de Existencias debe permitir consultar el stock mediante filtros individuales o combinados.
+Los filtros se dividen en:
+filtros generales;
+filtros avanzados para productos con control por lote;
+filtros avanzados para productos con control por serie.
+
+
+3.11.1 Filtros generales
+Los filtros generales aplican sobre la vista principal de Existencias, bajo la relación:
+Producto + Bodega
+Estos filtros permiten ubicar productos, bodegas, establecimientos y saldos de stock de forma rápida.
+
+
+3.11.2 Filtros avanzados para lote
+
+Estos filtros aplican únicamente para productos con control por lote.
+Aunque la vista principal de Existencias se mantiene resumida por Producto + Bodega, estos filtros permiten encontrar productos y bodegas que tengan lotes específicos o lotes con determinadas condiciones de fabricación, vencimiento, registro, actualización o situación.
+
+
+Reglas de aplicación
+El filtro Situación del lote no usa un campo almacenado, sino una situación calculada al momento de consultar.
+El filtro Días para vencer se calcula a partir de la fecha actual y la fecha de vencimiento del lote.
+El filtro Rango de fecha de actualización se usa para revisar cambios en la información del lote, no para identificar ventas, transferencias, reservas o movimientos de stock. Los movimientos que afecten la existencia del lote deben consultarse desde el Kardex y el movimiento origen.
+Si se aplican filtros avanzados de lote desde la vista general de Existencias, el sistema debe mostrar únicamente los productos y bodegas que tengan al menos un lote que cumpla con las condiciones aplicadas.
+Al seleccionar Ver lotes, se mostrarán únicamente los lotes específicos que cumplen con dichos filtros.
+
+3.11.3 Filtros avanzados para serie
+
+Estos filtros aplican únicamente para productos con control por serie.
+Aunque la vista principal de Existencias se mantiene resumida por Producto + Bodega, estos filtros permiten encontrar productos y bodegas que tengan series específicas o series con determinados estados, fechas, registros o datos referenciales.
+
+
+Reglas de aplicación
+El filtro Estado de serie utiliza el estado operativo registrado en la tabla de Series: DISPONIBLE, BLOQUEADA, RESERVADA, DAÑADA, VENDIDA, DEVUELTA A PROVEEDOR, BAJA POR AJUSTE y FALTANTE.
+A diferencia de la Situación del lote, el Estado de serie no es un valor calculado, sino un dato operativo real de la unidad serializada.
+El filtro Días para vencer se calcula a partir de la fecha actual y la fecha de vencimiento registrada en la serie.Este filtro solo aplica cuando la serie tenga una fecha de vencimiento registrada.
+El filtro Rango de fecha de actualización permite ubicar series modificadas por cualquier cambio relevante, incluyendo ventas, reservas, transferencias, movimientos de inventario o acciones controladas.
+El filtro Reacondicionado utiliza el valor registrado en la tabla de Series. Este campo permite identificar unidades serializadas que fueron recuperadas mediante un proceso autorizado, como MOV-12 Reacondicionamiento desde mermas.
+Los filtros Usuario actualización manual de estado y Rango de fecha de actualización manual de estado aplican únicamente para cambios manuales entre DISPONIBLE y BLOQUEADA.
+Si se aplican filtros avanzados de serie desde la vista general de Existencias, el sistema debe mostrar únicamente los productos y bodegas que tengan al menos una serie que cumpla con las condiciones aplicadas.
+Al seleccionar Ver series, se mostrarán únicamente las series específicas que cumplen con dichos filtros.
+
+
+
+3.11.4 Comportamiento general de los filtros
+
+Los filtros pueden aplicarse de forma individual o combinada.
+Cuando se apliquen varios filtros diferentes al mismo tiempo, el sistema debe interpretar la búsqueda como una condición acumulativa.
+Los filtros aplicados también afectan los totales consolidados de la consulta. Es decir, el sistema primero aplica los filtros seleccionados y luego calcula los totales de stock físico, stock reservado y stock disponible sobre los registros resultantes.
+
+Regla general:
+Entre filtros diferentes se aplica condición AND.Dentro de un mismo filtro de multiselección se aplica condición OR.
+
+Ejemplo:
+Si el usuario selecciona:
+Provincia: Manabí
+Ciudad / Cantón: Manta o Portoviejo
+Tipo de bodega: VENTA o ALMACÉN
+Tipo de control: Control por lote
+Situación del lote: POR VENCER
+El sistema debe mostrar existencias de productos con control por lote, ubicadas en bodegas de tipo VENTA o ALMACÉN, dentro de Manta o Portoviejo, en la provincia de Manabí, que tengan al menos un lote en situación POR VENCER.
+
+
+3.11.5 Ejemplos de aplicación de filtros
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+3.11.6 Ejemplos de llenado de Existencias y uso de filtros
+Los siguientes ejemplos muestran cómo se llenarían las tablas de existencias según el tipo de control del producto y cómo se podrían aplicar los filtros de búsqueda.
+
+
+Ejemplo 1: Producto con control estándar
+Producto de ejemplo:
+CARGADOR USB 20W
+Tipo de control:
+Control estándar / cantidad
+Supuesto operativo:
+Ingresan 20 unidades por compra.
+Se venden 3 unidades.
+Se reservan 2 unidades para despacho.
+Resultado:
+Stock físico: 17
+Stock reservado: 2
+Stock disponible: 15
+
+
+
+
+Tabla real de Existencias
+
+Vista general de Existencias
+
+Ejemplo de filtros aplicados
+Resultado esperado:
+El sistema muestra el producto CARGADOR USB 20W, porque tiene stock disponible en la bodega seleccionada.
+
+
+
+Ejemplo 2: Producto con control por lote
+Producto de ejemplo:
+YOGURT NATURAL 1 LITRO
+Tipo de control:
+Control por lote
+Supuesto operativo:
+El producto tiene dos lotes en la misma bodega.
+El lote YOG-2026-A tiene 30 unidades físicas, 5 reservadas y 25 disponibles.
+El lote YOG-2026-B tiene 20 unidades físicas, 0 reservadas y 20 disponibles.
+Resultado general del producto en la bodega:
+Stock físico: 50
+Stock reservado: 5
+Stock disponible: 45
+
+Tabla real de Lotes
+
+
+Tabla real de Existencias
+
+
+Tabla real de Existencia por lote
+
+
+Vista general de Existencias
+
+Detalle “Ver lotes”
+
+
+Ejemplo de filtros aplicados
+Resultado esperado:
+La vista general muestra el producto YOGURT NATURAL 1 LITRO en la bodega BOD-VENTA-01, porque tiene al menos un lote en situación POR VENCER.
+Al seleccionar Ver lotes, el sistema muestra únicamente el lote YOG-2026-A, ya que es el lote que cumple con el filtro aplicado.
+
+
+
+Ejemplo 3: Producto con control por serie
+Producto de ejemplo:
+TELEVISOR 32 PULGADAS
+Tipo de control:
+Control por serie
+Supuesto operativo:
+El producto tiene tres unidades serializadas en la misma bodega.
+Una serie está disponible.
+Una serie está bloqueada manualmente.
+Una serie está reservada para despacho.
+Resultado general del producto en la bodega:
+Stock físico: 3
+Stock reservado: 1
+Stock disponible: 1
+
+Tabla real de Series
+
+
+Tabla real de Existencias
+
+
+Vista general de Existencias
+
+
+Detalle “Ver series”
+
+Ejemplo de filtros aplicados
+Resultado esperado:
+La vista general muestra el producto TELEVISOR 32 PULGADAS en la bodega BOD-ELECT-01, porque tiene al menos una serie en estado BLOQUEADA que fue actualizada manualmente por el usuario seleccionado.
+Al seleccionar Ver series, el sistema muestra únicamente la serie TV32-0002, ya que es la unidad que cumple con los filtros aplicados.
+
+
+Estos tres ejemplos te sirven porque muestran:
+control estándar: solo tabla general de Existencias;
+control por lote: Lote + Existencias + Existencia por lote;
+control por serie: Series + Existencias;
+uso real de la vista general y de filtros.
+
+
+
+
+
+
+
+
+
+
+
+
+4️⃣ Registro operativo de movimiento de inventario
+
+4.1 ¿Qué es el registro operativo de movimiento de inventario?
+
+El Registro Operativo de Movimiento de Inventario es el registro interno que autoriza, respalda y explica una operación operativa de inventario.
+Cuando el registro se confirma, genera como consecuencia los movimientos reales sobre el stock, los registros correspondientes en el Kardex y la actualización de las Existencias.
+Este registro no reemplaza a documentos generados por otros módulos, como compras, ventas, facturas, órdenes de despacho o devoluciones. Su uso está orientado a movimientos internos de inventario que requieren control operativo propio.
+
+
+4.2 ¿Todos los movimientos generan documento?
+Solo algunos movimientos generan documento propio
+
+El Registro Operativo de Movimiento de Inventario se utilizará para registrar los siguientes movimientos:
+MOV-01 Inventario inicial
+MOV-06 Transferencia interna
+MOV-07 Transferencia entre sucursales
+MOV-08 Recepción de transferencia
+MOV-09 Ajuste positivo
+MOV-10 Ajuste negativo
+MOV-11 Envío a mermas
+MOV-12 Reacondicionamiento desde mermas
+
+El campo Tipo de movimiento determina el comportamiento operativo del registro, indicando si la operación corresponde a una transferencia, ajuste, recepción de transferencia, envío a mermas o reacondicionamiento.
+
+Mientras el registro se encuentre en estado BORRADOR, no afecta inventario, no genera Kardex y no actualiza Existencias.
+
+La afectación real del inventario ocurre únicamente cuando el Registro Operativo de Movimiento de Inventario pasa a estado CONFIRMADO. En ese momento, el sistema genera los registros correspondientes en el Kardex y actualiza las Existencias.
+
+
+
+
+
+
+4.3 Estructura del registro operativo de movimiento de inventario
+
+El registro se compone de dos partes principales:
+
+
+4.3.1 Encabezado base 
+En el encabezado se deben solicitar o mostrar los siguientes campos:
+
+Los campos Establecimiento origen, Bodega origen, Establecimiento destino y Bodega destino serán obligatorios o no según el tipo de movimiento registrado.
+
+
+
+4.3.2 Detalle
+Un mismo Documento de Movimiento de Inventario puede contener uno o varios productos en su detalle.
+Todos los productos incluidos en el documento comparten el mismo:
+Tipo de movimiento
+Establecimiento origen
+Bodega origen
+Establecimiento destino
+Bodega destino
+Por esta razón, un registro representa una única operación operativa entre un origen y un destino determinados, o una única operación de entrada o salida cuando el movimiento no maneje origen o destino.
+No se permite mezclar múltiples orígenes o múltiples destinos dentro del mismo registro.
+Si los productos deben enviarse a bodegas o establecimientos diferentes, deberá generarse un registro independiente para cada origen y destino.
+El detalle del movimiento debe adaptarse al tipo de control de inventario configurado en cada producto.
+En un mismo registro operativo pueden existir productos con control estándar, control por lote y control por serie, siempre que correspondan al mismo movimiento, origen y destino.
+
+4.3.2.1 Búsqueda y selección de productos
+
+Objetivo
+La búsqueda y selección de productos permite localizar los productos, lotes o series que serán agregados al detalle del Registro Operativo de Movimiento de Inventario.
+Esta búsqueda sirve únicamente como apoyo para seleccionar correctamente la información que participará en el movimiento. No registra cantidades, no afecta inventario, no genera Kardex y no actualiza Existencias.
+La afectación real del inventario ocurre únicamente cuando el Registro Operativo de Movimiento de Inventario pasa a estado CONFIRMADO.
+
+Búsqueda de productos
+La búsqueda de productos permite localizar el producto que será agregado al detalle principal del movimiento.
+
+Criterios usados para la búsqueda y filtrado:
+
+Reglas:
+La búsqueda de productos solo permite localizar y seleccionar el producto.
+La cantidad no se ingresa en la búsqueda; se ingresa después, cuando el producto ya fue agregado al detalle del movimiento.
+En movimientos de salida o traslado, la búsqueda debe mostrar el stock correspondiente a la bodega origen.
+En movimientos de entrada, la búsqueda puede mostrar el stock actual de la bodega destino solo como referencia.
+
+
+Búsqueda de lotes
+La búsqueda de lotes aplica cuando el producto seleccionado tiene control por lote.
+Esta búsqueda permite localizar el lote específico que será agregado al subdetalle del movimiento.
+
+Criterios usados para la búsqueda y filtrado:
+
+Reglas:
+La búsqueda de lotes solo permite localizar y seleccionar el lote.
+La cantidad del lote no se ingresa en la búsqueda.
+La cantidad se ingresa después, cuando el lote ya fue agregado al subdetalle del movimiento.
+En movimientos de salida o traslado, la búsqueda debe mostrar lotes existentes en la bodega origen.
+En movimientos de entrada, el sistema puede permitir seleccionar un lote existente o registrar un lote nuevo, según corresponda.
+La Observación del lote mostrada en la búsqueda corresponde a la observación propia del lote y no debe confundirse con la Observación lote en movimiento, que se registra posteriormente en el subdetalle.
+
+
+Búsqueda de series
+
+La búsqueda de series aplica cuando el producto seleccionado tiene control por serie.
+Esta búsqueda permite localizar las unidades serializadas específicas que serán agregadas al subdetalle del movimiento.
+
+Criterios usados para la búsqueda y filtrado:
+
+Reglas:
+La búsqueda de series solo permite localizar y seleccionar las unidades serializadas.
+En productos con control por serie no se ingresa cantidad manualmente en la búsqueda ni en el subdetalle.
+La cantidad se calcula automáticamente según el número de series seleccionadas.
+En movimientos de salida o traslado, la búsqueda debe mostrar series existentes en la bodega origen y con estado válido para el movimiento.
+En movimientos de entrada, como MOV-01 Inventario inicial y MOV-09 Ajuste positivo, el sistema puede permitir registrar series nuevas, según corresponda.
+La Observación de la serie mostrada en la búsqueda corresponde a la observación propia de la serie y no debe confundirse con la Observación serie en movimiento, que se registra posteriormente en el subdetalle.
+
+
+Regla general
+La búsqueda de productos, lotes y series solo permite localizar y seleccionar información para agregarla al detalle del movimiento.
+No debe registrar cantidades, no debe afectar inventario, no debe generar Kardex y no debe actualizar Existencias.
+Las cantidades y observaciones operativas se registran después, cuando el producto, lote o serie ya fue agregado al detalle o subdetalle correspondiente del Registro Operativo de Movimiento de Inventario.
+
+
+4.3.2.2 Detalle para productos con control estándar
+
+Para productos con control estándar, el detalle del movimiento requiere seleccionar el producto e ingresar la cantidad afectada.
+Los datos como código, código auxiliar, tipo de control y unidad de medida se obtienen automáticamente del producto seleccionado.
+
+
+Ejemplo:
+
+
+Reglas:
+La cantidad ingresada debe ser mayor a cero.
+Los campos Código, Código auxiliar / código de barras, Tipo de control y Unidad de medida no se ingresan manualmente; el sistema los obtiene del producto seleccionado.
+En movimientos de salida o traslado, la cantidad ingresada no puede superar el stock disponible actual del producto en la bodega origen.
+Aunque el movimiento afecte el stock físico, el límite de la cantidad a mover se valida contra el stock disponible.
+En movimientos de entrada, como MOV-01 Inventario inicial y MOV-09 Ajuste positivo, no aplica la validación contra stock disponible, ya que el movimiento incrementa la existencia.
+
+
+4.3.2.3 Detalle para productos con control por lote
+
+Para productos con control por lote, el producto se selecciona una sola vez en el detalle principal del movimiento.
+La cantidad del detalle principal no debe ingresarse manualmente, ya que se calcula automáticamente según la suma de las cantidades registradas en los lotes seleccionados.
+Este control permite identificar exactamente qué lote entra, sale, se transfiere, se ajusta, se envía a mermas o se reacondiciona.
+
+
+Detalle principal
+
+
+
+Subdetalle de lotes
+Para productos con control por lote, el subdetalle debe indicar el lote específico afectado por el movimiento.
+
+Ejemplo:
+Detalle principal:
+
+Subdetalle de lotes:
+
+
+Reglas:
+La cantidad ingresada por lote debe ser mayor a cero.
+Los campos Código, Código auxiliar / código de barras, Tipo de control y Unidad de medida no se ingresan manualmente; el sistema los obtiene del producto seleccionado.
+La cantidad del detalle principal no debe ingresarse manualmente; debe calcularse según la suma de los lotes seleccionados.
+No se debe permitir mover un producto con control por lote sin seleccionar el lote correspondiente.
+La fecha de fabricación y la fecha de vencimiento se heredan del lote seleccionado.
+Los campos Días para vencer y Situación del lote se muestran para apoyo operativo y no deben editarse manualmente.
+El sistema debe calcular nuevamente los campos Días para vencer y Situación del lote al momento de confirmar el movimiento.
+En movimientos de salida o traslado, la cantidad seleccionada por lote no puede superar el stock disponible actual de ese lote en la bodega origen.
+Aunque el movimiento afecte el stock físico, el límite de la cantidad a mover se valida contra el stock disponible.
+En movimientos de entrada, si el lote no existe, el sistema puede permitir registrarlo en ese momento.
+En movimientos de entrada no aplica la validación contra stock disponible, ya que el movimiento incrementa la existencia.
+En movimientos de salida, transferencia, merma o reacondicionamiento, el lote debe existir previamente y tener stock disponible en la bodega origen.
+La observación registrada en el subdetalle corresponde al movimiento actual y no reemplaza la observación propia del lote.
+
+
+
+
+4.3.2.4 Detalle para producto con control por serie
+
+Para productos con control por serie, cada fila del detalle principal corresponde a un producto.
+Dentro de esa fila se deben seleccionar las series específicas que serán afectadas por el movimiento.
+Cada serie representa una unidad física individual. Por lo tanto, la cantidad no debe ingresarse manualmente; el sistema debe calcularla automáticamente según el número de series seleccionadas.
+
+
+Detalle principal
+
+
+
+Subdetalle de series
+Para productos con control por serie, el subdetalle debe indicar las unidades serializadas específicas afectadas por el movimiento.
+
+
+
+
+
+
+Ejemplo:
+
+Detalle principal:
+
+
+
+Series seleccionadas:
+
+
+
+
+Reglas
+No se debe permitir confirmar un movimiento de un producto serializado sin identificar las series involucradas.
+Cada serie representa una unidad física individual.
+El producto se selecciona una sola vez en el detalle principal.
+Las series se registran o seleccionan dentro del subdetalle de esa línea.
+La cantidad del detalle principal no debe ingresarse manualmente.
+La cantidad del detalle principal debe calcularse automáticamente según el número de series seleccionadas en el subdetalle.
+Los campos Código, Código auxiliar / código de barras, Tipo de control y Unidad de medida no se ingresan manualmente; el sistema los obtiene del producto seleccionado.
+Los campos Estado, Lote referencial, Fecha de fabricación, Fecha de vencimiento y Reacondicionado se heredan de la serie seleccionada.
+El campo Días para vencer se calcula automáticamente a partir de la fecha actual y la fecha de vencimiento registrada en la serie.
+El campo Reacondicionado no debe editarse libremente desde el subdetalle. Se actualiza automáticamente cuando corresponda, por ejemplo al confirmar un MOV-12 Reacondicionamiento desde mermas.
+La observación registrada en el subdetalle corresponde al movimiento actual y no reemplaza la observación propia de la serie.
+En movimientos de entrada, como MOV-01 Inventario inicial y MOV-09 Ajuste positivo, el sistema puede permitir registrar las series en ese momento. 
+En movimientos de salida, transferencia, envío a mermas o reacondicionamiento, las series deben existir previamente, pertenecer al producto, estar ubicadas en la bodega origen y tener un estado válido para el movimiento.
+Los estados válidos para seleccionar una serie dependerán del tipo de movimiento registrado.
+
+
+El movimiento de una serie debe actualizar su bodega actual y/o su estado, según corresponda al tipo de movimiento.
+No se debe permitir seleccionar una serie que esté comprometida en otro proceso activo.
+
+
+
+
+4.3.3 Estados del Registro Operativo de Movimiento de Inventario
+
+El Registro Operativo de Movimiento de Inventario manejará únicamente los estados BORRADOR y CONFIRMADO.
+
+📄 BORRADOR
+El estado BORRADOR representa un registro operativo creado, pero aún no confirmado.
+
+Características:
+Se puede editar. 
+Se puede eliminar. 
+No afecta inventario. 
+No actualiza existencias.
+No genera movimientos en el Kardex. 
+No genera trazabilidad de inventario. 
+
+
+
+✅ CONFIRMADO
+El estado CONFIRMADO representa que la operación de inventario fue aceptada y ejecutada definitivamente en el sistema. 
+La afectación real del inventario ocurre únicamente cuando el registro pasa a estado CONFIRMADO.
+
+Características:
+Actualiza las existencias generales del producto por bodega.
+Actualiza las existencias por lote, si el producto tiene control por lote.
+Actualiza el estado o la ubicación de las series, si el producto tiene control por serie.
+Genera los registros correspondientes en el Kardex.
+Bloquea el registro para impedir modificaciones posteriores.
+No puede eliminarse.
+No puede volver a BORRADOR.
+
+Reglas de validación antes de confirmar
+Antes de pasar a CONFIRMADO, el sistema debe validar:
+que existan productos en el detalle;
+que las cantidades sean mayores a cero;
+que las bodegas requeridas estén seleccionadas según el tipo de movimiento;
+que exista stock disponible suficiente en la bodega origen para movimientos de salida o traslado;
+que los productos controlados por lote tengan lote seleccionado;
+que los productos controlados por serie tengan series seleccionadas;
+que la cantidad coincida con las series seleccionadas en productos serializados;
+que no se generen stocks negativos.
+
+
+
+
+
+MOV-01 Inventario inicial
+
+Descripción
+Movimiento de inventario utilizado para registrar el stock inicial de uno o varios productos en una bodega específica.
+Este movimiento se usa para cargar el saldo inicial con el que empieza el control de inventario de un producto en una bodega, antes de que dicha bodega haya tenido movimientos de inventario confirmados para ese producto.
+El MOV-01 Inventario inicial no debe utilizarse para registrar compras, correcciones posteriores, transferencias, devoluciones ni diferencias encontradas durante la operación normal del inventario.
+Cuando se detecte una diferencia positiva después de que el producto ya tenga historial de movimientos en la bodega, se deberá utilizar MOV-09 Ajuste positivo.
+
+
+¿Qué lo genera?
+Se genera al confirmar un Registro Operativo de Movimiento de Inventario de tipo MOV-01 Inventario inicial.
+El stock inicial no se registrará desde el formulario de creación del producto.
+El producto se registrará únicamente con sus datos propios y de configuración. Cuando se requiera cargar stock inicial, se deberá crear un Registro Operativo de Movimiento de Inventario de tipo MOV-01 Inventario inicial.
+Mientras el registro se encuentre en estado BORRADOR, no afecta inventario, no genera Kardex y puede ser modificado o eliminado según las reglas del sistema.
+Cuando el registro pasa a estado CONFIRMADO, el sistema registra las existencias iniciales en la bodega destino y genera los registros correspondientes en Kardex.
+
+
+Regla principal de uso
+El MOV-01 Inventario inicial solo debe permitirse para registrar el primer stock de un producto en una bodega específica.
+Si ya existen movimientos de inventario confirmados para ese producto en esa bodega, cualquier corrección posterior deberá realizarse mediante los movimientos operativos correspondientes, como MOV-09 Ajuste positivo o MOV-10 Ajuste negativo.
+Ejemplos:
+
+
+Actualización en el encabezado del Registro Operativo de Movimiento de Inventario específica para este movimiento
+Para el movimiento MOV-01 Inventario inicial, el encabezado debe manejar los siguientes criterios:
+
+Reglas del encabezado:
+El establecimiento origen y la bodega origen no aplican en este movimiento.
+El inventario inicial siempre registra stock en una bodega destino.
+La bodega destino debe pertenecer al establecimiento destino seleccionado.
+No debe permitirse seleccionar una bodega de tipo TRÁNSITO como bodega destino.
+Se permite registrar inventario inicial en bodegas operativas o en bodegas de MERMAS / DAÑOS, según el caso.
+El motivo debe ser obligatorio para identificar la causa de la carga inicial.
+Si el motivo seleccionado es Otro, la observación general debe ser obligatoria.
+
+
+Catálogo de motivos de movimiento para MOV-01 Inventario inicial
+
+
+Procedimiento
+Se crea un Registro Operativo de Movimiento de Inventario de tipo MOV-01 Inventario inicial.
+Se llena el encabezado del registro.
+Se selecciona el establecimiento destino.
+Se selecciona la bodega destino donde se registrará el stock inicial.
+Se selecciona el motivo del inventario inicial.
+Opcionalmente, se registra una observación general. Si el motivo es Otro, la observación general será obligatoria.
+Se agregan los productos al detalle del movimiento, según su tipo de control:
+producto con control estándar;
+producto con control por lote;
+producto con control por serie.
+Para productos con control estándar, se registra la cantidad inicial.
+Para productos con control por lote, se registran los lotes iniciales.
+Para productos con control por serie, se registran las series iniciales que ingresarán al inventario.
+Opcionalmente, se registra el costo inicial unitario. Si no se registra, el valor por defecto será 0,00.
+El registro puede guardarse como BORRADOR o confirmarse.
+Si el registro pasa a estado CONFIRMADO, el sistema registra las existencias iniciales y genera los registros correspondientes en Kardex.
+
+
+
+Detalle para productos con control estándar
+Para productos con control estándar, el inventario inicial permite registrar la cantidad inicial del producto en la bodega destino.
+
+Reglas:
+La cantidad inicial debe ser mayor a cero.
+El costo inicial unitario es opcional y por defecto será 0,00.
+El costo total se calcula automáticamente.
+Este movimiento registra una entrada inicial de inventario; no debe permitir cantidades negativas.
+No debe permitirse confirmar MOV-01 para un producto que ya tenga movimientos confirmados en la misma bodega destino.
+
+
+
+Detalle para productos con control por lote
+Para productos con control por lote, el inventario inicial permite registrar stock inicial en uno o varios lotes.
+
+Detalle principal
+
+Subdetalle de lotes
+Para productos con control por lote, el subdetalle debe registrar los lotes iniciales que ingresarán a la bodega destino.
+
+Reglas:
+La cantidad inicial por lote debe ser mayor a cero.
+La cantidad inicial del detalle principal se obtiene sumando las cantidades iniciales de los lotes.
+El número de lote debe ser obligatorio.
+La fecha de vencimiento debe ser obligatoria.
+La fecha de fabricación será opcional.
+El sistema debe validar que no se registre dos veces el mismo número de lote para el mismo producto dentro del movimiento.
+El lote se crea formalmente al confirmar el movimiento.
+La observación propia del lote quedará guardada como información permanente del lote.
+La observación lote en movimiento corresponde únicamente al comentario específico del MOV-01.
+El costo inicial unitario es opcional y por defecto será 0,00.
+El costo total se calcula automáticamente.
+No debe permitirse confirmar MOV-01 para un producto que ya tenga movimientos confirmados en la misma bodega destino.
+
+
+
+Detalle para productos con control por serie
+Para productos con control por serie, el inventario inicial permite registrar las unidades serializadas iniciales existentes en la bodega destino.
+En MOV-01 Inventario inicial, las series ingresadas deben considerarse nuevas unidades serializadas dentro del sistema. No se debe seleccionar una serie existente, ya que cada serie representa una sola unidad física.
+
+Detalle principal
+
+Subdetalle de series
+Reglas:
+La serie registrada no debe existir previamente para el mismo producto.
+Cada serie registrada representa una unidad física.
+La cantidad del detalle principal se calcula automáticamente según el número de series iniciales registradas.
+No se debe permitir ingresar dos veces la misma serie para el mismo producto dentro del movimiento.
+El campo reacondicionado no debe ser editable en MOV-01.
+El costo inicial unitario es opcional y por defecto será 0,00.
+El costo total del detalle principal se calcula sumando los costos unitarios de las series iniciales.
+La observación serie en movimiento corresponde al comentario específico del MOV-01.
+Debido a que las series registradas en MOV-01 son nuevas unidades serializadas, la observación serie en movimiento podrá utilizarse también como observación inicial de la serie, si el sistema lo requiere.
+No debe permitirse confirmar MOV-01 para un producto que ya tenga movimientos confirmados en la misma bodega destino.
+
+Estado inicial de la serie según bodega destino
+
+Regla:
+En bodegas operativas, la serie podrá ingresar como DISPONIBLE o BLOQUEADA.
+En bodega de MERMAS / DAÑOS, la serie debe ingresar como DAÑADA.
+No se debe permitir registrar una serie nueva directamente en bodega de TRÁNSITO mediante MOV-01.
+
+
+Efectos al confirmar
+Cuando el MOV-01 Inventario inicial pasa a estado CONFIRMADO, el sistema debe aplicar los siguientes efectos:
+
+Reglas adicionales:
+El stock reservado no cambia en el inventario inicial.
+La cantidad inicial debe ser mayor a cero.
+En productos con control por lote, los lotes iniciales se crean al confirmar el movimiento.
+En productos con control por serie, cada serie se registra como una unidad física individual.
+En productos con control por serie, no se permite registrar una serie duplicada para el mismo producto.
+El inventario inicial no debe permitir cantidades negativas.
+El inventario inicial no debe usarse para corregir diferencias encontradas después de iniciar la operación normal del inventario.
+El inventario inicial no debe usarse para registrar compras, transferencias, ventas, devoluciones ni envíos a mermas.
+
+
+
+Kardex generado
+Al confirmar el movimiento, el sistema debe generar registros en el Kardex para reflejar la entrada inicial de inventario en la bodega destino.
+
+
+Nota sobre historial de costos de inventario
+Los campos costo unitario y costo total registrados en este movimiento servirán como base para alimentar el futuro Historial de costos de inventario o módulo de Valoración de inventario.
+Cuando se implemente dicho historial, al confirmar este movimiento el sistema deberá registrar el costo asociado al producto, lote o serie afectada, según corresponda.
+Este historial no reemplaza el Kardex de cantidades. Su finalidad será mantener trazabilidad económica del inventario ingresado.
+En MOV-01 Inventario inicial, el costo registrado corresponde al costo inicial del inventario.
+Cuando el movimiento sea confirmado, el sistema podrá generar registros en el historial de costos de inventario con origen MOV-01 Inventario inicial.
+Este costo representa el valor inicial asignado al stock con el que empieza el control de inventario del producto en la bodega correspondiente.
+
+
+Resumen
+En resumen, MOV-01 Inventario inicial genera una entrada en la bodega destino para registrar el saldo inicial con el que inicia el control de inventario de un producto en una bodega específica
+
+
+MOV-06 Transferencia interna
+
+Descripción
+Movimiento de inventario entre bodegas pertenecientes al mismo establecimiento.
+Este movimiento permite trasladar productos de una bodega a otra dentro del mismo establecimiento, por ejemplo, desde una bodega de ALMACÉN hacia una bodega de VENTA, desde VENTA hacia ALMACÉN, o hacia una bodega de EXHIBICIÓN, según las reglas permitidas del sistema.
+
+
+¿Qué lo genera?
+Se genera al confirmar un Registro Operativo de Movimiento de Inventario de tipo MOV-06 Transferencia interna.
+Mientras el registro se encuentre en estado BORRADOR, no afecta inventario, no genera Kardex y puede ser modificado o eliminado según las reglas del sistema.
+
+
+
+Actualización en el encabezado del Registro Operativo de Movimiento de Inventario específica para este movimiento
+
+Para el movimiento MOV-06 Transferencia interna, el encabezado debe manejar los siguientes criterios:
+
+Reglas del encabezado:
+El establecimiento destino debe ser el mismo que el establecimiento origen.
+La bodega origen y la bodega destino no pueden ser la misma.
+Ambas bodegas deben pertenecer al mismo establecimiento.
+Para este movimiento solo deben mostrarse como bodegas seleccionables los siguientes tipos:
+ALMACÉN
+VENTA
+EXHIBICIÓN
+No deben mostrarse ni permitirse bodegas de tipo:
+TRÁNSITO
+MERMAS / DAÑOS
+Este movimiento no debe utilizarse para transferencias entre sucursales. Para ese caso debe usarse MOV-07 Transferencia entre sucursales.
+Este movimiento no debe utilizarse para enviar productos hacia una bodega de MERMAS / DAÑOS. Para ese caso debe usarse MOV-11 Envío a mermas.
+Este movimiento tampoco debe utilizarse para retirar productos desde una bodega de MERMAS / DAÑOS. Para ese caso debe usarse MOV-12 Reacondicionamiento desde mermas.
+
+
+Catálogo de motivos de movimiento para MOV-06 Transferencia interna
+
+
+Procedimiento
+Se crea un Registro Operativo de Movimiento de Inventario de tipo MOV-06 Transferencia interna.
+Se llena el encabezado del registro.
+Se selecciona el establecimiento origen.
+Se selecciona la bodega origen.
+El sistema establece automáticamente el establecimiento destino como el mismo establecimiento origen.
+Se selecciona la bodega destino.
+Opcionalmente, se selecciona un motivo y se registra una observación general.
+Se agregan los productos al detalle del movimiento, según su tipo de control:
+producto con control estándar;
+producto con control por lote;
+producto con control por serie.
+El registro puede guardarse como BORRADOR o confirmarse.
+Si el registro pasa a estado CONFIRMADO, el sistema actualiza las existencias y genera los registros correspondientes en Kardex.
+
+
+Efectos al confirmar
+Cuando el MOV-06 Transferencia interna pasa a estado CONFIRMADO, el sistema debe aplicar los siguientes efectos:
+
+Reglas adicionales:
+El stock reservado no cambia en una transferencia interna normal.
+La cantidad a transferir no puede superar el stock disponible en la bodega origen.
+Para productos con control por lote, el lote debe existir y tener stock disponible en la bodega origen.
+Para productos con control por serie, las series deben existir, pertenecer al producto, estar ubicadas en la bodega origen y tener un estado válido para el movimiento.
+Para series, se permite transferir unidades en estado DISPONIBLE o BLOQUEADA, siempre que no estén comprometidas en otro proceso activo.
+El movimiento mantiene el mismo establecimiento; solo cambia la bodega donde se encuentra el producto, lote o serie.
+
+
+Kardex generado
+Al confirmar el movimiento, el sistema debe generar registros en el Kardex para reflejar la salida desde la bodega origen y la entrada hacia la bodega destino.
+En resumen, MOV-06 Transferencia interna genera una salida en la bodega origen y una entrada en la bodega destino, siempre dentro del mismo establecimiento.
+
+
+
+MOV-07 Transferencia entre sucursales
+
+Descripción
+Movimiento de inventario que permite trasladar productos entre bodegas pertenecientes a establecimientos diferentes.
+Este movimiento representa la salida formal de mercadería desde una sucursal origen hacia una sucursal destino. Durante el traslado, la mercadería debe pasar por una bodega de TRÁNSITO, la cual pertenece al establecimiento origen.
+El objetivo de este movimiento es controlar la salida, el traslado y el estado operativo de la transferencia hasta que el establecimiento destino inicie y finalice la recepción mediante el MOV-08 Recepción de transferencia.
+
+
+¿Qué lo genera?
+Se genera al confirmar un Registro Operativo de Movimiento de Inventario de tipo MOV-07 Transferencia entre sucursales.
+Mientras el registro se encuentre en estado BORRADOR, no afecta inventario, no genera Kardex y puede ser modificado o eliminado según las reglas del sistema.
+Cuando el registro pasa a estado CONFIRMADO, la mercadería sale de la bodega origen e ingresa a la bodega de TRÁNSITO.
+
+
+Actualización en el encabezado del Registro Operativo de Movimiento de Inventario específica para este movimiento
+Para el movimiento MOV-07 Transferencia entre sucursales, se aplican reglas específicas sobre los campos base del encabezado y se agregan campos propios del proceso de transferencia.
+
+Reglas del encabezado:
+El establecimiento origen y el establecimiento destino deben ser diferentes.
+La bodega origen debe pertenecer al establecimiento origen.
+La bodega de tránsito debe pertenecer al establecimiento origen.
+La bodega de tránsito debe ser de tipo TRÁNSITO.
+La bodega de recepción debe pertenecer al establecimiento destino.
+La bodega de recepción debe ser una bodega de tipo ALMACÉN con venta restringida.
+La bodega destino debe pertenecer al establecimiento destino.
+La bodega de recepción no puede ser la misma que la bodega destino.
+La bodega de recepción representa mercadería físicamente recibida, pero pendiente de revisión o aceptación final.
+La bodega destino representa la bodega donde ingresará la mercadería aceptada correctamente después del MOV-08.
+Este movimiento no debe utilizarse para transferencias internas dentro del mismo establecimiento. Para ese caso debe usarse MOV-06 Transferencia interna.
+
+
+Estado operativo de transferencia
+El campo Estado operativo de transferencia permite controlar el avance real de la mercadería desde el establecimiento origen hasta el establecimiento destino.
+Este campo es automático y se actualiza según las acciones realizadas sobre el MOV-07 y su MOV-08 asociado.
+
+Reglas:
+El estado PENDIENTE DE ENVÍO no afecta inventario.
+El estado EN TRÁNSITO se produce cuando el MOV-07 pasa a estado CONFIRMADO.
+El estado EN RECEPCIÓN se produce cuando se inicia el MOV-08 desde el MOV-07.
+Los estados RECIBIDA CORRECTAMENTE y RECIBIDA CON INCIDENCIA se actualizan automáticamente al confirmar el MOV-08.
+Si el MOV-08 se encuentra en estado BORRADOR y se elimina o cancela antes de afectar inventario, el MOV-07 debe volver al estado operativo EN TRÁNSITO.
+Una vez que el MOV-08 pasa a estado EN PROCESO o CONFIRMADO, el MOV-07 no debe volver a EN TRÁNSITO.
+
+
+Origen de transferencia
+El campo Origen de transferencia indica cómo fue generada la transferencia entre sucursales.
+Este campo es automático.
+Reglas:
+Si la transferencia es directa, el origen debe mostrarse como Directa.
+Si la transferencia nace desde una solicitud de abastecimiento, el origen debe mostrar la referencia o número de dicha solicitud.
+La solicitud de abastecimiento no reemplaza al MOV-07; solo actúa como documento operativo previo que justifica la transferencia.
+En esta primera versión del sistema, el origen de transferencia será Directa por defecto.
+
+
+Catálogo de motivos de movimiento para MOV-07 Transferencia entre sucursales
+
+
+Procedimiento
+Se crea un Registro Operativo de Movimiento de Inventario de tipo MOV-07 Transferencia entre sucursales.
+Se llena el encabezado del registro.
+Se selecciona el establecimiento origen.
+Se selecciona la bodega origen.
+Se selecciona la bodega de tránsito, perteneciente al establecimiento origen.
+Se selecciona el establecimiento destino.
+Se selecciona la bodega de recepción, perteneciente al establecimiento destino.
+Se selecciona la bodega destino, perteneciente al establecimiento destino.
+El sistema define automáticamente el origen de transferencia, según corresponda:
+Directa;
+Derivada de una solicitud de abastecimiento.
+Opcionalmente, se selecciona un motivo y se registra una observación general.
+Se agregan los productos al detalle del movimiento, según su tipo de control:
+producto con control estándar;
+producto con control por lote;
+producto con control por serie.
+El registro puede guardarse como BORRADOR o confirmarse.
+Si el registro pasa a estado CONFIRMADO, el sistema actualiza las existencias y genera los registros correspondientes en Kardex.
+Al confirmarse, el estado operativo de transferencia pasa a EN TRÁNSITO.
+Posteriormente, el establecimiento destino podrá ejecutar la acción Iniciar recepción, generando el MOV-08 Recepción de transferencia.
+
+
+Efectos al confirmar
+Cuando el MOV-07 Transferencia entre sucursales pasa a estado CONFIRMADO, el sistema debe aplicar los siguientes efectos:
+
+Reglas adicionales:
+El stock reservado no cambia en una transferencia entre sucursales normal.
+La cantidad a transferir no puede superar el stock físico transferible en la bodega origen.
+Si la bodega origen es operativa, como ALMACÉN, VENTA o EXHIBICIÓN, la validación debe realizarse contra el stock disponible.
+Si la bodega origen es MERMAS / DAÑOS, la validación debe realizarse contra el stock físico existente en esa bodega, siempre que no esté comprometido en otro proceso activo.
+La mercadería ubicada en la bodega de TRÁNSITO no debe estar disponible para venta ni reserva.
+Para productos con control por lote, el lote debe existir y tener stock transferible en la bodega origen.
+Para productos con control por serie, las series deben existir, pertenecer al producto, estar ubicadas en la bodega origen y tener un estado válido para el movimiento.
+Para series, se permite transferir unidades en estado DISPONIBLE, BLOQUEADA o DAÑADA, siempre que no estén comprometidas en otro proceso activo.
+Al confirmar el MOV-07, las series mantienen su estado actual. El traslado se controla mediante el cambio de bodega actual hacia la bodega de TRÁNSITO.
+El MOV-07 no cambia una serie DAÑADA a DISPONIBLE, ni una serie BLOQUEADA a DISPONIBLE.
+El ingreso a la bodega destino final no se realiza en el MOV-07; se realiza posteriormente mediante el MOV-08 Recepción de transferencia.
+
+
+Relación con MOV-08 Recepción de transferencia
+El MOV-07 Transferencia entre sucursales queda relacionado con el MOV-08 Recepción de transferencia cuando el usuario autorizado del establecimiento destino ejecuta la acción Iniciar recepción.
+El MOV-08 debe tener una referencia obligatoria al MOV-07 que lo originó.
+El MOV-07 no necesita guardar un campo físico con referencia directa al MOV-08, ya que la relación puede obtenerse desde el MOV-08 mediante su movimiento origen.
+En las consultas del MOV-07, el sistema podrá mostrar un enlace hacia el MOV-08 asociado cuando exista una recepción iniciada.
+Ejemplo:
+Reglas:
+Solo puede iniciarse recepción sobre un MOV-07 en estado operativo EN TRÁNSITO.
+Al iniciar la recepción, el MOV-07 pasa a estado operativo EN RECEPCIÓN.
+Al iniciar la recepción, el sistema crea un MOV-08 en estado documento BORRADOR y estado operativo PENDIENTE DE DESCARGA.
+Si el MOV-08 en BORRADOR se elimina o cancela antes de afectar inventario, el MOV-07 debe volver a EN TRÁNSITO.
+Si el MOV-08 confirma descarga, el MOV-07 se mantiene en EN RECEPCIÓN hasta que la recepción finalice.
+Al confirmar el MOV-08, el MOV-07 pasa automáticamente a RECIBIDA CORRECTAMENTE o RECIBIDA CON INCIDENCIA, según el resultado de la recepción.
+
+
+Kardex generado
+Al confirmar el MOV-07, el sistema debe generar registros en el Kardex para reflejar la salida desde la bodega origen y la entrada hacia la bodega de tránsito.
+En resumen, MOV-07 Transferencia entre sucursales genera una salida desde la bodega origen y una entrada hacia la bodega de TRÁNSITO. La recepción en el establecimiento destino se controla posteriormente mediante el MOV-08 Recepción de transferencia.
+
+
+
+MOV-08 Recepción de transferencia 
+Descripción
+Movimiento de inventario que permite registrar la recepción de una transferencia entre sucursales generada previamente mediante un MOV-07 Transferencia entre sucursales.
+Este movimiento controla la llegada física de la mercadería al establecimiento destino y permite registrar productos recibidos correctamente, productos faltantes, productos dañados y productos sobrantes.
+El MOV-08 Recepción de transferencia se maneja como la continuación operativa del MOV-07 Transferencia entre sucursales.
+
+
+¿Qué lo genera?
+Se genera cuando un usuario autorizado del establecimiento destino ejecuta la acción Iniciar recepción sobre un MOV-07 Transferencia entre sucursales que se encuentra en estado operativo EN TRÁNSITO.
+Al iniciar la recepción:
+el MOV-07 pasa a estado operativo EN RECEPCIÓN;
+se crea un MOV-08 Recepción de transferencia;
+el MOV-08 inicia con estado del documento BORRADOR;
+el MOV-08 inicia con estado operativo PENDIENTE DE DESCARGA;
+todavía no se afecta inventario.
+Si el MOV-08 se encuentra en estado BORRADOR y se elimina o cancela antes de afectar inventario, el MOV-07 debe volver al estado operativo EN TRÁNSITO.
+
+
+
+Actualización en el encabezado del Registro Operativo de Movimiento de Inventario específica para este movimiento
+Para el movimiento MOV-08 Recepción de transferencia, se aplican reglas específicas sobre los campos base del encabezado y se agregan campos propios del proceso de recepción.
+
+Reglas del encabezado:
+El MOV-08 debe estar relacionado obligatoriamente con un MOV-07 origen.
+Solo puede crearse un MOV-08 desde un MOV-07 en estado operativo EN TRÁNSITO.
+Los datos heredados del MOV-07 no deben modificarse libremente en el MOV-08.
+La bodega de tránsito corresponde a la bodega donde se encuentra la mercadería enviada.
+La bodega de recepción corresponde a la bodega temporal del establecimiento destino donde ingresa la mercadería físicamente recibida.
+La bodega destino corresponde a la bodega final donde ingresan los productos aceptados correctamente.
+La bodega de incidencia / mermas se utiliza para trasladar los productos, lotes o series que sean reportados como dañados durante la recepción.
+La bodega de incidencia / mermas se define una sola vez en el encabezado del MOV-08 y aplica para todos los productos dañados de la recepción.
+La bodega de incidencia / mermas debe pertenecer al establecimiento destino y ser de tipo MERMAS / DAÑOS.
+Los productos faltantes no ingresan a ninguna bodega.
+Los productos sobrantes se registran como incidencia, pero no generan entrada automática a inventario en esta primera versión.
+
+
+Estado operativo de recepción
+El campo Estado operativo de recepción permite controlar la etapa interna del MOV-08.
+
+
+
+Relación entre estado del documento y estado operativo del MOV-08
+El MOV-08 maneja dos estados:
+Estado del documento, que controla si el registro puede editarse, eliminarse o considerarse finalizado.
+Estado operativo, que indica la etapa real de la recepción.
+
+
+Reglas:
+Mientras el MOV-08 esté en BORRADOR, no afecta inventario.
+Si el MOV-08 en BORRADOR se elimina o cancela, el MOV-07 debe volver a estado operativo EN TRÁNSITO.
+Cuando se confirma la descarga, el MOV-08 pasa a EN PROCESO y ya no puede eliminarse.
+Cuando se confirma la recepción final, el MOV-08 pasa a CONFIRMADO.
+Al confirmar el MOV-08, el MOV-07 pasa automáticamente a RECIBIDA CORRECTAMENTE o RECIBIDA CON INCIDENCIA, según el resultado.
+
+
+Reglas de edición según estado operativo
+El MOV-08 separa la recepción en dos etapas: descarga y revisión.
+Reglas:
+Mientras el MOV-08 se encuentre en estado operativo PENDIENTE DE DESCARGA, solo se permite registrar la descarga física de los productos recibidos, el resultado de descarga en series, las incidencias por sobrantes, la bodega de incidencia / mermas si aplica, la observación general y las observaciones del detalle.
+Las cantidades aceptadas y dañadas, así como el resultado de revisión, deben permanecer bloqueados hasta que la descarga sea confirmada.
+La cantidad faltante no es editable; se calcula automáticamente a partir de la cantidad enviada y la cantidad descargada.
+Después de confirmar la descarga, la cantidad descargada y el resultado de descarga en series quedan bloqueados, porque ya afectaron inventario.
+En estado operativo DESCARGA REGISTRADA, solo se permite continuar con la revisión de los productos físicamente recibidos, registrar cantidades aceptadas, cantidades dañadas, resultado de revisión, observaciones e incidencias por sobrantes si aplica.
+Al confirmar la recepción final, el MOV-08 queda bloqueado y no puede modificarse.
+
+
+Procedimiento
+El usuario autorizado del establecimiento destino ejecuta la acción Iniciar recepción desde un MOV-07 Transferencia entre sucursales que se encuentra en estado operativo EN TRÁNSITO.
+El sistema crea el MOV-08 Recepción de transferencia en estado documento BORRADOR y estado operativo PENDIENTE DE DESCARGA.
+Al crearse el MOV-08, el sistema actualiza el estado operativo del MOV-07 de EN TRÁNSITO a EN RECEPCIÓN.
+El sistema carga en el MOV-08 la información enviada desde el MOV-07:
+establecimiento origen;
+bodega origen;
+bodega de tránsito;
+establecimiento destino;
+bodega de recepción;
+bodega destino;
+productos, cantidades, lotes o series enviadas.
+Opcionalmente, el usuario puede seleccionar en el encabezado del MOV-08 la bodega de incidencia / mermas que se utilizará para todos los productos, lotes o series reportados como dañados durante la recepción. Esta bodega será obligatoria únicamente si existen productos dañados al momento de confirmar la recepción final.
+El usuario registra la descarga física o conteo inicial de los productos recibidos.
+Si existen productos faltantes o sobrantes, estos se registran como incidencias durante la etapa de descarga.
+Se confirma la descarga.
+Al confirmar la descarga, el sistema mueve las cantidades físicamente recibidas desde la bodega de TRÁNSITO hacia la bodega de recepción.
+Las cantidades faltantes salen de la bodega de TRÁNSITO y no ingresan a ninguna bodega.
+Los sobrantes permanecen registrados como incidencia, pero no generan entrada automática a inventario en esta primera versión.
+El MOV-08 cambia de estado documento BORRADOR a EN PROCESO.
+El estado operativo del MOV-08 cambia de PENDIENTE DE DESCARGA a DESCARGA REGISTRADA.
+Después de confirmar la descarga, el sistema bloquea la edición de las cantidades descargadas y resultados de descarga.
+El usuario revisa los productos ubicados en la bodega de recepción.
+Se registran las cantidades aceptadas y dañadas, según corresponda.
+Se confirma la recepción final.
+Al confirmar la recepción final, los productos aceptados pasan desde la bodega de recepción hacia la bodega destino.
+Los productos dañados pasan desde la bodega de recepción hacia la bodega de MERMAS / DAÑOS definida en el encabezado del MOV-08.
+Los productos faltantes permanecen registrados como incidencia y no ingresan a ninguna bodega.
+Los sobrantes permanecen registrados como incidencia de recepción y no generan entrada automática a inventario en esta primera versión.
+El MOV-08 cambia a estado documento CONFIRMADO.
+El estado operativo final del MOV-08 será:
+RECEPCIÓN CORRECTA, si no existen faltantes, dañados, sobrantes ni diferencias;
+RECEPCIÓN CON INCIDENCIA, si existe al menos un faltante, dañado, sobrante o diferencia.
+Según el resultado final del MOV-08, el sistema actualiza el estado operativo del MOV-07:
+si el MOV-08 finaliza como RECEPCIÓN CORRECTA, el MOV-07 pasa a RECIBIDA CORRECTAMENTE;
+si el MOV-08 finaliza como RECEPCIÓN CON INCIDENCIA, el MOV-07 pasa a RECIBIDA CON INCIDENCIA.
+
+
+
+Detalle para productos con control estándar
+Para productos con control estándar, el detalle del MOV-08 debe partir de la información enviada en el MOV-07.
+Los productos enviados desde el MOV-07 se cargan automáticamente y no pueden eliminarse del detalle del MOV-08.
+Reglas:
+La cantidad enviada se hereda del MOV-07 y no es editable.
+La cantidad descargada no puede ser mayor que la cantidad enviada.
+La cantidad faltante se calcula como cantidad enviada menos cantidad descargada.
+La suma de cantidad aceptada + cantidad dañada debe ser igual a la cantidad descargada.
+Mientras el MOV-08 esté en PENDIENTE DE DESCARGA, solo se permite editar la cantidad descargada.
+Mientras el MOV-08 esté en PENDIENTE DE DESCARGA, las cantidades aceptada y dañada permanecen bloqueadas.
+Cuando la descarga se confirma, la cantidad descargada y la cantidad faltante quedan bloqueadas.
+En estado DESCARGA REGISTRADA, se habilita la edición de cantidad aceptada y cantidad dañada.
+Si existe cantidad faltante, el MOV-08 finaliza con incidencia.
+Si existe cantidad dañada, el MOV-08 finaliza con incidencia.
+Los faltantes no ingresan a bodega de recepción, bodega destino ni bodega de mermas.
+Los dañados sí llegaron físicamente; por lo tanto, primero ingresan a bodega de recepción y luego se trasladan a MERMAS / DAÑOS.
+
+
+Detalle para productos con control por lote
+Para productos con control por lote, el detalle principal resume el producto y el subdetalle registra el resultado por cada lote enviado.
+Los productos y lotes enviados desde el MOV-07 se cargan automáticamente y no pueden eliminarse del detalle o subdetalle del MOV-08.
+Detalle principal
+
+Subdetalle por lote
+Reglas:
+La cantidad enviada por lote se hereda del MOV-07 y no es editable.
+La cantidad descargada por lote no puede superar la cantidad enviada del mismo lote.
+La cantidad faltante por lote se calcula como cantidad enviada menos cantidad descargada.
+La suma de cantidad aceptada + cantidad dañada debe ser igual a la cantidad descargada.
+Mientras el MOV-08 esté en PENDIENTE DE DESCARGA, solo se permite editar la cantidad descargada por lote.
+Mientras el MOV-08 esté en PENDIENTE DE DESCARGA, las cantidades aceptada y dañada permanecen bloqueadas.
+Cuando la descarga se confirma, la cantidad descargada y la cantidad faltante quedan bloqueadas.
+En estado DESCARGA REGISTRADA, se habilita la edición de cantidad aceptada y cantidad dañada.
+Si existe faltante o dañado en al menos un lote, el MOV-08 finaliza con incidencia.
+El lote faltante sale de la bodega de tránsito y no ingresa a ninguna bodega.
+El lote dañado primero ingresa a bodega de recepción y luego se traslada a MERMAS / DAÑOS.
+La observación del lote en recepción no reemplaza la observación propia del lote.
+
+
+Detalle para productos con control por serie
+Para productos con control por serie, el MOV-08 debe trabajar unidad por unidad. Cada serie enviada en el MOV-07 debe ser revisada en el MOV-08.
+Los productos y series enviados desde el MOV-07 se cargan automáticamente y no pueden eliminarse del detalle o subdetalle del MOV-08.
+
+Detalle principal
+
+Subdetalle por serie
+
+Reglas:
+Las series del MOV-08 deben provenir del MOV-07 origen.
+La serie conserva su estado durante el traslado y la recepción, salvo que el resultado de la recepción obligue a cambiarlo.
+El avance logístico de la serie se controla mediante su bodega actual, no mediante estados temporales como EN TRÁNSITO o EN RECEPCIÓN.
+Mientras el MOV-08 esté en PENDIENTE DE DESCARGA, solo se permite editar el resultado de descarga.
+Mientras el MOV-08 esté en PENDIENTE DE DESCARGA, el resultado de revisión permanece bloqueado.
+Si la serie fue recibida físicamente, al confirmar la descarga pasa desde la bodega de TRÁNSITO hacia la bodega de recepción y conserva su estado.
+Si la serie no fue recibida físicamente, pasa a estado FALTANTE y no ingresa a ninguna bodega.
+Después de confirmar la descarga, el resultado de descarga queda bloqueado.
+En estado DESCARGA REGISTRADA, se habilita el resultado de revisión para las series recibidas físicamente.
+Si la serie fue aceptada correctamente, al confirmar la recepción pasa desde la bodega de recepción hacia la bodega destino y conserva su estado.
+Si la serie fue recibida dañada, pasa a estado DAÑADA y se traslada a la bodega de MERMAS / DAÑOS.
+Si existe al menos una serie faltante o dañada, el MOV-08 finaliza como RECEPCIÓN CON INCIDENCIA.
+
+
+
+Tratamiento de productos faltantes
+Cuando en el MOV-08 se reporta un producto como faltante, el sistema debe registrar que la cantidad fue enviada desde el establecimiento origen, pero no llegó físicamente al establecimiento destino.
+El faltante debe descontarse de la bodega de tránsito, ya que esa cantidad dejó de formar parte del stock en traslado y no fue recibida en destino.
+Los productos faltantes:
+no ingresan a la bodega de recepción;
+no ingresan a la bodega destino;
+no ingresan a la bodega de MERMAS / DAÑOS;
+quedan registrados como incidencia de recepción.
+
+Regla clave:
+Faltante no es dañado.El producto dañado existe físicamente y puede ir a mermas.El producto faltante no existe físicamente en destino y no debe ir a mermas.
+
+
+Tratamiento de productos dañados
+Cuando durante la revisión se detectan productos dañados, significa que la mercadería sí llegó físicamente al establecimiento destino, pero no se encuentra apta para ingresar a la bodega destino.
+Los productos dañados deben trasladarse desde la bodega de recepción hacia una bodega de MERMAS / DAÑOS.
+Reglas:
+Si existen productos dañados, debe seleccionarse una bodega de incidencia / mermas.
+Los productos dañados generan incidencia.
+La existencia de productos dañados hace que el MOV-08 finalice como RECEPCIÓN CON INCIDENCIA.
+
+
+Tratamiento de productos sobrantes
+Cuando durante el MOV-08 Recepción de transferencia se detecten productos sobrantes, estos deberán registrarse como incidencia de recepción.
+Un producto sobrante es aquel que llegó físicamente al establecimiento destino, pero no fue incluido en el MOV-07 Transferencia entre sucursales original.
+Los sobrantes pueden detectarse durante la etapa de descarga o durante la etapa de revisión, siempre que el MOV-08 aún no haya sido confirmado definitivamente.
+En la primera versión del sistema, los productos sobrantes no se regularizarán automáticamente dentro del MOV-08 original.
+El MOV-08 solo debe registrar la incidencia, indicando el producto, cantidad, lote o serie recibida de más, según corresponda.
+
+Reglas:
+Los sobrantes pueden registrarse durante la etapa de descarga o durante la etapa de revisión.
+Los sobrantes solo podrán registrarse mientras el MOV-08 no se encuentre confirmado definitivamente.
+Los sobrantes no forman parte del detalle cargado desde el MOV-07.
+Los sobrantes no generan entrada automática a inventario en esta primera versión.
+Para regularizar sobrantes, se deberá crear una nueva transferencia formal o el movimiento correctivo que corresponda.
+Si posteriormente se necesita devolver esos productos al establecimiento origen, se podrá crear una nueva transferencia desde el establecimiento destino hacia el establecimiento origen.
+La existencia de sobrantes hace que el MOV-08 finalice como RECEPCIÓN CON INCIDENCIA.
+
+
+
+Efectos al confirmar descarga
+Cuando se confirma la descarga, el MOV-08 pasa de estado documento BORRADOR a EN PROCESO, y su estado operativo pasa de PENDIENTE DE DESCARGA a DESCARGA REGISTRADA.
+Reglas:
+La confirmación de descarga sí afecta inventario.
+Después de confirmar la descarga, el MOV-08 ya no puede eliminarse.
+Después de confirmar la descarga, las cantidades descargadas y los resultados de descarga quedan bloqueados.
+Los productos recibidos físicamente quedan temporalmente en bodega de recepción.
+Los productos faltantes quedan registrados como incidencia y salen de la bodega de TRÁNSITO sin ingresar a otra bodega.
+Los productos sobrantes quedan registrados como incidencia sin generar entrada automática a inventario.
+A partir de este estado se habilita la revisión de los productos físicamente recibidos.
+
+
+Efectos al confirmar recepción final
+Cuando se confirma la recepción final, el MOV-08 pasa a estado documento CONFIRMADO.
+Reglas:
+Si no existen faltantes, dañados, sobrantes ni diferencias, el estado operativo final será RECEPCIÓN CORRECTA.
+Si existe al menos un faltante, dañado, sobrante o diferencia, el estado operativo final será RECEPCIÓN CON INCIDENCIA.
+Al finalizar como RECEPCIÓN CORRECTA, el MOV-07 asociado pasa a RECIBIDA CORRECTAMENTE.
+Al finalizar como RECEPCIÓN CON INCIDENCIA, el MOV-07 asociado pasa a RECIBIDA CON INCIDENCIA.
+Después de confirmar la recepción final, el MOV-08 queda bloqueado y no puede modificarse.
+
+
+Kardex generado
+El MOV-08 puede generar Kardex en dos momentos: al confirmar la descarga y al confirmar la recepción final.
+
+Kardex al confirmar descarga
+
+Kardex al confirmar recepción final
+
+Resumen
+En resumen, MOV-08 Recepción de transferencia controla la descarga, revisión y cierre de una transferencia entre sucursales.
+Los productos recibidos correctamente ingresan a la bodega destino, los productos dañados ingresan a MERMAS / DAÑOS, los productos faltantes salen de TRÁNSITO sin entrada a destino y los productos sobrantes se registran como incidencia sin afectar inventario automáticamente en la primera versión.
+
+
+
+MOV-09 Ajuste positivo 
+
+Descripción
+Movimiento de inventario utilizado para aumentar existencias cuando se detecta que el stock físico real es mayor al stock registrado en el sistema.
+Este movimiento tiene finalidad correctiva. Se usa para regularizar diferencias positivas encontradas mediante conteos físicos, revisiones de bodega, productos encontrados, errores operativos o ajustes de migración.
+El MOV-09 Ajuste positivo no debe utilizarse para registrar compras ni para cargar inventario inicial.
+
+
+¿Qué lo genera?
+Se genera al confirmar un Registro Operativo de Movimiento de Inventario de tipo MOV-09 Ajuste positivo.
+Mientras el registro se encuentre en estado BORRADOR, no afecta inventario, no genera Kardex y puede ser modificado o eliminado según las reglas del sistema.
+Cuando el registro pasa a estado CONFIRMADO, el sistema aumenta las existencias en la bodega destino.
+
+
+
+Actualización en el encabezado del Registro Operativo de Movimiento de Inventario específica para este movimiento
+Para el movimiento MOV-09 Ajuste positivo, el encabezado debe manejar los siguientes criterios:
+
+Reglas del encabezado:
+El establecimiento origen y la bodega origen no aplican en este movimiento.
+El ajuste positivo siempre ingresa stock a una bodega destino.
+La bodega destino debe pertenecer al establecimiento destino seleccionado.
+No debe permitirse seleccionar una bodega de tipo TRÁNSITO como bodega destino.
+Se permite realizar ajustes positivos en bodegas operativas o en bodegas de MERMAS / DAÑOS, según el caso.
+El motivo del ajuste debe ser obligatorio para justificar la regularización.
+Si el motivo seleccionado es Otro, la observación general debe ser obligatoria.
+
+
+Catálogo de motivos de movimiento para MOV-09 Ajuste positivo
+
+
+Procedimiento
+Se crea un Registro Operativo de Movimiento de Inventario de tipo MOV-09 Ajuste positivo.
+Se llena el encabezado del registro.
+Se selecciona el establecimiento destino.
+Se selecciona la bodega destino donde se incrementará el stock.
+Se selecciona el motivo del ajuste positivo.
+Opcionalmente, se registra una observación general. Si el motivo es Otro, la observación general será obligatoria.
+Se agregan los productos al detalle del movimiento, según su tipo de control:
+producto con control estándar;
+producto con control por lote;
+producto con control por serie.
+Para productos con control estándar, se registra la cantidad ajustada que se agregará al stock.
+Para productos con control por lote, se selecciona un lote existente o se registra un lote nuevo, y se ingresa la cantidad ajustada por lote.
+Para productos con control por serie, se registran las nuevas series que ingresarán al inventario.
+Opcionalmente, se registra el costo unitario del ajuste. Si no se registra, el valor por defecto será 0,00.
+El registro puede guardarse como BORRADOR o confirmarse.
+Si el registro pasa a estado CONFIRMADO, el sistema actualiza las existencias y genera los registros correspondientes en Kardex.
+
+
+
+Detalle para productos con control estándar
+Para productos con control estándar, el ajuste positivo permite incrementar la cantidad del producto en la bodega destino.
+
+Reglas:
+La cantidad ajustada debe ser mayor a cero.
+La cantidad final se calcula automáticamente.
+El costo unitario es opcional y por defecto será 0,00.
+El costo total se calcula automáticamente.
+Este movimiento siempre incrementa inventario; no debe permitir cantidades negativas.
+
+
+
+
+Detalle para productos con control por lote
+Para productos con control por lote, el ajuste positivo permite incrementar stock en un lote existente o registrar un lote nuevo.
+
+Detalle principal
+
+Subdetalle de lotes
+Para productos con control por lote, el subdetalle debe indicar el lote específico afectado por el ajuste positivo.
+El sistema debe permitir seleccionar un lote existente o registrar un lote nuevo.
+
+Reglas:
+La cantidad ajustada por lote debe ser mayor a cero.
+La cantidad calculada del detalle principal se obtiene sumando las cantidades ajustadas de los lotes.
+Si el lote existe, sus datos propios se heredan y no deben modificarse desde el ajuste.
+Si el lote es nuevo, se debe registrar el número de lote y la fecha de vencimiento.
+La fecha de fabricación será opcional para lotes nuevos.
+Cuando el lote sea nuevo, podrá registrarse una observación propia del lote, la cual quedará guardada como información permanente del lote.
+La observación lote en movimiento corresponde únicamente al comentario específico del MOV-09 y no reemplaza la observación propia del lote cuando el lote ya existe.
+Si el lote es nuevo, el sistema podrá permitir registrar tanto la observación propia del lote como la observación lote en movimiento.
+El lote nuevo se crea formalmente al confirmar el movimiento.
+El costo unitario es opcional y por defecto será 0,00.
+El costo total se calcula automáticamente.
+
+
+
+
+Detalle para productos con control por serie
+Para productos con control por serie, el ajuste positivo permite registrar nuevas unidades serializadas encontradas o no registradas previamente en el sistema.
+En MOV-09 Ajuste positivo, las series ingresadas deben considerarse nuevas unidades serializadas. No se debe seleccionar una serie existente activa en inventario, ya que cada serie representa una sola unidad física.
+
+Detalle principal
+
+
+Subdetalle de series
+
+
+Reglas:
+La serie registrada no debe existir previamente para el mismo producto.
+Cada serie registrada representa una unidad física.
+La cantidad del detalle principal se calcula automáticamente según el número de series agregadas.
+No se debe permitir ingresar dos veces la misma serie para el mismo producto dentro del movimiento.
+El campo reacondicionado no debe ser editable en MOV-09.
+El campo reacondicionado solo se marca como VERDADERO mediante MOV-12 Reacondicionamiento desde mermas.
+El costo unitario es opcional y por defecto será 0,00.
+El costo total del detalle principal se calcula sumando los costos unitarios de las series agregadas.
+La observación serie en movimiento corresponde al comentario específico del MOV-09.
+Debido a que las series registradas en MOV-09 son nuevas unidades serializadas, la observación serie en movimiento podrá utilizarse también como observación inicial de la serie, si el sistema lo requiere.
+
+Estado inicial de la serie según bodega destino
+
+Reglas:
+En bodegas operativas, la serie podrá ingresar como DISPONIBLE o BLOQUEADA.
+En bodega de MERMAS / DAÑOS, la serie debe ingresar como DAÑADA.
+No se debe permitir registrar una serie nueva directamente en bodega de TRÁNSITO mediante MOV-09.
+
+
+
+Efectos al confirmar
+Cuando el MOV-09 Ajuste positivo pasa a estado CONFIRMADO, el sistema debe aplicar los siguientes efectos:
+
+Reglas adicionales:
+El stock reservado no cambia en un ajuste positivo.
+La cantidad ajustada debe ser mayor a cero.
+En productos con control por lote, si el lote es nuevo, se crea el lote al confirmar el movimiento.
+En productos con control por lote, si el lote ya existe, se incrementa la existencia del lote en la bodega destino.
+En productos con control por serie, cada serie se registra como una unidad física individual.
+En productos con control por serie, no se permite registrar una serie duplicada para el mismo producto.
+El ajuste positivo no debe permitir cantidades negativas.
+El ajuste positivo no debe usarse para corregir salidas, ventas, compras o transferencias que tengan su propio flujo operativo.
+
+
+
+Nota sobre historial de costos de inventario
+Los campos costo unitario y costo total registrados en este movimiento servirán como base para alimentar el futuro Historial de costos de inventario o módulo de Valoración de inventario.
+Cuando se implemente dicho historial, al confirmar este movimiento el sistema deberá registrar el costo asociado al producto, lote o serie afectada, según corresponda.
+Este historial no reemplaza el Kardex de cantidades. Su finalidad será mantener trazabilidad económica del inventario ingresado.
+En MOV-09 Ajuste positivo, el costo registrado corresponde al costo referencial del inventario ingresado por regularización.
+Cuando el movimiento sea confirmado, el sistema podrá generar registros en el historial de costos de inventario con origen MOV-09 Ajuste positivo.
+Este costo no representa una compra, sino el valor referencial asignado al stock ingresado por ajuste.
+
+
+Kardex generado
+Al confirmar el movimiento, el sistema debe generar registros en el Kardex para reflejar la entrada de inventario en la bodega destino.
+
+
+Resumen
+En resumen, MOV-09 Ajuste positivo genera una entrada en la bodega destino para regularizar diferencias positivas de inventario.
+
+
+MOV-10 Ajuste negativo
+
+Descripción
+Movimiento de inventario utilizado para disminuir existencias cuando se detecta que el stock físico real es menor al stock registrado en el sistema.
+Este movimiento tiene finalidad correctiva. Se usa para regularizar diferencias negativas encontradas mediante conteos físicos, revisiones de bodega, faltantes, pérdidas, errores operativos o ajustes de migración.
+El MOV-10 Ajuste negativo no debe utilizarse para registrar ventas, transferencias, devoluciones a proveedor, envíos a mermas ni entregas de despacho, ya que esos casos tienen sus propios movimientos operativos.
+
+
+¿Qué lo genera?
+Se genera al confirmar un Registro Operativo de Movimiento de Inventario de tipo MOV-10 Ajuste negativo.
+Mientras el registro se encuentre en estado BORRADOR, no afecta inventario, no genera Kardex y puede ser modificado o eliminado según las reglas del sistema.
+Cuando el registro pasa a estado CONFIRMADO, el sistema disminuye las existencias en la bodega origen y genera los registros correspondientes en Kardex.
+
+
+Actualización en el encabezado del Registro Operativo de Movimiento de Inventario específica para este movimiento
+Para el movimiento MOV-10 Ajuste negativo, el encabezado debe manejar los siguientes criterios:
+
+Reglas del encabezado:
+El establecimiento origen y la bodega origen son obligatorios.
+El establecimiento destino y la bodega destino no aplican en este movimiento.
+El ajuste negativo siempre disminuye stock desde una bodega origen.
+La bodega origen debe pertenecer al establecimiento origen seleccionado.
+No debe permitirse seleccionar una bodega de tipo TRÁNSITO como bodega origen.
+Se permite realizar ajustes negativos desde bodegas operativas o desde bodegas de MERMAS / DAÑOS, según el caso.
+El motivo del ajuste debe ser obligatorio para justificar la regularización.
+Si el motivo seleccionado es Otro, la observación general debe ser obligatoria.
+
+
+Catálogo de motivos de movimiento para MOV-10 Ajuste negativo
+
+
+Procedimiento
+Se crea un Registro Operativo de Movimiento de Inventario de tipo MOV-10 Ajuste negativo.
+Se llena el encabezado del registro.
+Se selecciona el establecimiento origen.
+Se selecciona la bodega origen desde donde se disminuirá el stock.
+Se selecciona el motivo del ajuste negativo.
+Opcionalmente, se registra una observación general. Si el motivo es Otro, la observación general será obligatoria.
+Se agregan los productos al detalle del movimiento, según su tipo de control:
+producto con control estándar;
+producto con control por lote;
+producto con control por serie.
+Para productos con control estándar, se registra la cantidad ajustada que se descontará del stock.
+Para productos con control por lote, se seleccionan los lotes existentes afectados y se registra la cantidad ajustada por lote.
+Para productos con control por serie, se seleccionan las series existentes que serán dadas de baja por ajuste.
+El sistema mostrará los costos de forma automática y referencial, si existe información en el futuro historial de costos de inventario.
+El registro puede guardarse como BORRADOR o confirmarse.
+Si el registro pasa a estado CONFIRMADO, el sistema actualiza las existencias, cambia el estado de las series afectadas y genera los registros correspondientes en Kardex.
+
+
+Detalle para productos con control estándar
+Para productos con control estándar, el MOV-10 Ajuste negativo permite disminuir la cantidad del producto existente en la bodega origen.
+Este movimiento no registra una venta, transferencia, devolución ni envío a mermas. Su finalidad es corregir una diferencia negativa de inventario, dejando trazabilidad de la disminución realizada.
+
+Reglas:
+La cantidad ajustada debe ser mayor a cero.
+La cantidad ajustada no debe superar el stock disponible actual.
+El stock reservado no cambia en un ajuste negativo.
+El stock físico final se calcula como: stock físico actual - cantidad ajustada.
+El stock disponible final se calcula como: stock disponible actual - cantidad ajustada.
+No se muestra stock reservado final, ya que el ajuste negativo no modifica el stock reservado.
+El costo unitario referencial y el costo total referencial no deben ser editables manualmente.
+Si no existe historial de costos para el producto, el sistema podrá mostrar 0,00 o Sin costo registrado.
+Este movimiento siempre disminuye inventario; no debe permitir cantidades negativas.
+
+
+Detalle para productos con control por lote
+Para productos con control por lote, el MOV-10 Ajuste negativo permite disminuir stock de uno o varios lotes existentes en la bodega origen.
+Este movimiento no permite registrar lotes nuevos, ya que su finalidad es descontar inventario existente por una diferencia negativa. El lote afectado debe existir previamente, pertenecer al producto seleccionado y tener stock disponible en la bodega origen.
+
+Detalle principal
+
+Subdetalle de lotes
+Para productos con control por lote, el subdetalle debe indicar el lote específico afectado por el ajuste negativo.
+
+Reglas:
+El lote debe existir previamente.
+El lote debe pertenecer al producto seleccionado.
+El lote debe tener stock disponible en la bodega origen.
+No se debe permitir registrar lotes nuevos en MOV-10 Ajuste negativo.
+La cantidad ajustada por lote debe ser mayor a cero.
+La cantidad ajustada se descuenta del stock físico actual y del stock disponible actual del lote.
+La cantidad ajustada no debe superar el stock disponible actual del lote.
+El stock reservado actual no cambia en un ajuste negativo.
+El stock físico final se calcula como: stock físico actual - cantidad ajustada.
+El stock disponible final se calcula como: stock disponible actual - cantidad ajustada.
+No se muestra stock reservado final, ya que el ajuste negativo no modifica el stock reservado.
+La cantidad calculada del detalle principal se obtiene sumando las cantidades ajustadas de los lotes.
+La observación lote en movimiento corresponde únicamente al comentario específico del MOV-10.
+El costo unitario referencial y el costo total referencial no deben ser editables manualmente.
+Si no existe historial de costos para el lote, el sistema podrá mostrar 0,00 o Sin costo registrado.
+Este movimiento siempre disminuye inventario; no debe permitir cantidades negativas.
+
+
+Detalle para productos con control por serie
+Para productos con control por serie, el MOV-10 Ajuste negativo permite dar de baja unidades serializadas existentes en la bodega origen.
+En este movimiento no se registran series nuevas. Solo se seleccionan series existentes que pertenezcan al producto, estén ubicadas en la bodega origen y tengan un estado permitido para ajuste negativo.
+
+Detalle principal
+
+Subdetalle de series
+En el subdetalle no se muestran campos de stock por cada serie, ya que cada serie representa una unidad física individual.
+En su lugar, se muestra el estado actual de la serie y el estado final que tendrá al confirmar el movimiento.
+
+Reglas:
+La serie debe existir previamente, pertenecer al producto seleccionado y estar ubicada en la bodega origen.
+Solo se pueden seleccionar series con estado DISPONIBLE, BLOQUEADA o DAÑADA.
+No se deben registrar series nuevas en MOV-10 Ajuste negativo.
+Las series seleccionadas se calculan automáticamente según el número de series agregadas en el subdetalle.
+Las series seleccionadas no deben superar el stock disponible actual.
+Al confirmar el MOV-10, cada serie seleccionada pasará a estado BAJA POR AJUSTE.
+El stock físico final y el stock disponible final se calculan automáticamente.
+El costo unitario referencial y el costo total referencial no serán editables manualmente.
+Si no existe historial de costos para la serie, el sistema podrá mostrar 0,00 o Sin costo registrado.
+
+
+Efectos al confirmar
+Cuando el MOV-10 Ajuste negativo pasa a estado CONFIRMADO, el sistema debe aplicar los siguientes efectos:
+
+Reglas adicionales:
+El stock reservado no cambia en un ajuste negativo.
+La cantidad ajustada debe ser mayor a cero.
+En productos con control estándar, la cantidad ajustada no debe superar el stock disponible actual.
+En productos con control por lote, la cantidad ajustada no debe superar el stock disponible actual del lote.
+En productos con control por serie, las series seleccionadas no deben superar el stock disponible actual del producto serializado en la bodega origen.
+El ajuste negativo no debe permitir cantidades negativas.
+El ajuste negativo no debe usarse para registrar ventas, transferencias, entregas, devoluciones, envíos a mermas ni otros procesos con movimiento propio.
+
+Nota sobre historial de costos de inventario
+En MOV-10 Ajuste negativo, el costo unitario referencial y el costo total referencial no serán ingresados manualmente.
+Estos valores serán automáticos y no editables. Su cálculo dependerá del futuro Historial de costos de inventario, según el producto, lote o serie afectada.
+El MOV-10 Ajuste negativo no crea un costo nuevo. Solo utiliza el costo registrado previamente como referencia para valorar la salida de inventario generada por el ajuste.
+Si no existe costo registrado en el historial, el sistema podrá mostrar 0,00 o Sin costo registrado.
+Este historial no reemplaza el Kardex de cantidades. Su finalidad será mantener trazabilidad económica del inventario afectado.
+
+
+Kardex generado
+Al confirmar el movimiento, el sistema debe generar registros en el Kardex para reflejar la salida de inventario desde la bodega origen.
+
+Reglas:
+En productos con control estándar, el Kardex registra la salida de la cantidad ajustada del producto.
+En productos con control por lote, el Kardex registra la salida de la cantidad ajustada del lote correspondiente.
+En productos con control por serie, el Kardex registra la salida asociada a cada serie dada de baja por ajuste.
+El Kardex debe quedar vinculado al Registro Operativo de Movimiento de Inventario que originó el ajuste negativo.
+
+
+
+Resumen
+En resumen, MOV-10 Ajuste negativo genera una salida en la bodega origen para regularizar diferencias negativas de inventario.
+
+
+
+
+
+MOV-11 Envío a mermas
+
+Descripción
+Movimiento de inventario utilizado para trasladar productos desde una bodega operativa hacia una bodega de MERMAS / DAÑOS, cuando dichos productos deben separarse del inventario disponible para la operación normal.
+Este movimiento aplica para productos dañados, vencidos, deteriorados, rotos, contaminados, incompletos, no aptos para la venta o que por decisión operativa deban mantenerse separados del inventario comercial.
+El MOV-11 Envío a mermas no representa una venta, una devolución, una baja definitiva ni un reacondicionamiento. Su finalidad es trasladar físicamente el producto hacia una bodega de MERMAS / DAÑOS, manteniendo trazabilidad del movimiento.
+Aunque este movimiento se parece a una transferencia interna, no debe confundirse con MOV-06 Transferencia interna, ya que el destino del MOV-11 siempre será una bodega de MERMAS / DAÑOS y el producto quedará fuera del inventario operativo normal.
+
+
+¿Qué lo genera?
+Se genera al confirmar un Registro Operativo de Movimiento de Inventario de tipo MOV-11 Envío a mermas.
+Mientras el registro se encuentre en estado BORRADOR, no afecta inventario, no genera Kardex y puede ser modificado o eliminado según las reglas del sistema.
+Cuando el registro pasa a estado CONFIRMADO, el sistema disminuye las existencias en la bodega origen, aumenta las existencias en la bodega de MERMAS / DAÑOS y genera los registros correspondientes en Kardex.
+
+
+Actualización en el encabezado del Registro Operativo de Movimiento de Inventario específica para este movimiento
+Para el movimiento MOV-11 Envío a mermas, el encabezado debe manejar los siguientes criterios:
+
+Reglas del encabezado:
+El establecimiento origen y la bodega origen son obligatorios.
+El establecimiento destino será el mismo establecimiento de origen.
+La bodega destino debe pertenecer al mismo establecimiento de origen.
+La bodega destino debe ser obligatoriamente de tipo MERMAS / DAÑOS.
+No debe permitirse seleccionar una bodega de tipo TRÁNSITO como bodega origen ni como bodega destino.
+No debe permitirse seleccionar como destino una bodega de tipo ALMACÉN, VENTA o EXHIBICIÓN.
+La bodega origen no puede ser la misma que la bodega destino.
+El motivo debe ser obligatorio para justificar el envío a mermas.
+Si el motivo seleccionado es Otro, la observación general debe ser obligatoria.
+
+
+Catálogo de motivos de movimiento para MOV-11 Envío a mermas
+
+
+Procedimiento
+Se crea un Registro Operativo de Movimiento de Inventario de tipo MOV-11 Envío a mermas.
+Se llena el encabezado del registro.
+Se selecciona el establecimiento origen.
+Se selecciona la bodega origen desde donde saldrán los productos.
+El sistema asigna como establecimiento destino el mismo establecimiento de origen.
+Se selecciona la bodega destino, la cual debe ser de tipo MERMAS / DAÑOS.
+Se selecciona el motivo del envío a mermas.
+Opcionalmente, se registra una observación general. Si el motivo es Otro, la observación general será obligatoria.
+Se agregan los productos al detalle del movimiento, según su tipo de control:
+producto con control estándar;
+producto con control por lote;
+producto con control por serie.
+Para productos con control estándar, se registra la cantidad enviada a mermas.
+Para productos con control por lote, se seleccionan los lotes existentes afectados y se registra la cantidad enviada a mermas por lote.
+Para productos con control por serie, se seleccionan las series existentes que serán enviadas a mermas.
+El registro puede guardarse como BORRADOR o confirmarse.
+Si el registro pasa a estado CONFIRMADO, el sistema actualiza las existencias, genera los registros correspondientes en Kardex y, en productos con control por serie, cambia el estado de las series seleccionadas a DAÑADA.
+
+
+Detalle para productos con control estándar
+Para productos con control estándar, el MOV-11 Envío a mermas permite trasladar una cantidad del producto desde la bodega origen hacia una bodega de MERMAS / DAÑOS.
+Este movimiento utiliza el formato estándar de detalle de los movimientos operativos de inventario. 
+
+Reglas:
+La cantidad enviada a mermas debe ser mayor a cero.
+La cantidad enviada a mermas no debe superar el stock disponible actual del producto en la bodega origen.
+El sistema validará internamente el stock disponible antes de confirmar el movimiento.
+Este movimiento no representa baja definitiva del inventario.
+
+Detalle para productos con control por lote
+Para productos con control por lote, el MOV-11 Envío a mermas permite trasladar cantidades específicas de uno o varios lotes desde la bodega origen hacia una bodega de MERMAS / DAÑOS.
+En MOV-11 Envío a mermas, no se deben registrar lotes nuevos. Solo se deben seleccionar lotes existentes que pertenezcan al producto y tengan stock disponible en la bodega origen.
+
+Detalle principal
+
+Subdetalle de lotes
+Para productos con control por lote, el subdetalle debe indicar el lote específico que será enviado a mermas.
+
+Reglas:
+El lote debe existir previamente.
+El lote debe pertenecer al producto seleccionado.
+El lote debe tener stock disponible en la bodega origen.
+No se debe permitir registrar lotes nuevos en MOV-11 Envío a mermas.
+La cantidad enviada a mermas por lote debe ser mayor a cero.
+La cantidad enviada a mermas no debe superar el stock disponible actual del lote en la bodega origen.
+La cantidad calculada del detalle principal se obtiene sumando las cantidades enviadas a mermas de los lotes seleccionados.
+El stock reservado no cambia en el envío a mermas.
+La observación lote en movimiento corresponde únicamente al comentario específico del MOV-11 y no modifica la observación propia del lote.
+Este movimiento no representa baja definitiva del inventario.
+
+
+Detalle para productos con control por serie
+Para productos con control por serie, el MOV-11 Envío a mermas permite trasladar unidades serializadas existentes desde la bodega origen hacia una bodega de MERMAS / DAÑOS.
+En este movimiento no se registran series nuevas. Solo se seleccionan series existentes que pertenezcan al producto, estén ubicadas en la bodega origen y tengan un estado permitido para envío a mermas.
+
+Detalle principal
+
+Subdetalle de series
+Para productos con control por serie, el subdetalle debe indicar las series específicas que serán enviadas a la bodega de MERMAS / DAÑOS.
+
+Reglas:
+La serie debe existir previamente.
+La serie debe pertenecer al producto seleccionado.
+La serie debe estar ubicada en la bodega origen.
+Solo se podrán seleccionar series con estado DISPONIBLE o BLOQUEADA.
+No se deben registrar series nuevas en MOV-11 Envío a mermas.
+Las series seleccionadas se calculan automáticamente según el número de series agregadas en el subdetalle.
+Al confirmar el MOV-11, cada serie seleccionada se trasladará a la bodega destino de tipo MERMAS / DAÑOS.
+Al confirmar el MOV-11, cada serie seleccionada pasará a estado DAÑADA.
+La observación serie en movimiento corresponde únicamente al comentario específico del MOV-11.
+Este movimiento no representa baja definitiva del inventario.
+
+
+
+Efectos al confirmar
+
+Cuando el MOV-11 Envío a mermas pasa a estado CONFIRMADO, el sistema debe aplicar los siguientes efectos:
+
+Reglas adicionales:
+El stock reservado no cambia en el envío a mermas.
+La cantidad enviada a mermas debe ser mayor a cero.
+En productos con control estándar, la cantidad enviada a mermas no debe superar el stock disponible actual del producto en la bodega origen.
+En productos con control por lote, la cantidad enviada a mermas no debe superar el stock disponible actual del lote en la bodega origen.
+En productos con control por serie, solo podrán seleccionarse series existentes, ubicadas en la bodega origen y con estado permitido para envío a mermas.
+La bodega destino debe ser obligatoriamente de tipo MERMAS / DAÑOS.
+El stock ingresado a la bodega de MERMAS / DAÑOS no estará disponible para venta, reserva ni despacho.
+Este movimiento no representa una baja definitiva del inventario.
+Si posteriormente el producto se recupera o reacondiciona, deberá utilizarse MOV-12 Reacondicionamiento desde mermas.
+Si posteriormente se decide retirar definitivamente el producto del inventario, deberá utilizarse el movimiento correctivo que corresponda, como MOV-10 Ajuste negativo, según las reglas del sistema.
+
+
+Kardex generado
+Al confirmar el MOV-11 Envío a mermas, el sistema debe generar registros en el Kardex para reflejar el traslado del inventario desde la bodega origen hacia la bodega destino de tipo MERMAS / DAÑOS.
+
+Reglas:
+En productos con control estándar, el Kardex registra la salida de la cantidad enviada a mermas desde la bodega origen y la entrada de la misma cantidad en la bodega de MERMAS / DAÑOS.
+En productos con control por lote, el Kardex registra la salida de la cantidad enviada a mermas del lote correspondiente y la entrada de esa misma cantidad en la bodega de MERMAS / DAÑOS, conservando la identificación del lote.
+En productos con control por serie, el Kardex registra la salida asociada a cada serie desde la bodega origen y la entrada de la serie en la bodega de MERMAS / DAÑOS.
+El Kardex debe quedar vinculado al Registro Operativo de Movimiento de Inventario que originó el envío a mermas.
+Este movimiento genera trazabilidad del traslado, pero no representa una baja definitiva del inventario.
+
+
+Resumen
+El MOV-11 Envío a mermas permite trasladar productos desde una bodega operativa hacia una bodega de MERMAS / DAÑOS para separarlos del inventario operativo normal.
+
+
+
+MOV-12 Reacondicionamiento desde mermas 
+
+Descripción
+Movimiento de inventario utilizado para trasladar productos desde una bodega de MERMAS / DAÑOS hacia una bodega operativa, cuando dichos productos han sido revisados, reparados, recuperados o considerados nuevamente aptos para la operación normal del inventario.
+Este movimiento aplica para productos que previamente fueron separados del inventario operativo mediante un envío a mermas u otro proceso permitido, pero que posteriormente pueden reincorporarse a una bodega de ALMACÉN, VENTA o EXHIBICIÓN.
+El MOV-12 Reacondicionamiento desde mermas no representa una compra, un ajuste positivo, una venta ni una anulación del envío a mermas. Su finalidad es dejar trazabilidad de la recuperación del producto y su retorno al inventario operativo.
+En productos con control por serie, este movimiento marcará obligatoriamente la serie como reacondicionado = VERDADERO.
+
+
+¿Qué lo genera?
+Se genera al confirmar un Registro Operativo de Movimiento de Inventario de tipo MOV-12 Reacondicionamiento desde mermas.
+Mientras el registro se encuentre en estado BORRADOR, no afecta inventario, no genera Kardex y puede ser modificado o eliminado según las reglas del sistema.
+Cuando el registro pasa a estado CONFIRMADO, el sistema disminuye las existencias en la bodega de MERMAS / DAÑOS, aumenta las existencias en la bodega operativa destino y genera los registros correspondientes en Kardex.
+
+
+Actualización en el encabezado del Registro Operativo de Movimiento de Inventario específica para este movimiento
+Para el movimiento MOV-12 Reacondicionamiento desde mermas, el encabezado debe manejar los siguientes criterios:
+
+Reglas del encabezado:
+El establecimiento origen y la bodega origen son obligatorios.
+La bodega origen debe ser obligatoriamente de tipo MERMAS / DAÑOS.
+El establecimiento destino será el mismo establecimiento de origen.
+La bodega destino debe pertenecer al mismo establecimiento de origen.
+La bodega destino debe ser una bodega operativa de tipo ALMACÉN, VENTA o EXHIBICIÓN.
+No debe permitirse seleccionar una bodega de tipo TRÁNSITO como bodega origen ni como bodega destino.
+No debe permitirse seleccionar como destino una bodega de tipo MERMAS / DAÑOS.
+La bodega origen no puede ser la misma que la bodega destino.
+El motivo debe ser obligatorio para justificar el reacondicionamiento.
+Si el motivo seleccionado es Otro, la observación general debe ser obligatoria.
+
+
+Catálogo de motivos de movimiento para MOV-12 Reacondicionamiento desde mermas
+
+
+Procedimiento
+Se crea un Registro Operativo de Movimiento de Inventario de tipo MOV-12 Reacondicionamiento desde mermas.
+Se llena el encabezado del registro.
+Se selecciona el establecimiento origen.
+Se selecciona la bodega origen, la cual debe ser de tipo MERMAS / DAÑOS.
+El sistema asigna como establecimiento destino el mismo establecimiento de origen.
+Se selecciona la bodega destino, la cual debe ser una bodega operativa de tipo ALMACÉN, VENTA o EXHIBICIÓN.
+Se selecciona el motivo del reacondicionamiento.
+Opcionalmente, se registra una observación general. Si el motivo es Otro, la observación general será obligatoria.
+Se agregan los productos al detalle del movimiento, según su tipo de control:
+producto con control estándar;
+producto con control por lote;
+producto con control por serie.
+Para productos con control estándar, se registra la cantidad reacondicionada.
+Para productos con control por lote, se seleccionan los lotes existentes en la bodega de MERMAS / DAÑOS y se registra la cantidad reacondicionada por lote.
+Para productos con control por serie, se seleccionan las series existentes en la bodega de MERMAS / DAÑOS que serán reacondicionadas.
+El registro puede guardarse como BORRADOR o confirmarse.
+Si el registro pasa a estado CONFIRMADO, el sistema actualiza las existencias, genera los registros correspondientes en Kardex y, en productos con control por serie, cambia el estado de las series seleccionadas a DISPONIBLE y marca reacondicionado = VERDADERO.
+
+
+Detalle para productos con control estándar
+Para productos con control estándar, el MOV-12 Reacondicionamiento desde mermas permite trasladar una cantidad del producto desde una bodega de MERMAS / DAÑOS hacia una bodega operativa.
+
+Reglas:
+La cantidad reacondicionada debe ser mayor a cero.
+La cantidad reacondicionada no debe superar el stock disponible actual del producto en la bodega de MERMAS / DAÑOS.
+El sistema validará internamente el stock disponible antes de confirmar el movimiento.
+Este movimiento no representa compra ni ajuste positivo.
+
+
+Detalle para productos con control por lote
+Para productos con control por lote, el MOV-12 Reacondicionamiento desde mermas permite trasladar cantidades específicas de uno o varios lotes desde una bodega de MERMAS / DAÑOS hacia una bodega operativa.
+En este movimiento no se deben registrar lotes nuevos. Solo se deben seleccionar lotes existentes que pertenezcan al producto y tengan stock disponible en la bodega de MERMAS / DAÑOS.
+
+Detalle principal
+
+Subdetalle de lotes
+Para productos con control por lote, el subdetalle debe indicar el lote específico que será reacondicionado desde mermas.
+
+Reglas:
+El lote debe existir previamente.
+El lote debe pertenecer al producto seleccionado.
+El lote debe tener stock disponible en la bodega de MERMAS / DAÑOS.
+No se debe permitir registrar lotes nuevos en MOV-12 Reacondicionamiento desde mermas.
+La cantidad reacondicionada por lote debe ser mayor a cero.
+La cantidad reacondicionada no debe superar el stock disponible actual del lote en la bodega de MERMAS / DAÑOS.
+La cantidad calculada del detalle principal se obtiene sumando las cantidades reacondicionadas de los lotes seleccionados.
+La cantidad reacondicionada se descontará del lote en la bodega de MERMAS / DAÑOS y se registrará en la bodega operativa destino, conservando la identificación del mismo lote.
+La observación lote en movimiento corresponde únicamente al comentario específico del MOV-12 y no modifica la observación propia del lote.
+Este movimiento no representa una compra ni un ajuste positivo.
+
+
+Detalle para productos con control por serie
+Para productos con control por serie, el MOV-12 Reacondicionamiento desde mermas permite trasladar unidades serializadas existentes desde una bodega de MERMAS / DAÑOS hacia una bodega operativa.
+En este movimiento no se registran series nuevas. Solo se seleccionan series existentes que pertenezcan al producto, estén ubicadas en la bodega de MERMAS / DAÑOS y tengan estado DAÑADA.
+
+Detalle principal
+
+Subdetalle de series
+Para productos con control por serie, el subdetalle debe indicar las series específicas que serán reacondicionadas desde mermas.
+
+Reglas:
+La serie debe existir previamente.
+La serie debe pertenecer al producto seleccionado.
+La serie debe estar ubicada en la bodega origen de tipo MERMAS / DAÑOS.
+Solo se podrán seleccionar series con estado DAÑADA.
+No se deben registrar series nuevas en MOV-12 Reacondicionamiento desde mermas.
+Las series seleccionadas se calculan automáticamente según el número de series agregadas en el subdetalle.
+Al confirmar el MOV-12, cada serie seleccionada se trasladará a la bodega operativa destino.
+Al confirmar el MOV-12, cada serie seleccionada pasará a estado DISPONIBLE.
+Al confirmar el MOV-12, cada serie seleccionada se marcará automáticamente como reacondicionado = VERDADERO.
+El campo reacondicionado no será editable manualmente por el usuario.
+La observación serie en movimiento corresponde únicamente al comentario específico del MOV-12.
+Este movimiento no representa una compra ni un ajuste positivo.
+
+
+Efectos al confirmar
+
+Cuando el MOV-12 Reacondicionamiento desde mermas pasa a estado CONFIRMADO, el sistema debe aplicar los siguientes efectos:
+
+Reglas adicionales:
+El stock reservado no cambia en el reacondicionamiento.
+La cantidad reacondicionada debe ser mayor a cero.
+En productos con control estándar, la cantidad reacondicionada no debe superar el stock disponible actual del producto en la bodega de MERMAS / DAÑOS.
+En productos con control por lote, la cantidad reacondicionada no debe superar el stock disponible actual del lote en la bodega de MERMAS / DAÑOS.
+En productos con control por serie, solo podrán seleccionarse series existentes, ubicadas en la bodega de MERMAS / DAÑOS y con estado DAÑADA.
+La bodega destino debe ser una bodega operativa de tipo ALMACÉN, VENTA o EXHIBICIÓN.
+El stock ingresado a la bodega operativa destino podrá formar parte del inventario operativo, según las reglas de dicha bodega.
+Este movimiento no representa una compra ni una corrección positiva de inventario.
+Si posteriormente el producto vuelve a dañarse o deja de ser apto para la operación, deberá utilizarse MOV-11 Envío a mermas.
+
+
+Kardex generado
+Al confirmar el MOV-12 Reacondicionamiento desde mermas, el sistema debe generar registros en el Kardex para reflejar el traslado del inventario desde la bodega de MERMAS / DAÑOS hacia la bodega operativa destino.
+
+Reglas:
+En productos con control estándar, el Kardex registra la salida de la cantidad reacondicionada desde MERMAS / DAÑOS y la entrada de la misma cantidad en la bodega operativa destino.
+En productos con control por lote, el Kardex registra la salida de la cantidad reacondicionada del lote correspondiente y la entrada de esa misma cantidad en la bodega operativa destino, conservando la identificación del lote.
+En productos con control por serie, el Kardex registra la salida asociada a cada serie desde MERMAS / DAÑOS y la entrada de la serie en la bodega operativa destino.
+El Kardex debe quedar vinculado al Registro Operativo de Movimiento de Inventario que originó el reacondicionamiento.
+Este movimiento genera trazabilidad del retorno al inventario operativo.
+
+
+Resumen
+El MOV-12 Reacondicionamiento desde mermas permite trasladar productos desde una bodega de MERMAS / DAÑOS hacia una bodega operativa.
+
+
+
+
+
+
+
+
+
+4️⃣ Kardex de Inventario
+
+¿Qué es el Kardex?
+Es el historial cronológico de todos los movimientos que afectan el inventario de un producto.
+Permite responder preguntas como:
+¿Cuándo ingresó este producto? 
+¿Quién movió este producto? 
+¿Por qué disminuyó el stock? 
+¿Desde qué bodega salió? 
+¿A qué bodega ingresó? 
+¿Cuál era el saldo antes y después del movimiento? 
+
+
+Filosofía del Kardex
+Una de las reglas más importantes que ya definimos:
+Todo cambio de inventario debe generar un movimiento.
+Por lo tanto:
+Todo movimiento confirmado debe generar un registro en el Kardex.
+
+¿Qué registra el Kardex?
+No registra documentos.
+No registra ventas.
+No registra compras.
+Registra:
+MOV-01
+MOV-02
+MOV-03
+...
+MOV-20
+Es decir, registra el efecto final sobre el inventario.
+
+Estructura propuesta del Kardex
+
+
+🔗 Reglas de navegación
+Los siguientes campos deben funcionar como accesos rápidos a los registros relacionados:
+
+Esto permite utilizar el Kardex no solo como historial de inventario, sino también como herramienta de auditoría y trazabilidad dentro del sistema.
+
+
+Columnas opcionales
+
+
+Reglas de generación del Kardex
+Generación automática
+Todo movimiento confirmado que afecte inventario debe generar uno o más registros en el Kardex.
+Documentos en borrador
+Los documentos en estado BORRADOR:
+No afectan inventario.
+No generan registros en el Kardex.
+Movimientos que no generan Kardex
+MOV-04 Reserva por venta despacho no genera Kardex porque no modifica el stock físico.
+Su efecto se limita a:
+Incrementar stock reservado.
+Disminuir stock disponible.
+
+Reglas de saldo
+El saldo representa el stock físico existente en la bodega después de aplicar el movimiento.
+El Kardex no registra:
+Stock reservado.
+Stock disponible.
+El Kardex únicamente registra movimientos que afectan el stock físico.
+
+Kardex General (Consolidado)
+Permite consultar todos los movimientos registrados en el inventario utilizando los filtros disponibles.
+Por defecto muestra movimientos de:
+Todos los productos.
+Todas las bodegas.
+Todos los establecimientos.
+El sistema debe permitir ordenar los resultados por cualquier columna disponible en el Kardex, en orden ascendente o descendente.
+
+
+Filtros del Kardex
+
+¿Por qué sí agregarlos al Kardex?
+Porque el Kardex responde:
+¿Qué movimientos ocurrieron?
+Y muchas veces el usuario no quiere ver solo el stock actual, sino el historial de una zona, ciudad, sucursal o bodega.
+Ejemplos reales:
+Ver todos los movimientos de inventario en Manta.
+Ver todos los ajustes negativos en bodegas tipo VENTA de Manabí.
+Ver el historial de movimientos de Xiaomi Buds 6 en Manta y Portoviejo.
+Ver todas las transferencias entre sucursales realizadas en una provincia.
+Ver movimientos hechos por un usuario en ciertas bodegas.
+Sin filtros geográficos, el Kardex se vuelve difícil de consultar cuando el cliente tiene muchas sucursales.
+
+Regla de combinación
+Aplicaría la misma lógica que en Existencias:
+Dentro de un mismo filtro se aplica OR.Entre filtros diferentes se aplica AND.
+
+Ejemplo:
+Provincia: Manabí, Esmeraldas
+Ciudad/Cantón: Manta, Portoviejo, Esmeraldas
+Tipo de movimiento: MOV-06, MOV-07, MOV-09
+Producto: Xiaomi Buds 6
+
+El sistema interpreta:
+Movimientos de productos que coincidan con "Xiaomi Buds 6"
+Y que estén en Manabí o Esmeraldas
+Y que estén en Manta, Portoviejo o Esmeraldas
+Y que sean MOV-06, MOV-07 o MOV-09
+
+
+Consultas rápidas
+Desde el producto
+La ficha del producto debe permitir consultar:
+Kardex consolidado del producto.
+Kardex del producto filtrado por cada bodega donde exista inventario.
+Desde la bodega
+La ficha de la bodega debe permitir consultar el Kardex filtrado por dicha bodega.
+
+
+Reglas de integridad
+Inmutabilidad
+Una vez generado un registro de Kardex:
+No puede editarse.
+No puede eliminarse.
+Correcciones
+Si se requiere corregir un movimiento:
+Debe generarse un nuevo movimiento de inventario.
+El Kardex conservará tanto el movimiento original como el movimiento correctivo.
+
+Observaciones y motivos
+El Kardex no almacena observaciones ni motivos propios.
+Las observaciones y motivos deben consultarse desde el documento origen asociado al movimiento.
+
+
+Tabla real del Kardex 
+La tabla real del Kardex debería guardar el movimiento histórico de forma limpia.
+Esta tabla responde:
+¿Qué movimiento afectó el stock físico, en qué bodega, cuánto entró, cuánto salió y cuál fue el saldo final?
+
+Vista de consulta del Kardex
+La vista del Kardex puede mostrar datos más amigables.
+
+
+Ejemplos de registros en el Kardex en cada movimiento
+
+
+
+
+Tablas kardex
+
+
+
+HISTORIAL DE COSTO DE INVENTARIO
+
+
+
+

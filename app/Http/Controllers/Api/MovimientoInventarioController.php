@@ -46,6 +46,33 @@ class MovimientoInventarioController extends Controller
         }
     }
 
+    public function enviarMermas(\App\Http\Requests\TransferenciaRequest $request, string $emisorId): JsonResponse
+    {
+        $resolvedId = $this->resolveEmisorId($emisorId);
+        try {
+            $origen = Bodega::with('establecimiento')->whereHas('establecimiento', function($q) use ($resolvedId) {
+                $q->where('emisor_id', $resolvedId);
+            })->findOrFail($request->bodega_origen_id);
+            
+            $destino = Bodega::with('establecimiento')->whereHas('establecimiento', function($q) use ($resolvedId) {
+                $q->where('emisor_id', $resolvedId);
+            })->findOrFail($request->bodega_destino_id);
+
+            $usuarioId = $request->user()->id;
+
+            $movimiento = $this->movimientoService->transferir(
+                $origen, $destino, $request->detalles, $request->observacion ?? '', $usuarioId, $request->motivo_id
+            );
+
+            return response()->json(['message' => 'Envío a mermas realizado con éxito', 'data' => $movimiento], 201);
+            
+        } catch (InvalidWarehouseOperationException $e) {
+            return response()->json(['error' => $e->getMessage()], 422);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Error al procesar el envío a mermas: ' . $e->getMessage()], 500);
+        }
+    }
+
     public function reacondicionar(\App\Http\Requests\TransferenciaRequest $request, string $emisorId): JsonResponse
     {
         $resolvedId = $this->resolveEmisorId($emisorId);
