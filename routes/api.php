@@ -205,6 +205,7 @@ Route::get('/emisores/{id}/establecimientos/{est}/logo-file', [LogoController::c
 Route::post('/facturacion/emitir', [FacturacionController::class, 'emitirFactura'])->middleware('auth:sanctum');
 Route::post('/facturacion/emitir-nota-credito', [FacturacionController::class, 'emitirNotaCredito'])->middleware('auth:sanctum');
 Route::post('/facturacion/emitir-nota-debito', [FacturacionController::class, 'emitirNotaDebito'])->middleware('auth:sanctum');
+Route::post('/facturacion/emitir-guia-remision', [FacturacionController::class, 'emitirGuiaRemision'])->middleware('auth:sanctum');
 Route::get('/facturacion/comprobantes/{comprobante}', [FacturacionController::class, 'estadoComprobante'])->middleware('auth:sanctum');
 Route::post('/facturacion/comprobantes/{comprobante}/reintentar', [FacturacionController::class, 'reintentarProcesamiento'])->middleware('auth:sanctum');
 Route::get('/facturacion/comprobantes/{comprobante}/pdf', [FacturacionController::class, 'downloadPdf'])->middleware('auth:sanctum');
@@ -216,3 +217,9 @@ Route::get('/facturacion/comprobantes', [FacturacionController::class, 'listarCo
 
 
 
+
+// Clientes y Proveedores
+Route::middleware('auth:sanctum')->group(function () {
+    Route::apiResource('emisores.clientes', App\Http\Controllers\ClienteController::class);
+    Route::apiResource('emisores.proveedores', App\Http\Controllers\ProveedorController::class);
+});
