@@ -176,6 +176,129 @@ class SriXmlGeneratorService
         ];
     }
 
+    public function generarXmlGuiaRemision(Comprobante $comprobante): array
+    {
+        $company                = $comprobante->company;
+        $establecimiento        = $comprobante->establecimiento;
+        $guiaData               = $comprobante->guia_remision_data ?? [];
+        $cliente                = $comprobante->cliente;
+
+        $fechaEmision    = $this->formatFechaEmision($comprobante->fecha_emision);
+        $fechaClave      = $this->formatFechaClave($comprobante->fecha_emision);
+        $tipoComprobante = '06'; // Guía de Remisión
+        $ruc             = (string) ($company->ruc ?? '');
+        $ambiente        = $this->mapAmbiente($comprobante->ambiente ?? $company->ambiente ?? 'PRODUCCION');
+        $serie           = $this->buildSerie($comprobante);
+        $secuencial      = $this->padLeft((string) $comprobante->secuencial, 9);
+        $codigoNumerico  = $this->padLeft((string) ($comprobante->secuencial ?? random_int(1, 99999999)), 8);
+        $tipoEmision     = '1';
+
+        $claveAcceso = $comprobante->clave_acceso ?: (new SriClaveAccesoService())->generarFactura(
+            $fechaClave, $ruc, $ambiente, $serie, $secuencial, $codigoNumerico, $tipoComprobante, $tipoEmision
+        );
+
+        $dom = new DOMDocument('1.0', 'UTF-8');
+        $dom->formatOutput = false;
+
+        $root = $dom->createElement('guiaRemision');
+        $root->setAttribute('id', 'comprobante');
+        $root->setAttribute('version', '1.1.0');
+        $dom->appendChild($root);
+
+        // ── infoTributaria ──────────────────────────────────────────
+        $infoTributaria = $dom->createElement('infoTributaria');
+        $root->appendChild($infoTributaria);
+        $this->appendText($dom, $infoTributaria, 'ambiente',        $ambiente);
+        $this->appendText($dom, $infoTributaria, 'tipoEmision',     $tipoEmision);
+        $this->appendText($dom, $infoTributaria, 'razonSocial',     $company->razon_social ?? '');
+        $this->appendText($dom, $infoTributaria, 'nombreComercial', $company->nombre_comercial ?? $company->razon_social ?? '');
+        $this->appendText($dom, $infoTributaria, 'ruc',             $ruc);
+        $this->appendText($dom, $infoTributaria, 'claveAcceso',     $claveAcceso);
+        $this->appendText($dom, $infoTributaria, 'codDoc',          $tipoComprobante);
+        $this->appendText($dom, $infoTributaria, 'estab',           $comprobante->codigo_establecimiento ?? substr($serie, 0, 3));
+        $this->appendText($dom, $infoTributaria, 'ptoEmi',          $comprobante->punto_emision_codigo  ?? substr($serie, 3, 3));
+        $this->appendText($dom, $infoTributaria, 'secuencial',      $secuencial);
+        $this->appendText($dom, $infoTributaria, 'dirMatriz',       $company->direccion_matriz ?? '');
+
+        if (($company->agente_retencion ?? 'NO') === 'SI') {
+            $this->appendText($dom, $infoTributaria, 'agenteRetencion', $company->numero_resolucion_agente_retencion ?? '');
+        }
+        $rimpe = $this->buildRimpe($company->regimen_tributario ?? '');
+        if ($rimpe) {
+            $this->appendText($dom, $infoTributaria, 'contribuyenteRimpe', $rimpe);
+        }
+
+        // ── infoGuiaRemision ────────────────────────────────────────
+        $infoGR = $dom->createElement('infoGuiaRemision');
+        $root->appendChild($infoGR);
+
+        $this->appendText($dom, $infoGR, 'dirEstablecimiento', $establecimiento->direccion ?? $company->direccion_matriz ?? '');
+        $this->appendText($dom, $infoGR, 'dirPartida', $guiaData['direccion_partida'] ?? $establecimiento->direccion ?? '');
+        $this->appendText($dom, $infoGR, 'razonSocialTransportista', $guiaData['transportista_nombre'] ?? 'TRANSPORTISTA');
+        // Identificacion transportista: RUC o CEDULA. Si es 10 digitos asume CEDULA (05), si es 13 asume RUC (04)
+        $idTransportista = $guiaData['transportista_identificacion'] ?? '9999999999999';
+        $tipoIdTransp = strlen($idTransportista) === 10 ? '05' : (strlen($idTransportista) === 13 ? '04' : '06');
+        $this->appendText($dom, $infoGR, 'tipoIdentificacionTransportista', $tipoIdTransp);
+        $this->appendText($dom, $infoGR, 'rucTransportista', $idTransportista);
+        $this->appendText($dom, $infoGR, 'obligadoContabilidad', $company->obligado_contabilidad ?? 'NO');
+        $this->appendText($dom, $infoGR, 'fechaIniTransporte', $this->formatFechaEmision($guiaData['fecha_inicio_transporte'] ?? $comprobante->fecha_emision));
+        $this->appendText($dom, $infoGR, 'fechaFinTransporte', $this->formatFechaEmision($guiaData['fecha_fin_transporte'] ?? $comprobante->fecha_emision));
+        $this->appendText($dom, $infoGR, 'placa', $guiaData['placa_vehiculo'] ?? 'XXX0000');
+
+        // ── destinatarios ───────────────────────────────────────────
+        $destinatariosNode = $dom->createElement('destinatarios');
+        $root->appendChild($destinatariosNode);
+
+        $destinatarioNode = $dom->createElement('destinatario');
+        $destinatariosNode->appendChild($destinatarioNode);
+
+        $this->appendText($dom, $destinatarioNode, 'identificacionDestinatario', $cliente->identificacion ?? '9999999999999');
+        $this->appendText($dom, $destinatarioNode, 'razonSocialDestinatario', $cliente->razon_social ?? 'CONSUMIDOR FINAL');
+        $this->appendText($dom, $destinatarioNode, 'dirDestinatario', $guiaData['direccion_destino'] ?? $cliente->direccion ?? 'SD');
+        $this->appendText($dom, $destinatarioNode, 'motivoTraslado', $guiaData['motivo_traslado'] ?? 'VENTA');
+        
+        // Destino doc aduanero es opcional, lo omitimos
+        $this->appendText($dom, $destinatarioNode, 'codEstabDestino', '001'); // Siempre obligatorio, típicamente 001 o depende de sucursal
+        if (!empty($guiaData['ruta'])) {
+            $this->appendText($dom, $destinatarioNode, 'ruta', $guiaData['ruta']);
+        }
+
+        // Si la guia está sustentada en una factura, llenar codDocSustento (01)
+        if ($comprobante->comprobanteModificado) {
+            $this->appendText($dom, $destinatarioNode, 'codDocSustento', '01');
+            $this->appendText($dom, $destinatarioNode, 'numDocSustento', $comprobante->comprobanteModificado->secuencial_formateado);
+            if (!empty($comprobante->comprobanteModificado->numero_autorizacion)) {
+                $this->appendText($dom, $destinatarioNode, 'numAutDocSustento', $comprobante->comprobanteModificado->numero_autorizacion);
+            }
+            $this->appendText($dom, $destinatarioNode, 'fechaEmisionDocSustento', $this->formatFechaEmision($comprobante->comprobanteModificado->fecha_emision));
+        }
+
+        $detallesNode = $dom->createElement('detalles');
+        $destinatarioNode->appendChild($detallesNode);
+
+        foreach ($comprobante->detalles ?? [] as $detalle) {
+            $detalleNode = $dom->createElement('detalle');
+            $this->appendText($dom, $detalleNode, 'codigoInterno', $detalle->producto_id ?? '001');
+            $this->appendText($dom, $detalleNode, 'descripcion', $detalle->descripcion);
+            $this->appendText($dom, $detalleNode, 'cantidad', number_format($detalle->cantidad, 2, '.', ''));
+            $detallesNode->appendChild($detalleNode);
+        }
+
+        // infoAdicional
+        if (!empty($cliente->email ?? null)) {
+            $infoAdicional = $dom->createElement('infoAdicional');
+            $root->appendChild($infoAdicional);
+            $campo = $dom->createElement('campoAdicional', $cliente->email);
+            $campo->setAttribute('nombre', 'Email');
+            $infoAdicional->appendChild($campo);
+        }
+
+        return [
+            'xml'          => $dom->saveXML(),
+            'clave_acceso' => $claveAcceso,
+        ];
+    }
+
     public function generarXmlNotaDebito(Comprobante $comprobante): array
     {
         $company                = $comprobante->company;

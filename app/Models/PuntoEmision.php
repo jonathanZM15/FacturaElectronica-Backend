@@ -147,4 +147,32 @@ class PuntoEmision extends Model
             ];
         });
     }
+
+    public function nextSecuencialGuiaRemision(): array
+    {
+        return DB::transaction(function () {
+            $row = self::where('id', $this->id)->lockForUpdate()->first();
+            if (!$row) {
+                throw new \RuntimeException('Punto de emision no encontrado para secuencial.');
+            }
+
+            $current = (int) $row->secuencial_guia_remision;
+            if ($current <= 0 || $current > self::MAX_SECUENCIAL) {
+                $current = 1;
+            }
+
+            $next = $current + 1;
+            if ($next > self::MAX_SECUENCIAL) {
+                throw new \RuntimeException('Secuencial maximo alcanzado.');
+            }
+
+            $row->secuencial_guia_remision = $next;
+            $row->save();
+
+            return [
+                'secuencial' => $current,
+                'secuencial_formateado' => str_pad((string) $current, 9, '0', STR_PAD_LEFT),
+            ];
+        });
+    }
 }
