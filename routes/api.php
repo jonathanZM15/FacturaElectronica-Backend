@@ -208,6 +208,7 @@ Route::get('/facturacion/comprobantes/{comprobante}', [FacturacionController::cl
 Route::post('/facturacion/comprobantes/{comprobante}/reintentar', [FacturacionController::class, 'reintentarProcesamiento'])->middleware('auth:sanctum');
 Route::get('/facturacion/comprobantes/{comprobante}/pdf', [FacturacionController::class, 'downloadPdf'])->middleware('auth:sanctum');
 Route::get('/facturacion/comprobantes/{comprobante}/xml', [FacturacionController::class, 'downloadXml'])->middleware('auth:sanctum');
+Route::get('/facturacion/comprobantes', [FacturacionController::class, 'listarComprobantes'])->middleware('auth:sanctum');
 
 
 

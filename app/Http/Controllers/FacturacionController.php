@@ -655,6 +655,61 @@ public function emitirNotaCredito(Request $request): JsonResponse
         return $detalles;
     }
 
+    public function listarComprobantes(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $query = Comprobante::with(['cliente', 'company', 'establecimiento'])
+            ->orderByDesc('fecha_emision')
+            ->orderByDesc('id');
+
+        // Filtrar por tipo si se envía
+        if ($request->filled('tipo')) {
+            $query->where('tipo_comprobante', strtoupper($request->input('tipo')));
+        }
+
+        // Filtrar por estado si se envía
+        if ($request->filled('estado')) {
+            $query->where('estado_sri', strtoupper($request->input('estado')));
+        }
+
+        // Filtrar por emisor: si el usuario no es admin, solo sus comprobantes
+        if ($request->filled('emisor_id')) {
+            $query->where('emisor_id', $request->input('emisor_id'));
+        }
+
+        $comprobantes = $query->limit(100)->get();
+
+        return response()->json([
+            'data' => $comprobantes->map(fn ($c) => [
+                'id'                    => $c->id,
+                'tipo_comprobante'      => $c->tipo_comprobante,
+                'secuencial'            => $c->secuencial,
+                'secuencial_formateado' => $c->secuencial_formateado,
+                'codigo_establecimiento'=> $c->codigo_establecimiento,
+                'punto_emision_codigo'  => $c->punto_emision_codigo,
+                'numero_documento'      => sprintf(
+                    '%s-%s-%s',
+                    str_pad($c->codigo_establecimiento ?? '001', 3, '0', STR_PAD_LEFT),
+                    str_pad($c->punto_emision_codigo   ?? '001', 3, '0', STR_PAD_LEFT),
+                    str_pad($c->secuencial ?? '1',      9, '0', STR_PAD_LEFT)
+                ),
+                'fecha_emision'         => $c->fecha_emision?->format('Y-m-d'),
+                'cliente_razon_social'  => $c->cliente?->razon_social ?? 'CONSUMIDOR FINAL',
+                'cliente_identificacion'=> $c->cliente?->identificacion ?? '9999999999999',
+                'total'                 => (float) $c->total,
+                'subtotal_sin_impuestos'=> (float) $c->subtotal_sin_impuestos,
+                'total_iva'             => (float) $c->total_iva,
+                'estado_sri'            => $c->estado_sri,
+                'clave_acceso'          => $c->clave_acceso,
+                'ambiente'              => $c->ambiente,
+                'emisor_id'             => $c->emisor_id,
+                'comprobante_modificado_id' => $c->comprobante_modificado_id,
+                'motivo_modificacion'   => $c->motivo_modificacion,
+            ]),
+        ]);
+    }
+
     public function downloadPdf(Comprobante $comprobante, \App\Services\PdfRideService $pdfService): mixed
     {
         if ($comprobante->estado_sri !== 'AUTORIZADO') {
