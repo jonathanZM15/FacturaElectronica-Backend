@@ -222,4 +222,5 @@ Route::get('/facturacion/comprobantes', [FacturacionController::class, 'listarCo
 Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('emisores.clientes', App\Http\Controllers\ClienteController::class);
     Route::apiResource('emisores.proveedores', App\Http\Controllers\ProveedorController::class);
+    Route::apiResource('emisores.transportistas', App\Http\Controllers\TransportistaController::class);
 });
