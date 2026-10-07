@@ -191,6 +191,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/emisores/{emisorId}/stock-parametros', [\App\Http\Controllers\Api\StockParametroController::class, 'index']);
     Route::post('/emisores/{emisorId}/stock-parametros', [\App\Http\Controllers\Api\StockParametroController::class, 'store']);
     Route::delete('/emisores/{emisorId}/stock-parametros/{id}', [\App\Http\Controllers\Api\StockParametroController::class, 'destroy']);
+
+    // Rutas de Clientes (Módulo Clientes)
+    Route::get('/emisores/{emisorId}/clientes/buscar', [\App\Http\Controllers\Api\ClienteController::class, 'buscarPorIdentificacion']);
+    Route::get('/emisores/{emisorId}/clientes', [\App\Http\Controllers\Api\ClienteController::class, 'index']);
+    Route::post('/emisores/{emisorId}/clientes', [\App\Http\Controllers\Api\ClienteController::class, 'store']);
+    Route::get('/emisores/{emisorId}/clientes/{cliente}', [\App\Http\Controllers\Api\ClienteController::class, 'show']);
+    Route::put('/emisores/{emisorId}/clientes/{cliente}', [\App\Http\Controllers\Api\ClienteController::class, 'update']);
+    Route::delete('/emisores/{emisorId}/clientes/{cliente}', [\App\Http\Controllers\Api\ClienteController::class, 'destroy']);
 });
 
 

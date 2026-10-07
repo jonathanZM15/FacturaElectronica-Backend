@@ -10,6 +10,8 @@ use Illuminate\Http\JsonResponse;
 
 class TransferenciaController extends Controller
 {
+    use \App\Traits\ResolvesEmisor;
+
     protected $movimientoService;
 
     public function __construct(MovimientoInventarioService $movimientoService)
@@ -19,10 +21,11 @@ class TransferenciaController extends Controller
 
     public function store(TransferenciaRequest $request, int $emisorId): JsonResponse
     {
+        $resolvedId = $this->resolveEmisorId($emisorId);
         $validated = $request->validated();
         
-        $origen = Bodega::findOrFail($validated['bodega_origen_id']);
-        $destino = Bodega::findOrFail($validated['bodega_destino_id']);
+        $origen = Bodega::where('emisor_id', $resolvedId)->findOrFail($validated['bodega_origen_id']);
+        $destino = Bodega::where('emisor_id', $resolvedId)->findOrFail($validated['bodega_destino_id']);
         $detalles = $validated['detalles'];
         $observacion = $validated['observacion'];
         $usuarioId = $request->user()->id;
