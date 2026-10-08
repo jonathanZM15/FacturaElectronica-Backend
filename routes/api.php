@@ -192,6 +192,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/emisores/{emisorId}/stock-parametros', [\App\Http\Controllers\Api\StockParametroController::class, 'store']);
     Route::delete('/emisores/{emisorId}/stock-parametros/{id}', [\App\Http\Controllers\Api\StockParametroController::class, 'destroy']);
 
+    // Rutas POS Turnos
+    Route::get('/emisores/{emisorId}/pos-turnos/active', [\App\Http\Controllers\Api\PosTurnoController::class, 'active']);
+    Route::post('/emisores/{emisorId}/pos-turnos/aperturar', [\App\Http\Controllers\Api\PosTurnoController::class, 'aperturar']);
+    Route::post('/emisores/{emisorId}/pos-turnos/{turnoId}/cerrar', [\App\Http\Controllers\Api\PosTurnoController::class, 'cerrar']);
+
     // Rutas de Clientes (Módulo Clientes)
     Route::get('/emisores/{emisorId}/clientes/buscar', [\App\Http\Controllers\Api\ClienteController::class, 'buscarPorIdentificacion']);
     Route::get('/emisores/{emisorId}/clientes', [\App\Http\Controllers\Api\ClienteController::class, 'index']);
