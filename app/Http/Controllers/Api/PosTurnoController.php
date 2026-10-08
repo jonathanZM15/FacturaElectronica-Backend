@@ -38,7 +38,7 @@ class PosTurnoController extends Controller
         $punto = PuntoEmision::whereHas('establecimiento', function($q) use ($emisorId) {
                 $q->where('emisor_id', $emisorId);
             })
-            ->where('activo', true)
+            ->where('estado', 'ACTIVO')
             ->findOrFail($request->punto_emision_id);
 
         // Check if user already has an active shift in this emisor
