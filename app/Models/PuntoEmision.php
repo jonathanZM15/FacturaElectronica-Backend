@@ -64,6 +64,35 @@ class PuntoEmision extends Model
         return $this->belongsTo(User::class, 'user_id');
     }
 
+
+    public function nextSecuencialLiquidacionCompra(): array
+    {
+        return \Illuminate\Support\Facades\DB::transaction(function () {
+            $row = self::where('id', $this->id)->lockForUpdate()->first();
+            if (!$row) {
+                throw new \RuntimeException('Punto de emision no encontrado para secuencial.');
+            }
+
+            $current = (int) $row->secuencial_liquidacion_compra;
+            if ($current <= 0 || $current > self::MAX_SECUENCIAL) {
+                $current = 1;
+            }
+
+            $next = $current + 1;
+            if ($next > self::MAX_SECUENCIAL) {
+                throw new \RuntimeException('Secuencial maximo alcanzado.');
+            }
+
+            $row->secuencial_liquidacion_compra = $next;
+            $row->save();
+
+            return [
+                'secuencial' => $current,
+                'secuencial_formateado' => str_pad((string) $current, 9, '0', STR_PAD_LEFT),
+            ];
+        });
+    }
+
     public function nextSecuencialFactura(): array
     {
         return DB::transaction(function () {

@@ -18,6 +18,7 @@ class Comprobante extends Model
         'establecimiento_id',
         'punto_emision_id',
         'cliente_id',
+        'proveedor_id',
         'comprobante_modificado_id',
         'motivo_modificacion',
         'guia_remision_data',
@@ -113,6 +114,12 @@ class Comprobante extends Model
     {
         return $this->belongsTo(Cliente::class, 'cliente_id');
     }
+
+    public function proveedor()
+    {
+        return $this->belongsTo(Proveedor::class, 'proveedor_id');
+    }
+
 
     public function comprobanteModificado()
     {

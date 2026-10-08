@@ -33,6 +33,234 @@ class FacturacionController extends Controller
     ) {
     }
 
+
+    public function emitirLiquidacionCompra(Request $request): JsonResponse
+    {
+        $request->validate([
+            'firma' => ['required', 'file', 'extensions:p12,pfx'],
+            'password' => ['required', 'string'],
+            'payload' => ['required', 'json'],
+        ]);
+
+        $payloadData = json_decode($request->input('payload'), true);
+
+        $rules = [
+            'emisor_id' => ['required', 'integer', 'exists:emisores,id'],
+            'establecimiento_id' => ['required', 'integer', 'exists:establecimientos,id'],
+            'punto_emision_id' => ['required', 'integer', 'exists:puntos_emision,id'],
+            'proveedor.tipo_identificacion' => ['required', 'string'],
+            'proveedor.identificacion' => ['required', 'string'],
+            'proveedor.razon_social' => ['required', 'string', 'max:255'],
+            'proveedor.direccion' => ['required', 'string', 'max:500'],
+            'proveedor.email' => ['required', 'email', 'max:255'],
+            'proveedor.telefono' => ['nullable', 'string', 'max:50'],
+            'detalles' => ['required', 'array', 'min:1'],
+            'detalles.*.descripcion' => ['required', 'string', 'max:500'],
+            'detalles.*.cantidad' => ['required', 'numeric', 'min:0.000001'],
+            'detalles.*.precio_unitario' => ['required', 'numeric', 'min:0'],
+            'detalles.*.descuento' => ['nullable', 'numeric', 'min:0'],
+            'detalles.*.impuesto.tipo_impuesto_id' => ['nullable', 'integer', 'exists:tipos_impuesto,id'],
+            'detalles.*.impuesto.tarifa' => ['nullable', 'numeric', 'min:0'],
+        ];
+
+        $validator = \Illuminate\Support\Facades\Validator::make($payloadData, $rules);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => 'Validation error', 'errors' => $validator->errors()], 422);
+        }
+
+        $data = $validator->validated();
+
+        $archivoFirma = $request->file('firma');
+        $passwordFirma = trim((string) $request->input('password'));
+        $extension = strtolower($archivoFirma->getClientOriginalExtension() ?: 'p12');
+        $nombreAlmacenado = uniqid('cert_', true) . '.' . $extension;
+        $disk = config('sri.certificate_disk', 'local');
+
+        $pathFirma = $archivoFirma->storeAs('sri/certificados', $nombreAlmacenado, $disk);
+        $rutaAbsoluta = \Illuminate\Support\Facades\Storage::disk($disk)->path($pathFirma);
+
+        try {
+            $this->signatureService->verificarP12($rutaAbsoluta, $passwordFirma);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Storage::disk($disk)->delete($pathFirma);
+            return response()->json([
+                'message' => 'Firma electronica invalida o contrasena incorrecta.',
+                'error' => $e->getMessage()
+            ], 422);
+        }
+
+        $detalles = $data['detalles'];
+        $emisorId = $data['emisor_id'];
+        $establecimientoId = $data['establecimiento_id'];
+        $puntoEmisionId = $data['punto_emision_id'];
+
+        $transactionResult = \Illuminate\Support\Facades\DB::transaction(function () use ($data, $detalles, $emisorId, $establecimientoId, $puntoEmisionId) {
+            $calculo = $this->calculator->calcularComprobante($detalles);
+
+            $proveedorData = $data['proveedor'];
+            $proveedor = \App\Models\Proveedor::firstOrCreate(
+                [
+                    'emisor_id' => $emisorId,
+                    'tipo_identificacion' => $proveedorData['tipo_identificacion'],
+                    'identificacion' => $proveedorData['identificacion'],
+                ],
+                [
+                    'razon_social' => $proveedorData['razon_social'],
+                    'nombre_comercial' => $proveedorData['razon_social'],
+                    'direccion' => $proveedorData['direccion'],
+                    'email' => $proveedorData['email'],
+                    'telefono' => $proveedorData['telefono'] ?? null,
+                    'created_by' => \Illuminate\Support\Facades\Auth::id(),
+                    'updated_by' => \Illuminate\Support\Facades\Auth::id(),
+                ]
+            );
+
+            $proveedor->fill([
+                'razon_social' => $proveedorData['razon_social'],
+                'direccion' => $proveedorData['direccion'],
+                'email' => $proveedorData['email'],
+                'telefono' => $proveedorData['telefono'] ?? null,
+                'updated_by' => \Illuminate\Support\Facades\Auth::id(),
+            ]);
+            $proveedor->save();
+
+            $company = \App\Models\Company::findOrFail($emisorId);
+            $establecimiento = \App\Models\Establecimiento::where('emisor_id', $emisorId)->findOrFail($establecimientoId);
+            $punto = \App\Models\PuntoEmision::where('emisor_id', $emisorId)
+                ->where('establecimiento_id', $establecimientoId)
+                ->findOrFail($puntoEmisionId);
+
+            $secuencialData = $punto->nextSecuencialLiquidacionCompra();
+            $subtotales = $this->buildSubtotales($calculo['detalles']);
+
+            $comprobante = \App\Models\Comprobante::create([
+                'emisor_id' => $emisorId,
+                'establecimiento_id' => $establecimientoId,
+                'punto_emision_id' => $puntoEmisionId,
+                'proveedor_id' => $proveedor->id,
+                'cliente_id' => null,
+                'tipo_comprobante' => 'LIQUIDACION_COMPRA',
+                'secuencial' => $secuencialData['secuencial'],
+                'secuencial_formateado' => $secuencialData['secuencial_formateado'],
+                'codigo_establecimiento' => $establecimiento->codigo,
+                'punto_emision_codigo' => $punto->codigo,
+                'fecha_emision' => now()->toDateString(),
+                'subtotal_sin_impuestos' => $calculo['totales']['subtotal_sin_impuestos'],
+                'subtotal_iva_0' => $subtotales['subtotal_iva_0'],
+                'subtotal_iva' => $subtotales['subtotal_iva'],
+                'subtotal_no_objeto' => $subtotales['subtotal_no_objeto'],
+                'subtotal_exento' => $subtotales['subtotal_exento'],
+                'total_descuento' => $calculo['totales']['total_descuento'],
+                'total_iva' => $calculo['totales']['total_iva'],
+                'total_impuestos' => $calculo['totales']['total_iva'],
+                'total' => $calculo['totales']['importe_total'],
+                'estado_sri' => 'BORRADOR',
+                'ambiente' => $company->ambiente ?? 'PRUEBAS',
+                'tipo_emision' => $company->tipo_emision ?? 'NORMAL',
+            ]);
+
+            foreach ($calculo['detalles'] as $detalle) {
+                $detalleModel = \App\Models\ComprobanteDetalle::create([
+                    'comprobante_id' => $comprobante->id,
+                    'producto_id' => $detalle['producto_id'] ?? null,
+                    'descripcion' => $detalle['descripcion'],
+                    'cantidad' => $detalle['cantidad'],
+                    'precio_unitario' => $detalle['precio_unitario'],
+                    'descuento' => $detalle['descuento'] ?? 0,
+                    'subtotal' => $detalle['precio_total_sin_impuesto'],
+                ]);
+
+                // INVENTARIO: INGRESAR MERCADERÍA
+                if (!empty($detalle['producto_id'])) {
+                    $producto = \App\Models\Producto::find($detalle['producto_id']);
+                    $bodega = \App\Models\Bodega::where('establecimiento_id', $establecimientoId)
+                                    ->where('tipo', 'PRINCIPAL')
+                                    ->first();
+                    if (!$bodega) {
+                        $bodega = \App\Models\Bodega::where('establecimiento_id', $establecimientoId)->first();
+                    }
+                    if ($bodega && $producto) {
+                        $stockRow = \App\Models\ProductoBodegaStock::where('producto_id', $producto->id)
+                                        ->where('bodega_id', $bodega->id)
+                                        ->lockForUpdate()
+                                        ->first();
+                        
+                        if ($stockRow) {
+                            $stockRow->increment('stock_actual', $detalle['cantidad']);
+                            $saldo = $stockRow->fresh()->stock_actual;
+                        } else {
+                            \App\Models\ProductoBodegaStock::create([
+                                'producto_id' => $producto->id,
+                                'bodega_id' => $bodega->id,
+                                'stock_actual' => $detalle['cantidad']
+                            ]);
+                            $saldo = $detalle['cantidad'];
+                        }
+
+                        \App\Models\Kardex::create([
+                            'fecha_hora' => now(),
+                            'producto_id' => $producto->id,
+                            'bodega_id' => $bodega->id,
+                            'tipo_movimiento' => \App\Enums\TipoMovimientoInventario::MOV_02_COMPRA,
+                            'documento_origen_tipo' => 'Comprobante',
+                            'documento_origen_id' => $comprobante->id,
+                            'numero_documento' => $comprobante->secuencial_formateado,
+                            'entrada' => $detalle['cantidad'],
+                            'salida' => 0,
+                            'saldo' => $saldo,
+                            'usuario_id' => \Illuminate\Support\Facades\Auth::id() ?? 1,
+                        ]);
+                    }
+                }
+                
+                $impuesto = $detalle['impuesto'] ?? null;
+                if ($impuesto) {
+                    $tarifa = (float) ($impuesto['tarifa'] ?? 0);
+                    $valor = round($detalle['precio_total_sin_impuesto'] * ($tarifa / 100), 2, PHP_ROUND_HALF_UP);
+
+                    \App\Models\ComprobanteImpuesto::create([
+                        'comprobante_id' => $comprobante->id,
+                        'comprobante_detalle_id' => $detalleModel->id,
+                        'tipo_impuesto_id' => $impuesto['tipo_impuesto_id'] ?? null,
+                        'base_imponible' => $detalle['precio_total_sin_impuesto'],
+                        'tarifa' => $tarifa,
+                        'valor' => $valor,
+                    ]);
+                }
+            }
+
+            foreach ($calculo['impuestos'] as $impuesto) {
+                \App\Models\ComprobanteImpuesto::create([
+                    'comprobante_id' => $comprobante->id,
+                    'comprobante_detalle_id' => null,
+                    'tipo_impuesto_id' => $impuesto['tipo_impuesto_id'] ?? null,
+                    'base_imponible' => $impuesto['base_imponible'],
+                    'tarifa' => $impuesto['tarifa'],
+                    'valor' => $impuesto['valor'],
+                ]);
+            }
+
+            return [
+                'comprobante_id' => $comprobante->id,
+                'secuencial' => $secuencialData['secuencial'],
+                'secuencial_formateado' => $secuencialData['secuencial_formateado'],
+            ];
+        });
+
+        \App\Jobs\ProcesarFacturaSriJob::dispatch(
+            $transactionResult['comprobante_id'],
+            $pathFirma,
+            \Illuminate\Support\Facades\Crypt::encryptString($passwordFirma)
+        )->afterCommit();
+
+        return response()->json([
+            'message' => 'Liquidación de compra generada y enviada a procesamiento SRI exitosamente.',
+            'comprobante_id' => $transactionResult['comprobante_id'],
+            'secuencial' => $transactionResult['secuencial_formateado']
+        ]);
+    }
+
     public function emitirFactura(Request $request): JsonResponse
     {
         $request->validate([

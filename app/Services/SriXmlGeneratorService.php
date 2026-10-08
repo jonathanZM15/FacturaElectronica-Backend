@@ -7,6 +7,178 @@ use DOMDocument;
 
 class SriXmlGeneratorService
 {
+
+    public function generarXmlLiquidacionCompra(Comprobante $comprobante): array
+    {
+        $company = $comprobante->company;
+        $proveedor = $comprobante->proveedor;
+        $establecimiento = $comprobante->establecimiento;
+
+        $fechaEmision = $this->formatFechaEmision($comprobante->fecha_emision);
+        $fechaClave = $this->formatFechaClave($comprobante->fecha_emision);
+        $tipoComprobante = '03';
+        $ruc = (string) ($company->ruc ?? '');
+        $ambiente = $this->mapAmbiente($comprobante->ambiente ?? $company->ambiente ?? 'PRODUCCION');
+        $serie = $this->buildSerie($comprobante);
+        $secuencial = $this->padLeft((string) $comprobante->secuencial, 9);
+        $codigoNumerico = $this->padLeft((string) ($comprobante->secuencial ?? random_int(1, 99999999)), 8);
+        $tipoEmision = '1';
+
+        $claveAcceso = $comprobante->clave_acceso ?: (new SriClaveAccesoService())->generarFactura(
+            $fechaClave,
+            $ruc,
+            $ambiente,
+            $serie,
+            $secuencial,
+            $codigoNumerico,
+            $tipoComprobante,
+            $tipoEmision
+        );
+
+        $dom = new \DOMDocument('1.0', 'UTF-8');
+        $dom->formatOutput = false;
+
+        $liquidacion = $dom->createElement('liquidacionCompra');
+        $liquidacion->setAttribute('id', 'comprobante');
+        $liquidacion->setAttribute('version', '1.1.0');
+        $dom->appendChild($liquidacion);
+
+        $infoTributaria = $dom->createElement('infoTributaria');
+        $liquidacion->appendChild($infoTributaria);
+
+        $this->appendText($dom, $infoTributaria, 'ambiente', $ambiente);
+        $this->appendText($dom, $infoTributaria, 'tipoEmision', $tipoEmision);
+        $this->appendText($dom, $infoTributaria, 'razonSocial', $company->razon_social ?? '');
+        $this->appendText($dom, $infoTributaria, 'nombreComercial', $company->nombre_comercial ?? $company->razon_social ?? '');
+        $this->appendText($dom, $infoTributaria, 'ruc', $ruc);
+        $this->appendText($dom, $infoTributaria, 'claveAcceso', $claveAcceso);
+        $this->appendText($dom, $infoTributaria, 'codDoc', $tipoComprobante);
+        $this->appendText($dom, $infoTributaria, 'estab', $comprobante->codigo_establecimiento ?? substr($serie, 0, 3));
+        $this->appendText($dom, $infoTributaria, 'ptoEmi', $comprobante->punto_emision_codigo ?? substr($serie, 3, 3));
+        $this->appendText($dom, $infoTributaria, 'secuencial', $secuencial);
+        $this->appendText($dom, $infoTributaria, 'dirMatriz', $company->direccion_matriz ?? '');
+
+        if (($company->agente_retencion ?? 'NO') === 'SI') {
+            $this->appendText($dom, $infoTributaria, 'agenteRetencion', $company->numero_resolucion_agente_retencion ?? '1');
+        }
+
+        if (($company->contribuyente_especial ?? 'NO') === 'SI') {
+            $this->appendText($dom, $infoTributaria, 'contribuyenteEspecial', $company->numero_resolucion_contribuyente_especial ?? '1');
+        }
+
+        $regimen = strtoupper((string) ($company->regimen_tributario ?? ''));
+        if (str_contains($regimen, 'RIMPE') && !str_contains($regimen, 'NEGOCIO POPULAR')) {
+            $contribuyenteRimpe = 'CONTRIBUYENTE RÉGIMEN RIMPE';
+            $this->appendText($dom, $infoTributaria, 'contribuyenteRimpe', $contribuyenteRimpe);
+        }
+
+        $infoLiquidacion = $dom->createElement('infoLiquidacionCompra');
+        $liquidacion->appendChild($infoLiquidacion);
+
+        $this->appendText($dom, $infoLiquidacion, 'fechaEmision', $fechaEmision);
+        $this->appendText($dom, $infoLiquidacion, 'dirEstablecimiento', $establecimiento->direccion ?? $company->direccion_matriz ?? '');
+        $this->appendText($dom, $infoLiquidacion, 'obligadoContabilidad', $company->obligado_contabilidad ?? 'NO');
+        $this->appendText($dom, $infoLiquidacion, 'tipoIdentificacionProveedor', $this->mapTipoIdentificacion($proveedor));
+        $this->appendText($dom, $infoLiquidacion, 'razonSocialProveedor', $proveedor->razon_social ?? '');
+        $this->appendText($dom, $infoLiquidacion, 'identificacionProveedor', $proveedor->identificacion ?? '');
+        $this->appendText($dom, $infoLiquidacion, 'direccionProveedor', $proveedor->direccion ?? '');
+        $this->appendText($dom, $infoLiquidacion, 'totalSinImpuestos', $this->formatMoney($comprobante->subtotal_sin_impuestos ?? 0));
+        $this->appendText($dom, $infoLiquidacion, 'totalDescuento', $this->formatMoney($comprobante->total_descuento ?? 0));
+
+        $totalConImpuestos = $dom->createElement('totalConImpuestos');
+        $infoLiquidacion->appendChild($totalConImpuestos);
+
+        $impuestosTotales = collect($comprobante->impuestos ?? [])
+            ->filter(fn ($impuesto) => $impuesto->comprobante_detalle_id === null);
+
+        if ($impuestosTotales->isEmpty()) {
+            $impuestosTotales = collect($comprobante->impuestos ?? []);
+        }
+
+        $impuestosConsolidados = [];
+        foreach ($impuestosTotales as $impuesto) {
+            $codigo = $this->mapCodigoImpuesto($impuesto);
+            $porcentaje = $this->mapCodigoPorcentaje($impuesto);
+            $key = $codigo . '_' . $porcentaje;
+
+            if (!isset($impuestosConsolidados[$key])) {
+                $impuestosConsolidados[$key] = [
+                    'codigo' => $codigo,
+                    'codigoPorcentaje' => $porcentaje,
+                    'tarifa' => (float) ($impuesto->tarifa ?? 0),
+                    'baseImponible' => 0.0,
+                    'valor' => 0.0
+                ];
+            }
+            $impuestosConsolidados[$key]['baseImponible'] += (float) ($impuesto->base_imponible ?? 0);
+            $impuestosConsolidados[$key]['valor'] += (float) ($impuesto->valor ?? 0);
+        }
+
+        foreach ($impuestosConsolidados as $imp) {
+            $totalImpuesto = $dom->createElement('totalImpuesto');
+            $this->appendText($dom, $totalImpuesto, 'codigo', $imp['codigo']);
+            $this->appendText($dom, $totalImpuesto, 'codigoPorcentaje', $imp['codigoPorcentaje']);
+            $this->appendText($dom, $totalImpuesto, 'baseImponible', $this->formatMoney($imp['baseImponible']));
+            $this->appendText($dom, $totalImpuesto, 'valor', $this->formatMoney($imp['valor']));
+            $totalConImpuestos->appendChild($totalImpuesto);
+        }
+
+        $this->appendText($dom, $infoLiquidacion, 'importeTotal', $this->formatMoney($comprobante->total ?? 0));
+        $this->appendText($dom, $infoLiquidacion, 'moneda', 'DOLAR');
+
+        $pagos = $dom->createElement('pagos');
+        $infoLiquidacion->appendChild($pagos);
+        $pago = $dom->createElement('pago');
+        $this->appendText($dom, $pago, 'formaPago', '01');
+        $this->appendText($dom, $pago, 'total', $this->formatMoney($comprobante->total ?? 0));
+        $pagos->appendChild($pago);
+
+        $detalles = $dom->createElement('detalles');
+        $liquidacion->appendChild($detalles);
+
+        foreach ($comprobante->detalles ?? [] as $detalle) {
+            $detalleNode = $dom->createElement('detalle');
+            $codigo = (string) ($detalle->producto_id ?? '');
+            if (!empty($codigo)) {
+                $this->appendText($dom, $detalleNode, 'codigoPrincipal', $codigo);
+            }
+            $this->appendText($dom, $detalleNode, 'descripcion', $detalle->descripcion ?? '');
+            $this->appendText($dom, $detalleNode, 'cantidad', $this->formatCantidad($detalle->cantidad ?? 0));
+            $this->appendText($dom, $detalleNode, 'precioUnitario', $this->formatCantidad($detalle->precio_unitario ?? 0));
+            $this->appendText($dom, $detalleNode, 'descuento', $this->formatMoney($detalle->descuento ?? 0));
+            $this->appendText($dom, $detalleNode, 'precioTotalSinImpuesto', $this->formatMoney($detalle->subtotal ?? 0));
+
+            $impuestosNode = $dom->createElement('impuestos');
+            foreach ($detalle->impuestos ?? [] as $imp) {
+                $impuestoNode = $dom->createElement('impuesto');
+                $this->appendText($dom, $impuestoNode, 'codigo', $this->mapCodigoImpuesto($imp));
+                $this->appendText($dom, $impuestoNode, 'codigoPorcentaje', $this->mapCodigoPorcentaje($imp));
+                $this->appendText($dom, $impuestoNode, 'tarifa', $this->formatMoney($imp->tarifa ?? 0));
+                $this->appendText($dom, $impuestoNode, 'baseImponible', $this->formatMoney($imp->base_imponible ?? 0));
+                $this->appendText($dom, $impuestoNode, 'valor', $this->formatMoney($imp->valor ?? 0));
+                $impuestosNode->appendChild($impuestoNode);
+            }
+            $detalleNode->appendChild($impuestosNode);
+            $detalles->appendChild($detalleNode);
+        }
+
+        // InfoAdicional
+        if (!empty($comprobante->email_cliente)) {
+            $infoAdicional = $dom->createElement('infoAdicional');
+            $campo = $dom->createElement('campoAdicional', $comprobante->email_cliente);
+            $campo->setAttribute('nombre', 'Email');
+            $infoAdicional->appendChild($campo);
+            $liquidacion->appendChild($infoAdicional);
+        }
+
+        $xmlString = $dom->saveXML();
+
+        return [
+            'xml' => $xmlString,
+            'clave_acceso' => $claveAcceso
+        ];
+    }
+
     public function generarXmlFactura(Comprobante $comprobante): array
     {
         $company = $comprobante->company;
