@@ -13,6 +13,7 @@ class Comprobante extends Model
     protected $table = 'comprobantes';
 
     protected $fillable = [
+        'pos_turno_id',
         'emisor_id',
         'establecimiento_id',
         'punto_emision_id',
