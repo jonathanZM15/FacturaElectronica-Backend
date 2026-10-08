@@ -10,7 +10,7 @@ class PosTurno extends Model
     use HasFactory;
 
     protected $fillable = [
-        'caja_id',
+        'punto_emision_id',
         'usuario_id',
         'fecha_apertura',
         'fecha_cierre',
@@ -27,9 +27,9 @@ class PosTurno extends Model
         'saldo_final' => 'decimal:2'
     ];
 
-    public function caja()
+    public function puntoEmision()
     {
-        return $this->belongsTo(Caja::class);
+        return $this->belongsTo(PuntoEmision::class);
     }
 
     public function usuario()
