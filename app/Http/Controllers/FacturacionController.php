@@ -47,6 +47,7 @@ class FacturacionController extends Controller
             'emisor_id' => ['required', 'integer', 'exists:emisores,id'],
             'establecimiento_id' => ['required', 'integer', 'exists:establecimientos,id'],
             'punto_emision_id' => ['required', 'integer', 'exists:puntos_emision,id'],
+            'pos_turno_id' => ['nullable', 'integer', 'exists:pos_turnos,id'],
             'cliente.tipo_identificacion' => ['required', 'string'],
             'cliente.identificacion' => ['required', 'string'],
             'cliente.razon_social' => ['required', 'string', 'max:255'],
@@ -193,6 +194,7 @@ class FacturacionController extends Controller
                 'emisor_id' => $emisorId,
                 'establecimiento_id' => $establecimientoId,
                 'punto_emision_id' => $puntoEmisionId,
+                'pos_turno_id' => $data['pos_turno_id'] ?? null,
                 'cliente_id' => $cliente->id,
                 'tipo_comprobante' => 'FACTURA',
                 'secuencial' => $secuencialData['secuencial'],
@@ -224,6 +226,43 @@ class FacturacionController extends Controller
                     'descuento' => $detalle['descuento'] ?? 0,
                     'subtotal' => $detalle['precio_total_sin_impuesto'],
                 ]);
+
+                if ($comprobante->tipo_comprobante === 'FACTURA' && !empty($detalle['producto_id'])) {
+                    $producto = \App\Models\Producto::find($detalle['producto_id']);
+                    $bodega = \App\Models\Bodega::where('establecimiento_id', $establecimientoId)
+                                    ->where('tipo', 'PRINCIPAL')
+                                    ->first();
+                    if (!$bodega) {
+                        $bodega = \App\Models\Bodega::where('establecimiento_id', $establecimientoId)->first();
+                    }
+                    if ($bodega && $producto) {
+                        $stockRow = \App\Models\ProductoBodegaStock::where('producto_id', $producto->id)
+                                        ->where('bodega_id', $bodega->id)
+                                        ->lockForUpdate()
+                                        ->first();
+                        
+                        if ($stockRow) {
+                            $stockRow->decrement('stock_actual', $detalle['cantidad']);
+                            $saldo = $stockRow->fresh()->stock_actual;
+                        } else {
+                            $saldo = 0;
+                        }
+
+                        \App\Models\Kardex::create([
+                            'fecha_hora' => now(),
+                            'producto_id' => $producto->id,
+                            'bodega_id' => $bodega->id,
+                            'tipo_movimiento' => \App\Enums\TipoMovimientoInventario::MOV_03_VENTA_INMEDIATA,
+                            'documento_origen_tipo' => 'Comprobante',
+                            'documento_origen_id' => $comprobante->id,
+                            'numero_documento' => $comprobante->secuencial_formateado,
+                            'entrada' => 0,
+                            'salida' => $detalle['cantidad'],
+                            'saldo' => $saldo,
+                            'usuario_id' => \Illuminate\Support\Facades\Auth::id() ?? 1,
+                        ]);
+                    }
+                }
                 
                 $impuesto = $detalle['impuesto'] ?? null;
                 if ($impuesto) {
@@ -289,6 +328,7 @@ class FacturacionController extends Controller
             'emisor_id' => ['required', 'integer', 'exists:emisores,id'],
             'establecimiento_id' => ['required', 'integer', 'exists:establecimientos,id'],
             'punto_emision_id' => ['required', 'integer', 'exists:puntos_emision,id'],
+            'pos_turno_id' => ['nullable', 'integer', 'exists:pos_turnos,id'],
             
             // Cliente (Destinatario)
             'cliente.tipo_identificacion' => ['required', 'string'],
@@ -380,6 +420,7 @@ class FacturacionController extends Controller
                 'emisor_id' => $emisorId,
                 'establecimiento_id' => $establecimientoId,
                 'punto_emision_id' => $puntoEmisionId,
+                'pos_turno_id' => $data['pos_turno_id'] ?? null,
                 'cliente_id' => $cliente->id,
                 'tipo_comprobante' => 'GUIA_REMISION',
                 'comprobante_modificado_id' => $data['comprobante_modificado_id'] ?? null,
@@ -451,6 +492,7 @@ class FacturacionController extends Controller
             'emisor_id' => ['required', 'integer', 'exists:emisores,id'],
             'establecimiento_id' => ['required', 'integer', 'exists:establecimientos,id'],
             'punto_emision_id' => ['required', 'integer', 'exists:puntos_emision,id'],
+            'pos_turno_id' => ['nullable', 'integer', 'exists:pos_turnos,id'],
             'cliente.tipo_identificacion' => ['required', 'string'],
             'cliente.identificacion' => ['required', 'string'],
             'cliente.razon_social' => ['required', 'string', 'max:255'],
@@ -597,6 +639,7 @@ class FacturacionController extends Controller
                 'emisor_id' => $emisorId,
                 'establecimiento_id' => $establecimientoId,
                 'punto_emision_id' => $puntoEmisionId,
+                'pos_turno_id' => $data['pos_turno_id'] ?? null,
                 'cliente_id' => $cliente->id,
                 'tipo_comprobante' => 'NOTA_CREDITO',
                 'comprobante_modificado_id' => $data['comprobante_modificado_id'],
@@ -630,6 +673,43 @@ class FacturacionController extends Controller
                     'descuento' => $detalle['descuento'] ?? 0,
                     'subtotal' => $detalle['precio_total_sin_impuesto'],
                 ]);
+
+                if ($comprobante->tipo_comprobante === 'FACTURA' && !empty($detalle['producto_id'])) {
+                    $producto = \App\Models\Producto::find($detalle['producto_id']);
+                    $bodega = \App\Models\Bodega::where('establecimiento_id', $establecimientoId)
+                                    ->where('tipo', 'PRINCIPAL')
+                                    ->first();
+                    if (!$bodega) {
+                        $bodega = \App\Models\Bodega::where('establecimiento_id', $establecimientoId)->first();
+                    }
+                    if ($bodega && $producto) {
+                        $stockRow = \App\Models\ProductoBodegaStock::where('producto_id', $producto->id)
+                                        ->where('bodega_id', $bodega->id)
+                                        ->lockForUpdate()
+                                        ->first();
+                        
+                        if ($stockRow) {
+                            $stockRow->decrement('stock_actual', $detalle['cantidad']);
+                            $saldo = $stockRow->fresh()->stock_actual;
+                        } else {
+                            $saldo = 0;
+                        }
+
+                        \App\Models\Kardex::create([
+                            'fecha_hora' => now(),
+                            'producto_id' => $producto->id,
+                            'bodega_id' => $bodega->id,
+                            'tipo_movimiento' => \App\Enums\TipoMovimientoInventario::MOV_03_VENTA_INMEDIATA,
+                            'documento_origen_tipo' => 'Comprobante',
+                            'documento_origen_id' => $comprobante->id,
+                            'numero_documento' => $comprobante->secuencial_formateado,
+                            'entrada' => 0,
+                            'salida' => $detalle['cantidad'],
+                            'saldo' => $saldo,
+                            'usuario_id' => \Illuminate\Support\Facades\Auth::id() ?? 1,
+                        ]);
+                    }
+                }
                 
                 $impuesto = $detalle['impuesto'] ?? null;
                 if ($impuesto) {
@@ -694,6 +774,7 @@ class FacturacionController extends Controller
             'emisor_id' => ['required', 'integer', 'exists:emisores,id'],
             'establecimiento_id' => ['required', 'integer', 'exists:establecimientos,id'],
             'punto_emision_id' => ['required', 'integer', 'exists:puntos_emision,id'],
+            'pos_turno_id' => ['nullable', 'integer', 'exists:pos_turnos,id'],
             'cliente.tipo_identificacion' => ['required', 'string'],
             'cliente.identificacion' => ['required', 'string'],
             'cliente.razon_social' => ['required', 'string', 'max:255'],
@@ -840,6 +921,7 @@ class FacturacionController extends Controller
                 'emisor_id' => $emisorId,
                 'establecimiento_id' => $establecimientoId,
                 'punto_emision_id' => $puntoEmisionId,
+                'pos_turno_id' => $data['pos_turno_id'] ?? null,
                 'cliente_id' => $cliente->id,
                 'tipo_comprobante' => 'NOTA_DEBITO',
                 'comprobante_modificado_id' => $data['comprobante_modificado_id'],
@@ -873,6 +955,43 @@ class FacturacionController extends Controller
                     'descuento' => $detalle['descuento'] ?? 0,
                     'subtotal' => $detalle['precio_total_sin_impuesto'],
                 ]);
+
+                if ($comprobante->tipo_comprobante === 'FACTURA' && !empty($detalle['producto_id'])) {
+                    $producto = \App\Models\Producto::find($detalle['producto_id']);
+                    $bodega = \App\Models\Bodega::where('establecimiento_id', $establecimientoId)
+                                    ->where('tipo', 'PRINCIPAL')
+                                    ->first();
+                    if (!$bodega) {
+                        $bodega = \App\Models\Bodega::where('establecimiento_id', $establecimientoId)->first();
+                    }
+                    if ($bodega && $producto) {
+                        $stockRow = \App\Models\ProductoBodegaStock::where('producto_id', $producto->id)
+                                        ->where('bodega_id', $bodega->id)
+                                        ->lockForUpdate()
+                                        ->first();
+                        
+                        if ($stockRow) {
+                            $stockRow->decrement('stock_actual', $detalle['cantidad']);
+                            $saldo = $stockRow->fresh()->stock_actual;
+                        } else {
+                            $saldo = 0;
+                        }
+
+                        \App\Models\Kardex::create([
+                            'fecha_hora' => now(),
+                            'producto_id' => $producto->id,
+                            'bodega_id' => $bodega->id,
+                            'tipo_movimiento' => \App\Enums\TipoMovimientoInventario::MOV_03_VENTA_INMEDIATA,
+                            'documento_origen_tipo' => 'Comprobante',
+                            'documento_origen_id' => $comprobante->id,
+                            'numero_documento' => $comprobante->secuencial_formateado,
+                            'entrada' => 0,
+                            'salida' => $detalle['cantidad'],
+                            'saldo' => $saldo,
+                            'usuario_id' => \Illuminate\Support\Facades\Auth::id() ?? 1,
+                        ]);
+                    }
+                }
                 
                 $impuesto = $detalle['impuesto'] ?? null;
                 if ($impuesto) {
