@@ -1,0 +1,1 @@
+Auth::loginUsingId(1); $req = Request::create("/api/emisores/6/pos-turnos/active", "GET"); $req->setUserResolver(function() { return Auth::user(); }); $controller = app()->make(\App\Http\Controllers\Api\PosTurnoController::class); $res = $controller->active($req, "6"); echo json_encode($res->getData(true));
