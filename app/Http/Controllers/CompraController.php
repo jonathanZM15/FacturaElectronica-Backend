@@ -1,10 +1,10 @@
 <?php
 
-namespace App\\Http\\Controllers;
+namespace App\Http\Controllers;
 
-use App\\Models\\Compra;
-use Illuminate\\Http\\Request;
-use Illuminate\\Http\\JsonResponse;
+use App\Models\Compra;
+use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
 
 class CompraController extends Controller
 {
