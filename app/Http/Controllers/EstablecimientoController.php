@@ -455,16 +455,15 @@ class EstablecimientoController extends Controller
     // Permanent delete of a establecimiento if it has no history (comprobantes)
     public function destroy(Request $request, $companyId, $id)
     {
-        // Validar permisos: admin, creador, emisor asignado o gerente asignado pueden eliminar (Cajero NO)
+        // Validar permisos: admin, creador o emisor asignado pueden eliminar (Gerente y Cajero NO)
         $currentUser = Auth::user();
         $company = Company::findOrFail($companyId);
         
         $isAdmin = $currentUser->role === UserRole::ADMINISTRADOR;
         $isCreator = $company->created_by === $currentUser->id;
         $isAssignedEmissor = ($currentUser->role === UserRole::EMISOR && $currentUser->emisor_id === (int)$companyId);
-        $isAssignedGerente = ($currentUser->role === UserRole::GERENTE && $currentUser->emisor_id === (int)$companyId);
         
-        if (!$isAdmin && !$isCreator && !$isAssignedEmissor && !$isAssignedGerente) {
+        if (!$isAdmin && !$isCreator && !$isAssignedEmissor) {
             return response()->json([
                 'message' => 'No tienes permisos para eliminar establecimientos en este emisor'
             ], 403);

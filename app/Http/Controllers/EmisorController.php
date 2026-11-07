@@ -311,6 +311,13 @@ class EmisorController extends Controller
 
     public function store(Request $request)
     {
+        $currentUser = Auth::user();
+        if ($currentUser && !$currentUser->role->esAdministrativo()) {
+            return response()->json([
+                'message' => 'No tienes permisos para registrar nuevos emisores'
+            ], 403);
+        }
+
         $rules = [
             'ruc' => ['required','string','max:13','min:10','unique:emisores,ruc'],
             'razon_social' => ['required','string','max:255'],
@@ -454,9 +461,10 @@ class EmisorController extends Controller
         
         $company = Company::findOrFail($id);
         
-        // Validar permisos: solo admin o el creador del emisor pueden editarlo
+        // Validar permisos: admin, creador del emisor o el propio emisor asignado
         $currentUser = Auth::user();
-        if ($currentUser->role !== UserRole::ADMINISTRADOR && $company->created_by !== $currentUser->id) {
+        $isAssignedEmisor = ($currentUser->role === UserRole::EMISOR && (int)$currentUser->emisor_id === (int)$company->id);
+        if ($currentUser->role !== UserRole::ADMINISTRADOR && $company->created_by !== $currentUser->id && !$isAssignedEmisor) {
             return response()->json([
                 'message' => 'No tienes permisos para editar este emisor'
             ], 403);

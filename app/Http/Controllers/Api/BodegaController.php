@@ -39,6 +39,11 @@ class BodegaController extends Controller
 
     public function store(Request $request, string $emisorId): JsonResponse
     {
+        $user = auth()->user();
+        if ($user && $user->role === \App\Enums\UserRole::CAJERO) {
+            return response()->json(['message' => 'El rol cajero no tiene permisos para crear bodegas.'], 403);
+        }
+
         // 0. Resolver emisor válido
         $resolvedId = $this->resolveEmisorId($emisorId);
         if (!$resolvedId) {
@@ -117,6 +122,11 @@ class BodegaController extends Controller
 
     public function update(Request $request, string $emisorId, string $id): JsonResponse
     {
+        $user = auth()->user();
+        if ($user && $user->role === \App\Enums\UserRole::CAJERO) {
+            return response()->json(['message' => 'El rol cajero no tiene permisos para modificar bodegas.'], 403);
+        }
+
         $resolvedId = $this->resolveEmisorId($emisorId);
         if (!$resolvedId) {
             return response()->json(['message' => 'Emisor no encontrado.'], 404);
@@ -155,6 +165,11 @@ class BodegaController extends Controller
 
     public function destroy(string $emisorId, string $id): JsonResponse
     {
+        $user = auth()->user();
+        if ($user && $user->role === \App\Enums\UserRole::CAJERO) {
+            return response()->json(['message' => 'El rol cajero no tiene permisos para eliminar bodegas.'], 403);
+        }
+
         $resolvedId = $this->resolveEmisorId($emisorId);
         if (!$resolvedId) {
             return response()->json(['message' => 'Emisor no encontrado.'], 404);

@@ -33,6 +33,47 @@ class FacturacionController extends Controller
     ) {
     }
 
+    private function validateEmisorUserPermissions($user, int $emisorId, int $establecimientoId, int $puntoEmisionId): ?JsonResponse
+    {
+        if (!$user) {
+            return response()->json(['success' => false, 'message' => 'No autenticado.'], 401);
+        }
+
+        // Administrador puede emitir para pruebas si cuenta con firma y punto válido
+        if ($user->role === \App\Enums\UserRole::ADMINISTRADOR) {
+            return null;
+        }
+
+        // Distribuidor no emite comprobantes directamente
+        if ($user->role === \App\Enums\UserRole::DISTRIBUIDOR) {
+            return response()->json(['success' => false, 'message' => 'El rol distribuidor no tiene autorización para emitir comprobantes.'], 403);
+        }
+
+        // Emisor, Gerente y Cajero deben pertenecer al emisor
+        if ((int)$user->emisor_id !== (int)$emisorId) {
+            return response()->json(['success' => false, 'message' => 'No tienes autorización para emitir comprobantes en este emisor.'], 403);
+        }
+
+        // Gerente: si tiene establecimientos asignados, debe emitir en uno de ellos
+        if ($user->role === \App\Enums\UserRole::GERENTE) {
+            $estIds = json_decode($user->establecimientos_ids ?? '[]', true);
+            if (!empty($estIds) && !in_array($establecimientoId, $estIds)) {
+                return response()->json(['success' => false, 'message' => 'No tienes autorización para emitir comprobantes en este establecimiento.'], 403);
+            }
+        }
+
+        // Cajero: debe emitir en uno de sus puntos de emisión asignados
+        if ($user->role === \App\Enums\UserRole::CAJERO) {
+            $ptoIds = json_decode($user->puntos_emision_ids ?? '[]', true);
+            if (!empty($ptoIds) && !in_array($puntoEmisionId, $ptoIds)) {
+                return response()->json(['success' => false, 'message' => 'No tienes asignado este punto de emisión para facturar.'], 403);
+            }
+        }
+
+        return null;
+    }
+
+
 
     public function emitirLiquidacionCompra(Request $request): JsonResponse
     {
@@ -70,6 +111,10 @@ class FacturacionController extends Controller
         }
 
         $data = $validator->validated();
+
+        if ($permError = $this->validateEmisorUserPermissions($request->user(), (int)$data['emisor_id'], (int)$data['establecimiento_id'], (int)$data['punto_emision_id'])) {
+            return $permError;
+        }
 
         $archivoFirma = $request->file('firma');
         $passwordFirma = trim((string) $request->input('password'));
@@ -595,6 +640,10 @@ class FacturacionController extends Controller
 
         $data = $validator->validated();
 
+        if ($permError = $this->validateEmisorUserPermissions($request->user(), (int)$data['emisor_id'], (int)$data['establecimiento_id'], (int)$data['punto_emision_id'])) {
+            return $permError;
+        }
+
         $archivoFirma = $request->file('firma');
         $passwordFirma = trim((string) $request->input('password'));
         $extension = strtolower($archivoFirma->getClientOriginalExtension() ?: 'p12');
@@ -773,6 +822,10 @@ class FacturacionController extends Controller
         }
 
         $data = $validator->validated();
+
+        if ($permError = $this->validateEmisorUserPermissions($request->user(), (int)$data['emisor_id'], (int)$data['establecimiento_id'], (int)$data['punto_emision_id'])) {
+            return $permError;
+        }
 
         $archivoFirma = $request->file('firma');
         $passwordFirma = trim((string) $request->input('password'));
@@ -1055,6 +1108,10 @@ class FacturacionController extends Controller
         }
 
         $data = $validator->validated();
+
+        if ($permError = $this->validateEmisorUserPermissions($request->user(), (int)$data['emisor_id'], (int)$data['establecimiento_id'], (int)$data['punto_emision_id'])) {
+            return $permError;
+        }
 
         $archivoFirma = $request->file('firma');
         $passwordFirma = trim((string) $request->input('password'));
@@ -1426,8 +1483,32 @@ class FacturacionController extends Controller
             $query->where('estado_sri', strtoupper($request->input('estado')));
         }
 
-        // Filtrar por emisor: si el usuario no es admin, solo sus comprobantes
-        if ($request->filled('emisor_id')) {
+        // Filtrar y aislar por rol y emisor
+        if ($user && $user->role !== \App\Enums\UserRole::ADMINISTRADOR) {
+            if ($user->role === \App\Enums\UserRole::DISTRIBUIDOR) {
+                $query->whereHas('company', function ($q) use ($user) {
+                    $q->where('created_by', $user->id);
+                });
+                if ($request->filled('emisor_id')) {
+                    $query->where('emisor_id', $request->input('emisor_id'));
+                }
+            } else {
+                // Emisor, Gerente y Cajero: solo su propio emisor asignado
+                $query->where('emisor_id', $user->emisor_id);
+
+                if ($user->role === \App\Enums\UserRole::GERENTE) {
+                    $estIds = json_decode($user->establecimientos_ids ?? '[]', true);
+                    if (!empty($estIds)) {
+                        $query->whereIn('establecimiento_id', $estIds);
+                    }
+                } elseif ($user->role === \App\Enums\UserRole::CAJERO) {
+                    $ptoIds = json_decode($user->puntos_emision_ids ?? '[]', true);
+                    if (!empty($ptoIds)) {
+                        $query->whereIn('punto_emision_id', $ptoIds);
+                    }
+                }
+            }
+        } elseif ($request->filled('emisor_id')) {
             $query->where('emisor_id', $request->input('emisor_id'));
         }
 

@@ -88,7 +88,11 @@ class PosTurnoController extends Controller
             ->where('estado', 'Abierto')
             ->firstOrFail();
 
-        if ($turno->usuario_id !== $usuarioId && $request->user()->role !== 'administrador') {
+        $userRole = $request->user()->role instanceof \App\Enums\UserRole 
+            ? $request->user()->role->value 
+            : (string) $request->user()->role;
+
+        if ($turno->usuario_id !== $usuarioId && $userRole !== 'administrador') {
             return response()->json(['error' => 'No tienes permisos para cerrar este turno.'], 403);
         }
 
