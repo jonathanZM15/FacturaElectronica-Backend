@@ -317,9 +317,9 @@ class EmisorController extends Controller
             'regimen_tributario' => ['required','in:GENERAL,RIMPE_POPULAR,RIMPE_EMPRENDEDOR,MICRO_EMPRESA'],
             'obligado_contabilidad' => ['required','in:SI,NO'],
             'contribuyente_especial' => ['required','in:SI,NO'],
-            'numero_resolucion_contribuyente_especial' => ['nullable','string','max:50'],
+            'numero_resolucion_contribuyente_especial' => ['required_if:contribuyente_especial,SI','nullable','string','min:3','max:13'],
             'agente_retencion' => ['required','in:SI,NO'],
-            'numero_resolucion_agente_retencion' => ['nullable','string','max:50'],
+            'numero_resolucion_agente_retencion' => ['required_if:agente_retencion,SI','nullable','string','max:50'],
             'tipo_persona' => ['required','in:NATURAL,JURIDICA'],
             // Hacer opcional el código artesano
             'codigo_artesano' => ['nullable','string','max:50'],
@@ -485,9 +485,9 @@ class EmisorController extends Controller
             'regimen_tributario' => ['sometimes','nullable','in:GENERAL,RIMPE_POPULAR,RIMPE_EMPRENDEDOR,MICRO_EMPRESA'],
             'obligado_contabilidad' => ['sometimes','nullable','in:SI,NO'],
             'contribuyente_especial' => ['sometimes','nullable','in:SI,NO'],
-            'numero_resolucion_contribuyente_especial' => ['sometimes','nullable','string','max:50'],
+            'numero_resolucion_contribuyente_especial' => ['required_if:contribuyente_especial,SI','nullable','string','min:3','max:13'],
             'agente_retencion' => ['sometimes','nullable','in:SI,NO'],
-            'numero_resolucion_agente_retencion' => ['sometimes','nullable','string','max:50'],
+            'numero_resolucion_agente_retencion' => ['required_if:agente_retencion,SI','nullable','string','max:50'],
             'tipo_persona' => ['sometimes','nullable','in:NATURAL,JURIDICA'],
             'codigo_artesano' => ['sometimes','nullable','string','max:50'],
 

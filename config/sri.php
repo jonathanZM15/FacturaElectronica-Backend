@@ -12,4 +12,7 @@ return [
     'autorizacion_wsdl_produccion' => env('SRI_AUTORIZACION_WSDL_PRODUCCION', 'https://cel.sri.gob.ec/comprobantes-electronicos-ws/AutorizacionComprobantesOffline?wsdl'),
     'retry_after_seconds' => (int) env('SRI_RETRY_AFTER_SECONDS', 300),
     'max_authorization_attempts' => (int) env('SRI_MAX_AUTHORIZATION_ATTEMPTS', 10),
+    // A02: Identificación del proveedor de facturación (Anexo 26 Ficha Técnica SRI / Res. NAC-DGERCGC26-00000027)
+    'proveedor_ruc' => env('SRI_PROVEEDOR_RUC', null),
+    'proveedor_nombre' => env('SRI_PROVEEDOR_NOMBRE', null),
 ];

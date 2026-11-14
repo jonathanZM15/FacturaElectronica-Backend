@@ -10,7 +10,11 @@ class ProductTaxService
     {
         $query = TipoImpuesto::where('tipo_impuesto', 'IVA')->where('estado', 'Activo');
         if ($product->tipo_impuesto_id) {
-            return $query->whereKey($product->tipo_impuesto_id)->first();
+            $tax = $query->whereKey($product->tipo_impuesto_id)->first();
+            if ($tax && !TipoImpuesto::esCombinacionIvaValida((int) $tax->codigo_porcentaje, (float) $tax->valor_tarifa)) {
+                return null;
+            }
+            return $tax;
         }
         // Legacy labels are accepted only when the active catalog match is unique.
         $label = trim(strtoupper((string) $product->tipo_iva));
@@ -24,6 +28,12 @@ class ProductTaxService
             return null;
         }
         $matches = $query->limit(2)->get();
-        return $matches->count() === 1 ? $matches->first() : null;
+        if ($matches->count() === 1) {
+            $tax = $matches->first();
+            if ($tax && TipoImpuesto::esCombinacionIvaValida((int) $tax->codigo_porcentaje, (float) $tax->valor_tarifa)) {
+                return $tax;
+            }
+        }
+        return null;
     }
 }

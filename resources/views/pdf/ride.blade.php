@@ -47,8 +47,15 @@
                     
                     <div><strong>OBLIGADO A LLEVAR CONTABILIDAD:</strong> {{ $company->obligado_contabilidad === 'SI' ? 'SI' : 'NO' }}</div>
                     
-                    @if(str_contains(strtoupper($company->regimen_tributario ?? ''), 'RIMPE'))
+                    @php
+                        $regimen = strtoupper($company->regimen_tributario ?? '');
+                    @endphp
+                    @if($regimen === 'RIMPE_POPULAR' || str_contains($regimen, 'POPULAR'))
+                        <div><strong>CONTRIBUYENTE RÉGIMEN RIMPE - NEGOCIO POPULAR</strong></div>
+                    @elseif(str_contains($regimen, 'RIMPE'))
                         <div><strong>CONTRIBUYENTE RÉGIMEN RIMPE</strong></div>
+                    @elseif($regimen === 'MICRO_EMPRESA' || str_contains($regimen, 'MICRO'))
+                        <div><strong>CONTRIBUYENTE RÉGIMEN MICROEMPRESAS</strong></div>
                     @endif
                     @if($company->agente_retencion === 'SI')
                         <div><strong>Agente de Retención Resolución No.</strong> {{ $company->numero_resolucion_agente_retencion }}</div>
@@ -157,6 +164,9 @@
                         @foreach($comprobante->informacion_adicional ?? [] as $item)
                         <tr><td style="padding: 2px;">{{ $item['nombre'] }}</td><td style="padding: 2px;">{{ $item['valor'] }}</td></tr>
                         @endforeach
+                        @if(config('sri.proveedor_ruc'))
+                        <tr><td style="padding: 2px;">RUC Proveedor</td><td style="padding: 2px;">{{ config('sri.proveedor_ruc') }}</td></tr>
+                        @endif
                     </table>
                 </div>
                 

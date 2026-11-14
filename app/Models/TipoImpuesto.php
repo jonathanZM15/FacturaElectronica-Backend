@@ -87,6 +87,45 @@ class TipoImpuesto extends Model
     ];
 
     /**
+     * Catálogo oficial de combinaciones vigentes de código de porcentaje y tarifa de IVA
+     * según la Ficha Técnica de Comprobantes Electrónicos del SRI (Tabla 17).
+     */
+    public const IVA_COMBINACIONES_SRI = [
+        0  => ['tarifa' => 0.0,  'descripcion' => '0%'],
+        2  => ['tarifa' => 12.0, 'descripcion' => '12%'],
+        3  => ['tarifa' => 14.0, 'descripcion' => '14%'],
+        4  => ['tarifa' => 15.0, 'descripcion' => '15%'],
+        5  => ['tarifa' => 5.0,  'descripcion' => '5%'],
+        6  => ['tarifa' => 0.0,  'descripcion' => 'No Objeto de Impuesto'],
+        7  => ['tarifa' => 0.0,  'descripcion' => 'Exento de IVA'],
+        8  => ['tarifa' => 8.0,  'descripcion' => 'IVA diferenciado'],
+        10 => ['tarifa' => 13.0, 'descripcion' => '13%'],
+    ];
+
+    /**
+     * Valida si una combinación de código de porcentaje y tarifa corresponde al estándar oficial del SRI para IVA.
+     */
+    public static function esCombinacionIvaValida(int $codigoPorcentaje, float $tarifa): bool
+    {
+        if (!array_key_exists($codigoPorcentaje, self::IVA_COMBINACIONES_SRI)) {
+            return false;
+        }
+
+        $tarifaEsperada = (float) self::IVA_COMBINACIONES_SRI[$codigoPorcentaje]['tarifa'];
+        return abs($tarifa - $tarifaEsperada) < 0.0001;
+    }
+
+    /**
+     * Retorna la tarifa oficial esperada por el SRI para un código de porcentaje de IVA dado.
+     */
+    public static function getTarifaIvaOficial(int $codigoPorcentaje): ?float
+    {
+        return isset(self::IVA_COMBINACIONES_SRI[$codigoPorcentaje])
+            ? (float) self::IVA_COMBINACIONES_SRI[$codigoPorcentaje]['tarifa']
+            : null;
+    }
+
+    /**
      * Get the user who created this record.
      */
     public function createdBy()

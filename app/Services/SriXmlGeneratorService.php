@@ -58,17 +58,17 @@ class SriXmlGeneratorService
         $this->appendText($dom, $infoTributaria, 'secuencial', $secuencial);
         $this->appendText($dom, $infoTributaria, 'dirMatriz', $company->direccion_matriz ?? '');
 
+        $regimen = strtoupper((string) ($company->regimen_tributario ?? ''));
+        if ($regimen === 'MICRO_EMPRESA' || str_contains($regimen, 'MICROEMPRESA')) {
+            $this->appendText($dom, $infoTributaria, 'regimenMicroempresas', 'CONTRIBUYENTE RÉGIMEN MICROEMPRESAS');
+        }
+
         if (($company->agente_retencion ?? 'NO') === 'SI') {
             $this->appendText($dom, $infoTributaria, 'agenteRetencion', $company->numero_resolucion_agente_retencion ?? '1');
         }
 
-        if (($company->contribuyente_especial ?? 'NO') === 'SI') {
-            $this->appendText($dom, $infoTributaria, 'contribuyenteEspecial', $company->numero_resolucion_contribuyente_especial ?? '1');
-        }
-
-        $regimen = strtoupper((string) ($company->regimen_tributario ?? ''));
-        if (str_contains($regimen, 'RIMPE') && !str_contains($regimen, 'NEGOCIO POPULAR')) {
-            $contribuyenteRimpe = 'CONTRIBUYENTE RÉGIMEN RIMPE';
+        $contribuyenteRimpe = $this->buildRimpe($company->regimen_tributario ?? '');
+        if ($contribuyenteRimpe) {
             $this->appendText($dom, $infoTributaria, 'contribuyenteRimpe', $contribuyenteRimpe);
         }
 
@@ -77,6 +77,12 @@ class SriXmlGeneratorService
 
         $this->appendText($dom, $infoLiquidacion, 'fechaEmision', $fechaEmision);
         $this->appendText($dom, $infoLiquidacion, 'dirEstablecimiento', $establecimiento->direccion ?? $company->direccion_matriz ?? '');
+        if (($company->contribuyente_especial ?? 'NO') === 'SI' && !empty($company->numero_resolucion_contribuyente_especial)) {
+            $numRes = substr(trim((string) $company->numero_resolucion_contribuyente_especial), 0, 13);
+            if (strlen($numRes) >= 3) {
+                $this->appendText($dom, $infoLiquidacion, 'contribuyenteEspecial', $numRes);
+            }
+        }
         $this->appendText($dom, $infoLiquidacion, 'obligadoContabilidad', $company->obligado_contabilidad ?? 'NO');
         $this->appendText($dom, $infoLiquidacion, 'tipoIdentificacionProveedor', $this->mapTipoIdentificacion($proveedor));
         $this->appendText($dom, $infoLiquidacion, 'razonSocialProveedor', $proveedor->razon_social ?? '');
@@ -230,6 +236,11 @@ class SriXmlGeneratorService
         $this->appendText($dom, $infoTributaria, 'secuencial', $secuencial);
         $this->appendText($dom, $infoTributaria, 'dirMatriz', $company->direccion_matriz ?? '');
 
+        $regimen = strtoupper((string) ($company->regimen_tributario ?? ''));
+        if ($regimen === 'MICRO_EMPRESA' || str_contains($regimen, 'MICROEMPRESA')) {
+            $this->appendText($dom, $infoTributaria, 'regimenMicroempresas', 'CONTRIBUYENTE RÉGIMEN MICROEMPRESAS');
+        }
+
         if (($company->agente_retencion ?? 'NO') === 'SI') {
             $this->appendText($dom, $infoTributaria, 'agenteRetencion', $company->numero_resolucion_agente_retencion ?? '');
         }
@@ -244,6 +255,12 @@ class SriXmlGeneratorService
 
         $this->appendText($dom, $infoFactura, 'fechaEmision', $fechaEmision);
         $this->appendText($dom, $infoFactura, 'dirEstablecimiento', $establecimiento->direccion ?? $company->direccion_matriz ?? '');
+        if (($company->contribuyente_especial ?? 'NO') === 'SI' && !empty($company->numero_resolucion_contribuyente_especial)) {
+            $numRes = substr(trim((string) $company->numero_resolucion_contribuyente_especial), 0, 13);
+            if (strlen($numRes) >= 3) {
+                $this->appendText($dom, $infoFactura, 'contribuyenteEspecial', $numRes);
+            }
+        }
         $this->appendText($dom, $infoFactura, 'obligadoContabilidad', $company->obligado_contabilidad ?? 'NO');
         $this->appendText($dom, $infoFactura, 'tipoIdentificacionComprador', $this->mapTipoIdentificacion($cliente));
         $this->appendText($dom, $infoFactura, 'razonSocialComprador', $cliente->razon_social ?? 'CONSUMIDOR FINAL');
@@ -339,7 +356,25 @@ class SriXmlGeneratorService
         }
 
         $additional = $comprobante->informacion_adicional ?? [];
-        if (!empty($cliente->email ?? null)) array_unshift($additional, ['nombre' => 'Email', 'valor' => $cliente->email]);
+        // Filtrar campos reservados por el sistema para evitar sobreescritura
+        $additional = array_values(array_filter($additional, function ($item) {
+            $nombre = strtoupper(trim((string) ($item['nombre'] ?? '')));
+            return !in_array($nombre, ['EMAIL', 'CORREO', 'RUC PROVEEDOR'], true);
+        }));
+
+        if (!empty($cliente->email ?? null)) {
+            array_unshift($additional, ['nombre' => 'Email', 'valor' => trim((string) $cliente->email)]);
+        }
+
+        // A02: Proveedor de software según Anexo 26 Ficha Técnica SRI / Res. NAC-DGERCGC26-00000027
+        $proveedorRuc = trim((string) config('sri.proveedor_ruc', ''));
+        if ($proveedorRuc !== '') {
+            $additional[] = ['nombre' => 'RUC Proveedor', 'valor' => $proveedorRuc];
+        }
+
+        // SRI limita infoAdicional a máximo 15 elementos campoAdicional
+        $additional = array_slice($additional, 0, 15);
+
         if ($additional) {
             $infoAdicional = $dom->createElement('infoAdicional');
             $factura->appendChild($infoAdicional);
@@ -401,6 +436,11 @@ class SriXmlGeneratorService
         $this->appendText($dom, $infoTributaria, 'secuencial',      $secuencial);
         $this->appendText($dom, $infoTributaria, 'dirMatriz',       $company->direccion_matriz ?? '');
 
+        $regimen = strtoupper((string) ($company->regimen_tributario ?? ''));
+        if ($regimen === 'MICRO_EMPRESA' || str_contains($regimen, 'MICROEMPRESA')) {
+            $this->appendText($dom, $infoTributaria, 'regimenMicroempresas', 'CONTRIBUYENTE RÉGIMEN MICROEMPRESAS');
+        }
+
         if (($company->agente_retencion ?? 'NO') === 'SI') {
             $this->appendText($dom, $infoTributaria, 'agenteRetencion', $company->numero_resolucion_agente_retencion ?? '');
         }
@@ -421,6 +461,12 @@ class SriXmlGeneratorService
         $tipoIdTransp = strlen($idTransportista) === 10 ? '05' : (strlen($idTransportista) === 13 ? '04' : '06');
         $this->appendText($dom, $infoGR, 'tipoIdentificacionTransportista', $tipoIdTransp);
         $this->appendText($dom, $infoGR, 'rucTransportista', $idTransportista);
+        if (($company->contribuyente_especial ?? 'NO') === 'SI' && !empty($company->numero_resolucion_contribuyente_especial)) {
+            $numRes = substr(trim((string) $company->numero_resolucion_contribuyente_especial), 0, 13);
+            if (strlen($numRes) >= 3) {
+                $this->appendText($dom, $infoGR, 'contribuyenteEspecial', $numRes);
+            }
+        }
         $this->appendText($dom, $infoGR, 'obligadoContabilidad', $company->obligado_contabilidad ?? 'NO');
         $this->appendText($dom, $infoGR, 'fechaIniTransporte', $this->formatFechaEmision($guiaData['fecha_inicio_transporte'] ?? $comprobante->fecha_emision));
         $this->appendText($dom, $infoGR, 'fechaFinTransporte', $this->formatFechaEmision($guiaData['fecha_fin_transporte'] ?? $comprobante->fecha_emision));
@@ -524,6 +570,11 @@ class SriXmlGeneratorService
         $this->appendText($dom, $infoTributaria, 'secuencial',      $secuencial);
         $this->appendText($dom, $infoTributaria, 'dirMatriz',       $company->direccion_matriz ?? '');
 
+        $regimen = strtoupper((string) ($company->regimen_tributario ?? ''));
+        if ($regimen === 'MICRO_EMPRESA' || str_contains($regimen, 'MICROEMPRESA')) {
+            $this->appendText($dom, $infoTributaria, 'regimenMicroempresas', 'CONTRIBUYENTE RÉGIMEN MICROEMPRESAS');
+        }
+
         if (($company->agente_retencion ?? 'NO') === 'SI') {
             $this->appendText($dom, $infoTributaria, 'agenteRetencion', $company->numero_resolucion_agente_retencion ?? '');
         }
@@ -540,6 +591,12 @@ class SriXmlGeneratorService
         $this->appendText($dom, $infoND, 'tipoIdentificacionComprador', $this->mapTipoIdentificacion($cliente));
         $this->appendText($dom, $infoND, 'razonSocialComprador',      $cliente->razon_social  ?? 'CONSUMIDOR FINAL');
         $this->appendText($dom, $infoND, 'identificacionComprador',   $cliente->identificacion ?? '9999999999999');
+        if (($company->contribuyente_especial ?? 'NO') === 'SI' && !empty($company->numero_resolucion_contribuyente_especial)) {
+            $numRes = substr(trim((string) $company->numero_resolucion_contribuyente_especial), 0, 13);
+            if (strlen($numRes) >= 3) {
+                $this->appendText($dom, $infoND, 'contribuyenteEspecial', $numRes);
+            }
+        }
         $this->appendText($dom, $infoND, 'obligadoContabilidad',      $company->obligado_contabilidad ?? 'NO');
         $this->appendText($dom, $infoND, 'codDocModificado',          '01'); // Factura
         $this->appendText($dom, $infoND, 'numDocModificado',
@@ -669,6 +726,11 @@ class SriXmlGeneratorService
         $this->appendText($dom, $infoTributaria, 'secuencial', $secuencial);
         $this->appendText($dom, $infoTributaria, 'dirMatriz', $company->direccion_matriz ?? '');
 
+        $regimen = strtoupper((string) ($company->regimen_tributario ?? ''));
+        if ($regimen === 'MICRO_EMPRESA' || str_contains($regimen, 'MICROEMPRESA')) {
+            $this->appendText($dom, $infoTributaria, 'regimenMicroempresas', 'CONTRIBUYENTE RÉGIMEN MICROEMPRESAS');
+        }
+
         if (($company->agente_retencion ?? 'NO') === 'SI') {
             $this->appendText($dom, $infoTributaria, 'agenteRetencion', $company->numero_resolucion_agente_retencion ?? '');
         }
@@ -686,6 +748,12 @@ class SriXmlGeneratorService
         $this->appendText($dom, $infoNotaCredito, 'tipoIdentificacionComprador', $this->mapTipoIdentificacion($cliente));
         $this->appendText($dom, $infoNotaCredito, 'razonSocialComprador', $cliente->razon_social ?? 'CONSUMIDOR FINAL');
         $this->appendText($dom, $infoNotaCredito, 'identificacionComprador', $cliente->identificacion ?? '9999999999999');
+        if (($company->contribuyente_especial ?? 'NO') === 'SI' && !empty($company->numero_resolucion_contribuyente_especial)) {
+            $numRes = substr(trim((string) $company->numero_resolucion_contribuyente_especial), 0, 13);
+            if (strlen($numRes) >= 3) {
+                $this->appendText($dom, $infoNotaCredito, 'contribuyenteEspecial', $numRes);
+            }
+        }
         $this->appendText($dom, $infoNotaCredito, 'obligadoContabilidad', $company->obligado_contabilidad ?? 'NO');
         
         $this->appendText($dom, $infoNotaCredito, 'codDocModificado', $comprobanteModificado ? '01' : '01');
@@ -887,9 +955,12 @@ class SriXmlGeneratorService
 
     private function buildRimpe(string $regimen): ?string
     {
-        $regimen = strtoupper($regimen);
-        if (str_starts_with($regimen, 'RIMPE')) {
-            return str_replace('_', ' ', $regimen);
+        $regimen = strtoupper(trim($regimen));
+        if ($regimen === 'RIMPE_POPULAR' || $regimen === 'RIMPE POPULAR' || str_contains($regimen, 'POPULAR')) {
+            return 'CONTRIBUYENTE RÉGIMEN RIMPE - NEGOCIO POPULAR';
+        }
+        if (str_contains($regimen, 'RIMPE')) {
+            return 'CONTRIBUYENTE RÉGIMEN RIMPE';
         }
         return null;
     }
@@ -924,6 +995,7 @@ class SriXmlGeneratorService
         }
 
         $tarifa = (float) ($impuesto->tarifa ?? 0);
+        // Ficha Técnica SRI Tabla 17 (Código de porcentaje del IVA)
         if (abs($tarifa - 0.0) < 0.00001) {
             return '0';
         }
@@ -935,6 +1007,15 @@ class SriXmlGeneratorService
         }
         if (abs($tarifa - 15.0) < 0.00001) {
             return '4';
+        }
+        if (abs($tarifa - 5.0) < 0.00001) {
+            return '5';
+        }
+        if (abs($tarifa - 8.0) < 0.00001) {
+            return '8';
+        }
+        if (abs($tarifa - 13.0) < 0.00001) {
+            return '10';
         }
 
         return (string) ((int) round($tarifa));

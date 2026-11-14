@@ -96,6 +96,25 @@ class StoreTipoImpuestoRequest extends FormRequest
                     );
                 }
             }
+
+            // P04: Validar combinación oficial SRI para IVA (Tabla 17)
+            if ($tipoImpuesto === 'IVA') {
+                $codigoPorcentaje = (int) $this->input('codigo_porcentaje');
+                $valorTarifa = (float) $this->input('valor_tarifa');
+
+                if (!array_key_exists($codigoPorcentaje, TipoImpuesto::IVA_COMBINACIONES_SRI)) {
+                    $validator->errors()->add(
+                        'codigo_porcentaje',
+                        "El código de porcentaje '{$codigoPorcentaje}' no es un código oficial de IVA autorizado por el SRI (Tabla 17)."
+                    );
+                } elseif (!TipoImpuesto::esCombinacionIvaValida($codigoPorcentaje, $valorTarifa)) {
+                    $esperada = TipoImpuesto::getTarifaIvaOficial($codigoPorcentaje);
+                    $validator->errors()->add(
+                        'valor_tarifa',
+                        "Para el impuesto IVA con código {$codigoPorcentaje}, la tarifa oficial del SRI debe ser {$esperada}%. Se ingresó {$valorTarifa}%."
+                    );
+                }
+            }
         });
     }
 

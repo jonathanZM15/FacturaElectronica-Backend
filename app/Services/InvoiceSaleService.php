@@ -3,7 +3,7 @@
 namespace App\Services;
 
 use App\Enums\{TipoControlInventario, TipoProducto, UserRole};
-use App\Models\{Cliente, Company, Comprobante, ComprobanteDetalle, ComprobanteImpuesto, PosTurno, Producto, User};
+use App\Models\{Cliente, Company, Comprobante, ComprobanteDetalle, ComprobanteImpuesto, PosTurno, Producto, TipoImpuesto, User};
 use Illuminate\Support\Facades\{DB, Validator};
 use Illuminate\Validation\{Rule, ValidationException};
 
@@ -47,7 +47,7 @@ class InvoiceSaleService
             'pagos.*.forma_pago' => ['required', Rule::in(['01', '15', '16', '17', '18', '19', '20', '21'])],
             'pagos.*.total' => ['required', 'numeric', 'min:0'],
             'pagos.*.efectivo_recibido' => ['nullable', 'numeric', 'min:0'],
-            'informacion_adicional' => ['nullable', 'array', 'max:14'],
+            'informacion_adicional' => ['nullable', 'array', config('sri.proveedor_ruc') ? 'max:13' : 'max:14'],
             'informacion_adicional.*.nombre' => ['required', 'string', 'max:300'],
             'informacion_adicional.*.valor' => ['required', 'string', 'max:300'],
         ]);
@@ -103,6 +103,10 @@ class InvoiceSaleService
                 $tax = ProductTaxService::resolve($product);
                 if (!$tax) $this->invalid("detalles.$index.impuesto", 'Configura un impuesto activo y no ambiguo para el producto.');
                 if ($product->impuesto_ice || (float) $product->irbpnr > 0) $this->invalid("detalles.$index.impuesto", 'La venta con ICE o IRBPNR requiere el flujo tributario ampliado, fuera de esta versión.');
+                // P04: Validar combinación oficial SRI para IVA antes de procesar venta
+                if ($tax->tipo_impuesto === 'IVA' && !TipoImpuesto::esCombinacionIvaValida((int) $tax->codigo_porcentaje, (float) $tax->valor_tarifa)) {
+                    $this->invalid("detalles.$index.impuesto", "La combinación de código ({$tax->codigo_porcentaje}) y tarifa ({$tax->valor_tarifa}%) de IVA no es válida según la normativa del SRI.");
+                }
                 $requested = $detail['impuesto'] ?? [];
                 if ((isset($requested['tipo_impuesto_id']) && (int) $requested['tipo_impuesto_id'] !== (int) $tax->id) || (isset($requested['tarifa']) && abs((float) $requested['tarifa'] - (float) $tax->valor_tarifa) > .000001)) $this->invalid("detalles.$index.impuesto", 'El impuesto no coincide con el catálogo del producto.');
                 $detail['precio_unitario'] = (float) $price;
