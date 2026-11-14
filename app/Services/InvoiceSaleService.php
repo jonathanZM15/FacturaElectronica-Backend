@@ -24,7 +24,7 @@ class InvoiceSaleService
             'punto_emision_id' => ['required', 'integer', 'exists:puntos_emision,id'],
             'pos_turno_id' => ['required', 'integer', 'exists:pos_turnos,id'],
             'bodega_id' => ['nullable', 'integer', 'exists:bodegas,id'],
-            'cliente.tipo_identificacion' => ['required', Rule::in(array_values(ClientIdentification::CODES))],
+            'cliente.tipo_identificacion' => ['required', Rule::in(array_values(ClientIdentification::FACTURA_CODES))],
             'cliente.identificacion' => ['required', 'string', 'max:13'],
             'cliente.razon_social' => ['required', 'string', 'max:255'],
             'cliente.direccion' => ['required', 'string', 'max:500'],
@@ -53,8 +53,21 @@ class InvoiceSaleService
         ]);
         $validator->after(function ($v) use ($payload) {
             $client = $payload['cliente'] ?? [];
-            if (!ClientIdentification::valid((string) ($client['tipo_identificacion'] ?? ''), (string) ($client['identificacion'] ?? ''))) {
+            $tipo = (string) ($client['tipo_identificacion'] ?? '');
+            $id = (string) ($client['identificacion'] ?? '');
+            if (!ClientIdentification::valid($tipo, $id)) {
                 $v->errors()->add('cliente.identificacion', 'Identificación inválida para el tipo indicado.');
+            }
+            // P02: SRI sección 9.10 - Si pagos superan $50.00, no se admite Consumidor Final
+            $normTipo = ClientIdentification::normalize($tipo);
+            if ($normTipo === 'CONSUMIDOR_FINAL' || $id === '9999999999999') {
+                $pagos = $payload['pagos'] ?? [];
+                if (is_array($pagos) && !empty($pagos)) {
+                    $sumPagos = round(array_sum(array_column($pagos, 'total')), 2);
+                    if ($sumPagos > 50.00) {
+                        $v->errors()->add('cliente.identificacion', 'Por disposición del SRI, en facturas superiores a $50.00 no se admite Consumidor Final. Debe registrar un cliente identificado.');
+                    }
+                }
             }
         });
         return $validator->validate();
@@ -102,6 +115,12 @@ class InvoiceSaleService
             }
             $calculation = $this->calculator->calcularComprobante($details);
             $total = $calculation['totales']['importe_total'];
+            // P02: SRI sección 9.10 - Facturas superiores a $50.00 no admiten Consumidor Final
+            $clientNormTipo = ClientIdentification::normalize((string) ($data['cliente']['tipo_identificacion'] ?? ''));
+            $clientId = trim((string) ($data['cliente']['identificacion'] ?? ''));
+            if ($total > 50.00 && ($clientNormTipo === 'CONSUMIDOR_FINAL' || $clientId === '9999999999999')) {
+                $this->invalid('cliente.identificacion', 'Por disposición del SRI, en facturas superiores a $50.00 no se admite Consumidor Final. Debe registrar un cliente identificado.');
+            }
             if (abs(round(array_sum(array_column($data['pagos'], 'total')), 2) - $total) > .001) $this->invalid('pagos', 'Los pagos deben sumar el total confirmado de la venta.');
             foreach ($data['pagos'] as $payment) {
                 if ($payment['forma_pago'] === '01' && isset($payment['efectivo_recibido']) && (float) $payment['efectivo_recibido'] < (float) $payment['total']) $this->invalid('pagos', 'El efectivo recibido no cubre el pago.');

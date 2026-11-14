@@ -875,28 +875,14 @@ class SriXmlGeneratorService
 
     private function mapTipoIdentificacion($cliente): string
     {
-        $tipo = strtoupper((string) ($cliente->tipo_identificacion ?? ''));
-        if ($tipo === 'RUC') {
-            return '04';
-        }
-        if ($tipo === 'CEDULA') {
-            return '05';
-        }
-        if ($tipo === 'EXTERIOR') {
-            return '08';
-        }
-        if ($tipo === 'CONSUMIDOR_FINAL' || $tipo === '07') {
-            return '07';
+        $tipo = (string) ($cliente->tipo_identificacion ?? '');
+        $code = ClientIdentification::toSriCodeForFactura($tipo);
+
+        if ($code !== null) {
+            return $code;
         }
 
-        $id = (string) ($cliente->identificacion ?? '');
-        if (strlen($id) === 13) {
-            return '04';
-        }
-        if (strlen($id) === 10) {
-            return '05';
-        }
-        return '07';
+        throw new \InvalidArgumentException("Tipo de identificación '{$tipo}' no es válido para comprobante electrónico de venta del SRI.");
     }
 
     private function buildRimpe(string $regimen): ?string

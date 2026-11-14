@@ -231,6 +231,7 @@ Route::post('/facturacion/comprobantes/{comprobante}/reintentar', [FacturacionCo
 Route::get('/facturacion/comprobantes/{comprobante}/pdf', [FacturacionController::class, 'downloadPdf'])->middleware($businessMiddleware);
 Route::get('/facturacion/comprobantes/{comprobante}/xml', [FacturacionController::class, 'downloadXml'])->middleware($businessMiddleware);
 Route::get('/facturacion/comprobantes', [FacturacionController::class, 'listarComprobantes'])->middleware($businessMiddleware);
+Route::get('/facturacion/operaciones/{operacionId}', [FacturacionController::class, 'consultarOperacion'])->middleware($businessMiddleware);
 
 
 

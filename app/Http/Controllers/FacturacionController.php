@@ -318,6 +318,24 @@ class FacturacionController extends Controller
         ], 202);
     }
 
+    public function consultarOperacion(Request $request, string $operacionId): JsonResponse
+    {
+        abort_unless(\Illuminate\Support\Str::isUuid($operacionId), 422, 'Identificador de operación inválido.');
+        $invoice = Comprobante::where('operacion_id', $operacionId)->first();
+        if (!$invoice) {
+            return response()->json(['encontrada' => false, 'message' => 'Operación no registrada.'], 404);
+        }
+        \App\Services\BusinessAccess::invoice($request->user(), $invoice);
+        return response()->json([
+            'encontrada' => true,
+            'comprobante_id' => $invoice->id,
+            'estado_sri' => $invoice->estado_sri,
+            'secuencial' => $invoice->secuencial,
+            'secuencial_formateado' => $invoice->secuencial_formateado,
+            'total' => (float) $invoice->total,
+        ]);
+    }
+
     public function emitirGuiaRemision(Request $request): JsonResponse
     {
         $request->validate([
