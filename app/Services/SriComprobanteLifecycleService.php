@@ -15,9 +15,10 @@ class SriComprobanteLifecycleService
 
     public function transition(Comprobante $comprobante, string $estado, array $attributes = [], array $log = []): Comprobante
     {
-        $this->stateMachine->assertTransition($comprobante->estado_sri, $estado);
-
         return DB::transaction(function () use ($comprobante, $estado, $attributes, $log) {
+            $comprobante = Comprobante::whereKey($comprobante->id)->lockForUpdate()->firstOrFail();
+            if ($comprobante->estado_sri === $estado) return $comprobante;
+            $this->stateMachine->assertTransition($comprobante->estado_sri, $estado);
             $comprobante->forceFill(array_merge(['estado_sri' => $estado], $attributes));
             $comprobante->save();
 

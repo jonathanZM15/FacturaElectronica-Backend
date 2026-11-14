@@ -23,6 +23,7 @@ class StoreUserRequest extends FormRequest
         
         // Verifica que el rol a crear sea permitido
         $rolACrear = $this->input('role');
+        if (!is_string($rolACrear)) return PermissionService::tienePermiso($user, 'users.create');
         return PermissionService::puedoCrearRol($user, $rolACrear);
     }
 
@@ -97,7 +98,7 @@ class StoreUserRequest extends FormRequest
                 'in:administrador,distribuidor,emisor,gerente,cajero',
             ],
             'distribuidor_id' => 'nullable|exists:users,id',
-            'emisor_id' => 'nullable|exists:users,id',
+            'emisor_id' => 'nullable|exists:emisores,id',
             'estado' => 'nullable|in:nuevo,activo,pendiente_verificacion,suspendido,retirado',
             'establecimientos_ids' => 'nullable|array',
             'establecimientos_ids.*' => 'integer',

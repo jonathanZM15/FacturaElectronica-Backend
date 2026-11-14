@@ -14,6 +14,8 @@ use App\Http\Controllers\TipoRetencionController;
 use App\Http\Controllers\Api\CompanyDeletionController;
 use App\Http\Controllers\FacturacionController;
 
+$businessMiddleware = ['auth:sanctum', \App\Http\Middleware\EnsureActiveUser::class, \App\Http\Middleware\AuthorizeBusinessAction::class];
+
 //rutas para inicio y registro de sesion
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
@@ -31,12 +33,13 @@ Route::get('/usuarios/check/cedula', [UserController::class, 'checkCedula']);
 Route::get('/usuarios/check/email', [UserController::class, 'checkEmail']);
 
 // Rutas públicas para descargar backups (accesibles desde email sin autenticación)
-Route::get('/company-deletion/{company}/download-backup', [CompanyDeletionController::class, 'downloadBackup'])->name('company-deletion.download-backup');
+Route::get('/company-deletion/{company}/download-backup', [CompanyDeletionController::class, 'downloadBackup'])->middleware($businessMiddleware)->name('company-deletion.download-backup');
 
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', \App\Http\Middleware\EnsureActiveUser::class, \App\Http\Middleware\AuthorizeBusinessAction::class])->group(function () {
     //rutas para cierre de sesión y cambiar clave
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/user', [AuthController::class, 'me']);
+    Route::get('/catalogos/impuestos', [\App\Http\Controllers\TaxCatalogController::class, 'index']);
     Route::post('/cambiarClave', [AuthController::class, 'cambiarPassword']);
 
     // Rutas públicas para usuarios autenticados
@@ -86,6 +89,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     //Rutas para el emisor
     Route::get('/emisores', [EmisorController::class, 'index']);
+    Route::get('/emisores/{emisorId}/firma', [\App\Http\Controllers\CompanyCertificateController::class, 'show']);
+    Route::post('/emisores/{emisorId}/firma', [\App\Http\Controllers\CompanyCertificateController::class, 'store']);
     Route::post('/emisores', [EmisorController::class, 'store']);
     Route::get('/emisores/check-ruc/{ruc}', [EmisorController::class, 'checkRuc']);
     
@@ -210,22 +215,22 @@ Route::middleware('auth:sanctum')->group(function () {
 // Company logo routes
 Route::get('/companies/{company}/logo', [LogoController::class, 'show']);
 Route::get('/companies/{company}/logo-file', [LogoController::class, 'file'])->name('companies.logo.file');
-Route::post('/companies/{company}/logo', [LogoController::class, 'store'])->middleware('auth:sanctum');
+Route::post('/companies/{company}/logo', [LogoController::class, 'store'])->middleware($businessMiddleware);
 
 // Establecimiento logo routes
 Route::get('/emisores/{id}/establecimientos/{est}/logo-file', [LogoController::class, 'establecimientos_file'])->name('establecimientos.logo.file');
 
 // Ruta para emitir la factura electronica
-Route::post('/facturacion/emitir', [FacturacionController::class, 'emitirFactura'])->middleware('auth:sanctum');
-Route::post('/facturacion/emitir-liquidacion-compra', [FacturacionController::class, 'emitirLiquidacionCompra'])->middleware('auth:sanctum');
-Route::post('/facturacion/emitir-nota-credito', [FacturacionController::class, 'emitirNotaCredito'])->middleware('auth:sanctum');
-Route::post('/facturacion/emitir-nota-debito', [FacturacionController::class, 'emitirNotaDebito'])->middleware('auth:sanctum');
-Route::post('/facturacion/emitir-guia-remision', [FacturacionController::class, 'emitirGuiaRemision'])->middleware('auth:sanctum');
-Route::get('/facturacion/comprobantes/{comprobante}', [FacturacionController::class, 'estadoComprobante'])->middleware('auth:sanctum');
-Route::post('/facturacion/comprobantes/{comprobante}/reintentar', [FacturacionController::class, 'reintentarProcesamiento'])->middleware('auth:sanctum');
-Route::get('/facturacion/comprobantes/{comprobante}/pdf', [FacturacionController::class, 'downloadPdf'])->middleware('auth:sanctum');
-Route::get('/facturacion/comprobantes/{comprobante}/xml', [FacturacionController::class, 'downloadXml'])->middleware('auth:sanctum');
-Route::get('/facturacion/comprobantes', [FacturacionController::class, 'listarComprobantes'])->middleware('auth:sanctum');
+Route::post('/facturacion/emitir', [FacturacionController::class, 'emitirFactura'])->middleware($businessMiddleware);
+Route::post('/facturacion/emitir-liquidacion-compra', [FacturacionController::class, 'emitirLiquidacionCompra'])->middleware($businessMiddleware);
+Route::post('/facturacion/emitir-nota-credito', [FacturacionController::class, 'emitirNotaCredito'])->middleware($businessMiddleware);
+Route::post('/facturacion/emitir-nota-debito', [FacturacionController::class, 'emitirNotaDebito'])->middleware($businessMiddleware);
+Route::post('/facturacion/emitir-guia-remision', [FacturacionController::class, 'emitirGuiaRemision'])->middleware($businessMiddleware);
+Route::get('/facturacion/comprobantes/{comprobante}', [FacturacionController::class, 'estadoComprobante'])->middleware($businessMiddleware);
+Route::post('/facturacion/comprobantes/{comprobante}/reintentar', [FacturacionController::class, 'reintentarProcesamiento'])->middleware($businessMiddleware);
+Route::get('/facturacion/comprobantes/{comprobante}/pdf', [FacturacionController::class, 'downloadPdf'])->middleware($businessMiddleware);
+Route::get('/facturacion/comprobantes/{comprobante}/xml', [FacturacionController::class, 'downloadXml'])->middleware($businessMiddleware);
+Route::get('/facturacion/comprobantes', [FacturacionController::class, 'listarComprobantes'])->middleware($businessMiddleware);
 
 
 
@@ -234,8 +239,7 @@ Route::get('/facturacion/comprobantes', [FacturacionController::class, 'listarCo
 
 
 // Clientes y Proveedores
-Route::middleware('auth:sanctum')->group(function () {
-    Route::apiResource('emisores.clientes', App\Http\Controllers\ClienteController::class);
+Route::middleware($businessMiddleware)->group(function () {
     Route::apiResource('emisores.proveedores', App\Http\Controllers\ProveedorController::class);
     Route::apiResource('emisores.transportistas', App\Http\Controllers\TransportistaController::class);
     Route::apiResource('emisores.compras', App\Http\Controllers\CompraController::class);

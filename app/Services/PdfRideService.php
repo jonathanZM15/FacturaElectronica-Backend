@@ -11,6 +11,7 @@ class PdfRideService
 {
     public function generateRide(Comprobante $comprobante, bool $saveToDisk = false): string
     {
+        InvoiceSnapshots::apply($comprobante);
         $company = $comprobante->company;
         $establecimiento = $comprobante->establecimiento;
         $cliente = $comprobante->cliente;

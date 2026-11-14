@@ -24,6 +24,10 @@ class FacturaCalculatorService
             $precioUnitario = $this->toFloat($detalle['precio_unitario'] ?? 0);
             $descuento = $this->toFloat($detalle['descuento'] ?? 0);
 
+            if (!is_finite($cantidad) || !is_finite($precioUnitario) || !is_finite($descuento) || $cantidad <= 0 || $precioUnitario < 0 || $descuento < 0 || $descuento > round($cantidad * $precioUnitario, 6)) {
+                throw \Illuminate\Validation\ValidationException::withMessages(["detalles.$index" => ['Cantidad, precio o descuento inválidos. El descuento no puede superar la base.']]);
+            }
+
             $lineaBase = ($cantidad * $precioUnitario) - $descuento;
 
             // Redondeo por linea a 2 decimales (Half-Up) segun SRI
@@ -43,6 +47,8 @@ class FacturaCalculatorService
                     $impuestosAgrupados[$grupoKey] = [
                         'tipo_impuesto_id' => $impuestoInfo['tipo_impuesto_id'] ?? null,
                         'codigo' => $impuestoInfo['codigo'] ?? null,
+                        'codigo_impuesto' => $impuestoInfo['codigo_impuesto'] ?? 2,
+                        'codigo_porcentaje' => $impuestoInfo['codigo_porcentaje'] ?? $impuestoInfo['codigo'] ?? null,
                         'tipo' => $impuestoInfo['tipo'] ?? null,
                         'tarifa' => $this->toFloat($impuestoInfo['tarifa'] ?? 0),
                         'base_imponible' => 0.0,
@@ -89,7 +95,7 @@ class FacturaCalculatorService
         $tipo = (string) ($impuestoInfo['tipo'] ?? '');
         $codigo = (string) ($impuestoInfo['codigo'] ?? '');
         $tarifa = $this->toFloat($impuestoInfo['tarifa'] ?? 0);
-        return $tipo . '|' . $codigo . '|' . $tarifa;
+        return ($impuestoInfo['tipo_impuesto_id'] ?? '') . '|' . $tipo . '|' . $codigo . '|' . $tarifa;
     }
 
     private function toFloat($value): float

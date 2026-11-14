@@ -23,7 +23,7 @@ enum SriEstadoComprobante: string
             self::BORRADOR => in_array($next, [self::PROCESANDO, self::FIRMADO, self::ERROR_FIRMA], true),
             self::PROCESANDO => in_array($next, [self::FIRMADO, self::ERROR_FIRMA, self::ERROR_SISTEMA], true),
             self::FIRMADO => in_array($next, [self::ENVIADO, self::ERROR_ENVIO, self::ERROR_SISTEMA], true),
-            self::ENVIADO => in_array($next, [self::RECIBIDA, self::DEVUELTA, self::ERROR_ENVIO, self::ERROR_SISTEMA], true),
+            self::ENVIADO => in_array($next, [self::RECIBIDA, self::DEVUELTA, self::ERROR_ENVIO, self::ERROR_AUTORIZACION, self::ERROR_SISTEMA], true),
             self::RECIBIDA => in_array($next, [self::AUTORIZADO, self::NO_AUTORIZADO, self::ERROR_AUTORIZACION, self::ERROR_SISTEMA], true),
             self::DEVUELTA => in_array($next, [self::ENVIADO, self::ERROR_ENVIO, self::ERROR_SISTEMA], true),
             self::AUTORIZADO => false,

@@ -18,9 +18,24 @@ class StoreTipoImpuestoRequest extends FormRequest
     /**
      * Get the validation rules that apply to the request.
      */
+    protected function prepareForValidation(): void
+    {
+        $existing = $this->route('id') ? TipoImpuesto::find($this->route('id')) : null;
+        $type = $this->input('tipo_impuesto', $existing?->tipo_impuesto);
+        $changes = [];
+        if (!$this->has('codigo_impuesto')) {
+            $changes['codigo_impuesto'] = ['IVA' => 2, 'ICE' => 3, 'IRBPNR' => 5][$type] ?? null;
+        }
+        if ($this->has('codigo') && !$this->has('codigo_porcentaje')) {
+            $changes['codigo_porcentaje'] = $this->input('codigo');
+        }
+        $this->merge($changes);
+    }
+
     public function rules(): array
     {
         return [
+            'codigo_impuesto' => ['required', 'integer', 'in:2,3,5'],
             'tipo_impuesto' => [
                 'required',
                 'string',
@@ -31,11 +46,11 @@ class StoreTipoImpuestoRequest extends FormRequest
                 'string',
                 'in:' . implode(',', TipoImpuesto::TIPOS_TARIFA),
             ],
-            'codigo' => [
+            'codigo_porcentaje' => [
                 'required',
                 'integer',
-                'min:1',
-                'unique:tipos_impuesto,codigo',
+                'min:0',
+                \Illuminate\Validation\Rule::unique('tipos_impuesto', 'codigo_porcentaje')->where('codigo_impuesto', $this->input('codigo_impuesto')),
             ],
             'nombre' => [
                 'required',
@@ -66,6 +81,9 @@ class StoreTipoImpuestoRequest extends FormRequest
             // Validar que el tipo de tarifa corresponda al tipo de impuesto
             $tipoImpuesto = $this->input('tipo_impuesto');
             $tipoTarifa = $this->input('tipo_tarifa');
+            if (isset(['IVA' => 2, 'ICE' => 3, 'IRBPNR' => 5][$tipoImpuesto]) && (int) $this->input('codigo_impuesto') !== ['IVA' => 2, 'ICE' => 3, 'IRBPNR' => 5][$tipoImpuesto]) {
+                $validator->errors()->add('codigo_impuesto', 'El código del impuesto no corresponde al tipo seleccionado.');
+            }
 
             if ($tipoImpuesto && $tipoTarifa) {
                 $tarifasPermitidas = TipoImpuesto::TARIFA_POR_TIPO[$tipoImpuesto] ?? [];
@@ -114,7 +132,7 @@ class StoreTipoImpuestoRequest extends FormRequest
         return [
             'tipo_impuesto' => 'tipo de impuesto',
             'tipo_tarifa' => 'tipo de tarifa',
-            'codigo' => 'código',
+            'codigo_porcentaje' => 'código',
             'nombre' => 'nombre',
             'valor_tarifa' => 'valor de tarifa',
             'estado' => 'estado',

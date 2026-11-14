@@ -64,6 +64,7 @@ class ClienteController extends Controller
      */
     public function store(Request $request, string $emisorId): JsonResponse
     {
+        if ($request->has('tipo_identificacion')) $request->merge(['tipo_identificacion' => \App\Services\ClientIdentification::normalize((string) $request->input('tipo_identificacion'))]);
         $resolvedId = $this->resolveEmisorId($emisorId);
 
         $validator = $this->buildValidator($request->all(), $resolvedId);
@@ -110,6 +111,7 @@ class ClienteController extends Controller
      */
     public function update(Request $request, string $emisorId, int $cliente): JsonResponse
     {
+        if ($request->has('tipo_identificacion')) $request->merge(['tipo_identificacion' => \App\Services\ClientIdentification::normalize((string) $request->input('tipo_identificacion'))]);
         $resolvedId = $this->resolveEmisorId($emisorId);
 
         $clienteModel = Cliente::where('emisor_id', $resolvedId)

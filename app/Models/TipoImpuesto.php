@@ -14,6 +14,15 @@ class TipoImpuesto extends Model
      */
     protected $table = 'tipos_impuesto';
 
+    protected $appends = ['codigo'];
+
+    // Compatibility for existing UI consumers; the database uses both SRI codes.
+    public function getCodigoAttribute(): ?int
+    {
+        return $this->codigo_porcentaje;
+    }
+
+
     /**
      * The attributes that are mass assignable.
      */

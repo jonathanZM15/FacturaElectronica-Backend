@@ -549,7 +549,7 @@ class UserController extends Controller
                     ? 'activo'
                     : ($validated['estado'] ?? 'nuevo'),
                 'establecimientos_ids' => isset($validated['establecimientos_ids']) 
-                    ? json_encode($validated['establecimientos_ids']) 
+                    ? $validated['establecimientos_ids']
                     : null,
             ];
             $user = User::create($userData);
@@ -1275,6 +1275,16 @@ class UserController extends Controller
                 $query->whereIn('role', $roleFilter);
             }
             
+            if ($currentUser->role === UserRole::GERENTE && empty($establishmentFilter)) {
+                $query->whereRaw('1 = 0');
+            }
+
+            if ($currentUser->role === UserRole::GERENTE) {
+                $allowedIds = User::where('emisor_id', $id)->where('role', 'cajero')->get(['id', 'emisor_id', 'role', 'establecimientos_ids', 'puntos_emision_ids'])
+                    ->filter(fn ($target) => PermissionService::puedeGestionarUsuario($currentUser, $target))->modelKeys();
+                $query->whereIn('id', $allowedIds);
+            }
+
             // Aplicar filtro de establecimientos para gerentes
             // Para gerentes: solo cajeros con establecimientos compartidos (ya no se incluye a sí mismo)
             if ($establishmentFilter !== null && !empty($establishmentFilter)) {
@@ -1404,7 +1414,7 @@ class UserController extends Controller
                     }
                     // Verificar intersección
                     $intersection = array_intersect($userEstIds, $establishmentFilter);
-                    return count($intersection) > 0;
+                    return PermissionService::puedeGestionarUsuario($currentUser, $user);
                 });
                 $data = array_values($data); // Re-indexar el array
             }
@@ -1466,6 +1476,7 @@ class UserController extends Controller
      */
     public function storeByEmisor(StoreUserRequest $request, $id)
     {
+        $initialTransactionLevel = DB::transactionLevel();
         try {
             // Asegurar que $id es un entero
             $id = (int) $id;
@@ -1501,14 +1512,6 @@ class UserController extends Controller
             // Validar jerarquía de roles
             $roleToCreate = UserRole::from($request->input('role'));
 
-            // HU: No se puede seleccionar establecimientos y puntos de emisor para el rol CAJERO creado por usuario de rol GERENTE
-            if ($currentUser->role === UserRole::GERENTE && $roleToCreate === UserRole::CAJERO) {
-                if (!empty($request->input('establecimientos_ids')) || !empty($request->input('puntos_emision_ids'))) {
-                    throw ValidationException::withMessages([
-                        'establecimientos_ids' => ['No se puede seleccionar establecimientos y puntos de emisor para el rol CAJERO creado por usuario de rol GERENTE.'],
-                    ]);
-                }
-            }
             if (!in_array($roleToCreate, [UserRole::EMISOR, UserRole::GERENTE, UserRole::CAJERO], true)) {
                 throw ValidationException::withMessages([
                     'role' => ['Solo se permite registrar usuarios con rol Emisor, Gerente o Cajero desde esta pantalla.'],
@@ -1542,7 +1545,7 @@ class UserController extends Controller
 
                 // HU: si el usuario logeado es GERENTE, solo puede asociar a sus establecimientos.
                 if ($currentUser->role === UserRole::GERENTE) {
-                    $gerenteAllowed = json_decode($currentUser->establecimientos_ids ?? '[]', true);
+                    $gerenteAllowed = $currentUser->establecimientos_ids;
                     $gerenteAllowed = is_array($gerenteAllowed) ? $gerenteAllowed : [];
                     $gerenteAllowed = array_values(array_unique(array_map('intval', $gerenteAllowed)));
 
@@ -1638,7 +1641,7 @@ class UserController extends Controller
                 'estado' => ($request->input('email') ?? '') === 'admin@factura.local' ? 'activo' : 'nuevo',
                 'created_by_id' => $currentUser->id,
                 'emisor_id' => $id,
-                'establecimientos_ids' => json_encode($request->input('establecimientos_ids', [])),
+                'establecimientos_ids' => $request->input('establecimientos_ids', []),
             ];
 
             // Crear usuario con datos del emisor
@@ -1697,7 +1700,7 @@ class UserController extends Controller
                 $puntos = array_values(array_unique(array_map('intval', $puntos)));
 
                 if (!empty($puntos)) {
-                    $user->puntos_emision_ids = json_encode($puntos);
+                    $user->puntos_emision_ids = $puntos;
                     $user->save();
 
                     // Gestión interna: marcar OCUPADO los puntos asociados
@@ -1780,13 +1783,13 @@ class UserController extends Controller
                 'data' => $userData
             ], Response::HTTP_CREATED);
         } catch (\Illuminate\Validation\ValidationException $e) {
-            DB::rollBack();
+            if (DB::transactionLevel() > $initialTransactionLevel) DB::rollBack($initialTransactionLevel);
             return response()->json([
                 'message' => 'Validación fallida',
                 'errors' => $e->errors()
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         } catch (\Exception $e) {
-            DB::rollBack();
+            if (DB::transactionLevel() > $initialTransactionLevel) DB::rollBack($initialTransactionLevel);
             Log::error('Error creando usuario del emisor', [
                 'error' => $e->getMessage(),
                 'emisor_id' => $id,
@@ -1858,7 +1861,7 @@ class UserController extends Controller
             }
 
             // Verificar que el usuario pertenece al emisor
-            if ($user->emisor_id != $id && $user->id != $id) {
+            if ((int) $user->emisor_id !== (int) $id) {
                 return response()->json([
                     'message' => 'Usuario no encontrado en este emisor'
                 ], Response::HTTP_NOT_FOUND);
@@ -1912,13 +1915,14 @@ class UserController extends Controller
      */
     public function updateByEmisor(UpdateUserRequest $request, $id, $usuario)
     {
+        $initialTransactionLevel = DB::transactionLevel();
         try {
             /** @var User|null $currentUser */
             $currentUser = Auth::user();
             
             $user = User::find($usuario);
             
-            if (!$user || ($user->emisor_id != $id && $user->id != $id)) {
+            if (!$user || ((int) $user->emisor_id !== (int) $id)) {
                 return response()->json([
                     'message' => 'Usuario no encontrado'
                 ], Response::HTTP_NOT_FOUND);
@@ -1948,9 +1952,9 @@ class UserController extends Controller
             elseif ($currentUser->role === UserRole::GERENTE && $currentUser->emisor_id == $id) {
                 if ($user->role === UserRole::CAJERO) {
                     // Verificar establecimientos en común
-                    $gerenteEsts = json_decode($currentUser->establecimientos_ids ?? '[]', true);
-                    $cajeroEsts = json_decode($user->establecimientos_ids ?? '[]', true);
-                    $canUpdate = !empty(array_intersect($gerenteEsts, $cajeroEsts));
+                    $gerenteEsts = $currentUser->establecimientos_ids;
+                    $cajeroEsts = $user->establecimientos_ids;
+                    $canUpdate = PermissionService::puedeGestionarUsuario($currentUser, $user);
                 }
             }
             
@@ -1986,19 +1990,11 @@ class UserController extends Controller
             $isRoleConAsociacion = in_array($user->role, [UserRole::EMISOR, UserRole::GERENTE, UserRole::CAJERO], true);
             $touchesAsociaciones = $request->has('establecimientos_ids') || $request->has('puntos_emision_ids');
 
-            // HU: No se puede seleccionar establecimientos y puntos de emisor para el rol CAJERO creado por usuario de rol GERENTE
-            if ($currentUser->role === UserRole::GERENTE && $user->role === UserRole::CAJERO && $touchesAsociaciones) {
-                if (!empty($request->input('establecimientos_ids')) || !empty($request->input('puntos_emision_ids'))) {
-                    throw ValidationException::withMessages([
-                        'establecimientos_ids' => ['No se puede modificar establecimientos y puntos de emisor para el rol CAJERO creado por usuario de rol GERENTE.'],
-                    ]);
-                }
-            }
 
             if ($isRoleConAsociacion && $touchesAsociaciones) {
                 $establecimientosIds = $request->has('establecimientos_ids')
                     ? $request->input('establecimientos_ids', [])
-                    : (json_decode($user->establecimientos_ids ?? '[]', true) ?? []);
+                    : ($user->establecimientos_ids ?? []);
                 $establecimientosIds = is_array($establecimientosIds) ? $establecimientosIds : [];
                 $establecimientosIds = array_values(array_unique(array_map('intval', $establecimientosIds)));
 
@@ -2015,7 +2011,7 @@ class UserController extends Controller
 
                 // HU: si el usuario logeado es GERENTE, solo puede asociar a sus establecimientos.
                 if ($currentUser->role === UserRole::GERENTE && !empty($establecimientosIds)) {
-                    $gerenteAllowed = json_decode($currentUser->establecimientos_ids ?? '[]', true);
+                    $gerenteAllowed = $currentUser->establecimientos_ids;
                     $gerenteAllowed = is_array($gerenteAllowed) ? $gerenteAllowed : [];
                     $gerenteAllowed = array_values(array_unique(array_map('intval', $gerenteAllowed)));
 
@@ -2129,13 +2125,13 @@ class UserController extends Controller
             // Actualizar establecimientos si se proporcionan
             if ($request->has('establecimientos_ids')) {
                 $nuevos = $request->input('establecimientos_ids', []);
-                $antiguos = json_decode($user->establecimientos_ids ?? '[]', true);
+                $antiguos = $user->establecimientos_ids;
                 if ($nuevos != $antiguos) {
                     $cambios['establecimientos_ids'] = [
                         'anterior' => $antiguos,
                         'nuevo' => $nuevos
                     ];
-                    $user->establecimientos_ids = json_encode($nuevos);
+                    $user->establecimientos_ids = $nuevos;
                 }
             }
 
@@ -2325,13 +2321,13 @@ class UserController extends Controller
                 'data' => $user
             ]);
         } catch (\Illuminate\Validation\ValidationException $e) {
-            DB::rollBack();
+            if (DB::transactionLevel() > $initialTransactionLevel) DB::rollBack($initialTransactionLevel);
             return response()->json([
                 'message' => 'Validación fallida',
                 'errors' => $e->errors()
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         } catch (\Exception $e) {
-            DB::rollBack();
+            if (DB::transactionLevel() > $initialTransactionLevel) DB::rollBack($initialTransactionLevel);
             Log::error('Error actualizando usuario del emisor', [
                 'error' => $e->getMessage(),
                 'emisor_id' => $id,
@@ -2356,13 +2352,14 @@ class UserController extends Controller
      */
     public function destroyByEmisor(Request $request, $id, $usuario)
     {
+        $initialTransactionLevel = DB::transactionLevel();
         try {
             /** @var User|null $currentUser */
             $currentUser = Auth::user();
             
             $user = User::find($usuario);
 
-            if (!$user || ($user->emisor_id != $id && $user->id != $id)) {
+            if (!$user || ((int) $user->emisor_id !== (int) $id)) {
                 return response()->json([
                     'message' => 'Usuario no encontrado'
                 ], Response::HTTP_NOT_FOUND);
@@ -2402,9 +2399,9 @@ class UserController extends Controller
             elseif ($currentUser->role === UserRole::GERENTE && $currentUser->emisor_id == $id) {
                 if ($user->role === UserRole::CAJERO) {
                     // Verificar establecimientos en común
-                    $gerenteEsts = json_decode($currentUser->establecimientos_ids ?? '[]', true);
-                    $cajeroEsts = json_decode($user->establecimientos_ids ?? '[]', true);
-                    $canDelete = !empty(array_intersect($gerenteEsts, $cajeroEsts));
+                    $gerenteEsts = $currentUser->establecimientos_ids;
+                    $cajeroEsts = $user->establecimientos_ids;
+                    $canDelete = PermissionService::puedeGestionarUsuario($currentUser, $user);
                 }
             }
             
@@ -2486,7 +2483,7 @@ class UserController extends Controller
                 'message' => 'Usuario eliminado exitosamente'
             ]);
         } catch (\Exception $e) {
-            DB::rollBack();
+            if (DB::transactionLevel() > $initialTransactionLevel) DB::rollBack($initialTransactionLevel);
             Log::error('Error eliminando usuario del emisor', [
                 'error' => $e->getMessage(),
                 'emisor_id' => $id,
@@ -2504,6 +2501,7 @@ class UserController extends Controller
      */
     public function verifyEmail(Request $request)
     {
+        $initialTransactionLevel = DB::transactionLevel();
         try {
             $request->validate([
                 'token' => 'required|string'
@@ -2619,7 +2617,7 @@ class UserController extends Controller
                 ]);
             }
         } catch (\Exception $e) {
-            DB::rollBack();
+            if (DB::transactionLevel() > $initialTransactionLevel) DB::rollBack($initialTransactionLevel);
             Log::error('Error verificando email', [
                 'error' => $e->getMessage()
             ]);
@@ -2634,6 +2632,7 @@ class UserController extends Controller
      */
     public function changeInitialPassword(Request $request)
     {
+        $initialTransactionLevel = DB::transactionLevel();
         try {
             $request->validate([
                 'token' => 'required|string',
@@ -2690,7 +2689,7 @@ class UserController extends Controller
                 ]
             ]);
         } catch (\Exception $e) {
-            DB::rollBack();
+            if (DB::transactionLevel() > $initialTransactionLevel) DB::rollBack($initialTransactionLevel);
             Log::error('Error cambiando contraseña inicial', [
                 'error' => $e->getMessage()
             ]);
@@ -2882,12 +2881,6 @@ class UserController extends Controller
                 ], Response::HTTP_BAD_REQUEST);
             }
 
-            // Regla: si el usuario está Retirado, solo el usuario que lo creó puede solicitar reactivación
-            if ($user->estado === 'retirado' && (string) $user->created_by_id !== (string) $currentUser->id) {
-                return response()->json([
-                    'message' => 'Solo el usuario que creó este usuario puede reenviar el correo de reactivación.'
-                ], Response::HTTP_FORBIDDEN);
-            }
 
             $estadoAnterior = $user->estado;
             $nuevoEstado = $request->input('estado', $user->estado);
@@ -2984,7 +2977,7 @@ class UserController extends Controller
             }
 
             // Verificar que el usuario pertenece al emisor especificado
-            if ($user->emisor_id != $emiId && $user->id != $emiId) {
+            if ((int) $user->emisor_id !== (int) $emiId) {
                 return response()->json(['message' => 'El usuario no pertenece a este emisor'], Response::HTTP_FORBIDDEN);
             }
 
@@ -2995,12 +2988,6 @@ class UserController extends Controller
                 ], Response::HTTP_BAD_REQUEST);
             }
 
-            // Regla: si el usuario está Retirado, solo el usuario que lo creó puede solicitar reactivación
-            if ($user->estado === 'retirado' && (string) $user->created_by_id !== (string) $currentUser->id) {
-                return response()->json([
-                    'message' => 'Solo el usuario que creó este usuario puede reenviar el correo de reactivación.'
-                ], Response::HTTP_FORBIDDEN);
-            }
 
             $estadoAnterior = $user->estado;
 
@@ -3074,6 +3061,7 @@ class UserController extends Controller
      */
     public function requestEmailChange(Request $request, string $id)
     {
+        $initialTransactionLevel = DB::transactionLevel();
         try {
             // Permitir auto-gestión y también gestión desde el panel si el actor
             // puede administrar al usuario objetivo según la jerarquía del sistema.
@@ -3161,7 +3149,7 @@ class UserController extends Controller
                 'errors' => $e->errors()
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         } catch (\Exception $e) {
-            DB::rollBack();
+            if (DB::transactionLevel() > $initialTransactionLevel) DB::rollBack($initialTransactionLevel);
             Log::error('Error solicitando cambio de correo', [
                 'usuario_id' => $id,
                 'error' => $e->getMessage()
@@ -3178,6 +3166,7 @@ class UserController extends Controller
      */
     public function confirmEmailChange(Request $request)
     {
+        $initialTransactionLevel = DB::transactionLevel();
         try {
             $request->validate([
                 'token' => 'required|string'
@@ -3268,7 +3257,7 @@ class UserController extends Controller
                 ]
             ]);
         } catch (\Exception $e) {
-            DB::rollBack();
+            if (DB::transactionLevel() > $initialTransactionLevel) DB::rollBack($initialTransactionLevel);
             Log::error('Error confirmando cambio de correo', [
                 'error' => $e->getMessage()
             ]);

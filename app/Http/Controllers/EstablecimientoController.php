@@ -40,59 +40,19 @@ class EstablecimientoController extends Controller
         $query = Establecimiento::where('emisor_id', $companyId)
             ->with(['puntos_emision.user', 'creator', 'updater']);
         
-        // Para usuarios emisor, gerente o cajero: filtrar por establecimientos asignados
-        if ($isAssignedEmissor || $isAssignedGerente || $isAssignedCajero) {
-            $establecimientosIds = $currentUser->establecimientos_ids;
-            if (is_string($establecimientosIds)) {
-                $decoded = json_decode($establecimientosIds, true);
-                // Manejar doble codificación JSON
-                if (is_string($decoded)) {
-                    $decoded = json_decode($decoded, true);
-                }
-                $establecimientosIds = is_array($decoded) ? $decoded : [];
-            }
-            if (!is_array($establecimientosIds)) {
-                $establecimientosIds = [];
-            }
-            
-            // Si establecimientos_ids está vacío, intentar inferir desde puntos_emision_ids
-            if (empty($establecimientosIds)) {
-                $puntosEmisionIds = $currentUser->puntos_emision_ids;
-                if (is_string($puntosEmisionIds)) {
-                    $decoded = json_decode($puntosEmisionIds, true);
-                    // Manejar doble codificación JSON
-                    if (is_string($decoded)) {
-                        $decoded = json_decode($decoded, true);
-                    }
-                    $puntosEmisionIds = is_array($decoded) ? $decoded : [];
-                }
-                if (!is_array($puntosEmisionIds)) {
-                    $puntosEmisionIds = [];
-                }
-                
-                // Obtener los establecimientos de los puntos de emisión asignados
-                if (!empty($puntosEmisionIds)) {
-                    $establecimientosIds = \App\Models\PuntoEmision::whereIn('id', $puntosEmisionIds)
-                        ->pluck('establecimiento_id')
-                        ->unique()
-                        ->toArray();
-                }
-            }
-            
-            // Si aún no tiene establecimientos, devolver vacío
-            if (empty($establecimientosIds)) {
-                return response()->json(['data' => []]);
-            }
-            
-            $query->whereIn('id', $establecimientosIds);
+        $scope = \App\Services\BusinessAccess::establishmentIds($currentUser);
+        if ($scope !== null) {
+            $query->whereIn('id', $scope);
+            $pointIds = \App\Services\BusinessAccess::pointIds($currentUser);
+            $query->with(['puntos_emision' => fn ($q) => $q->whereIn('id', $pointIds)]);
         }
-        
+
         $items = $query->orderBy('id', 'desc')->get();
         
         // Map items to include logo_url, other accessors, and associated users
         $data = $items->map(function ($item) {
             // Get users associated with this establecimiento
-            $usuarios = \App\Models\User::whereNotNull('establecimientos_ids')
+            $usuarios = \App\Models\User::where('emisor_id', $item->emisor_id)->whereNotNull('establecimientos_ids')
                 ->get()
                 ->filter(function ($user) use ($item) {
                     $estIds = $user->establecimientos_ids;
@@ -540,7 +500,7 @@ class EstablecimientoController extends Controller
      */
     private function getUsuariosAsociados($establecimientoId): array
     {
-        $usuarios = \App\Models\User::whereNotNull('establecimientos_ids')
+        $usuarios = \App\Models\User::where('emisor_id', $item->emisor_id)->whereNotNull('establecimientos_ids')
             ->get()
             ->filter(function ($user) use ($establecimientoId) {
                 $estIds = $user->establecimientos_ids;

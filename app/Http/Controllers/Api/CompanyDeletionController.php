@@ -27,7 +27,7 @@ class CompanyDeletionController extends Controller
         $this->backupService = $backupService;
         $this->restoreService = $restoreService;
         $this->middleware('auth:sanctum');
-        $this->middleware('admin')->except('downloadBackup', 'restoreFromBackup');
+        $this->middleware('admin');
     }
 
     /**

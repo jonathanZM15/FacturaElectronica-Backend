@@ -9,6 +9,7 @@ class ComprobanteDetalle extends Model
     protected $table = 'comprobante_detalles';
 
     protected $fillable = [
+        'codigo_principal', 'codigo_auxiliar',
         'comprobante_id',
         'producto_id',
         'descripcion',

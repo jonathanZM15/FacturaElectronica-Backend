@@ -37,20 +37,7 @@ class LogoController extends Controller
     // Store/replace logo for a company
     public function store(Request $request, $companyId)
     {
-        $company = Company::find($companyId);
-        if (!$company) {
-            try {
-                DB::table('emisores')->insert([
-                    'id' => $companyId,
-                    'name' => 'Company ' . $companyId,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
-            } catch (\Exception $e) {
-                // ignore if insert fails
-            }
-            $company = Company::find($companyId);
-        }
+        $company = Company::findOrFail($companyId);
 
         $request->validate([
             'logo' => 'required|image|mimes:jpeg,png,jpg,webp|max:2048',

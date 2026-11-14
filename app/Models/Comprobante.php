@@ -13,6 +13,8 @@ class Comprobante extends Model
     protected $table = 'comprobantes';
 
     protected $fillable = [
+        'operacion_id', 'request_hash', 'created_by_id', 'bodega_id', 'registro_operativo_id',
+        'cliente_snapshot', 'emisor_snapshot', 'establecimiento_snapshot', 'pagos', 'informacion_adicional',
         'pos_turno_id',
         'emisor_id',
         'establecimiento_id',
@@ -66,6 +68,8 @@ class Comprobante extends Model
     ];
 
     protected $casts = [
+        'cliente_snapshot' => 'array', 'emisor_snapshot' => 'array', 'establecimiento_snapshot' => 'array',
+        'pagos' => 'array', 'informacion_adicional' => 'array',
         'fecha_emision' => 'date',
         'fecha_autorizacion' => 'datetime',
         'firmado_en' => 'datetime',

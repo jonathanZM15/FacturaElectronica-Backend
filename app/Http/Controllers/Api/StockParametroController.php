@@ -19,17 +19,18 @@ class StockParametroController extends Controller
     public function index(string $emisorId): JsonResponse
     {
         $resolvedId = $this->resolveEmisorId($emisorId);
-        $parametros = ProductoBodegaStock::whereHas('producto', fn($q) => $q->where('emisor_id', $resolvedId))
-            ->with(['producto:id,nombre,codigo', 'bodega:id,nombre,tipo'])
-            ->get();
+        $query = ProductoBodegaStock::whereHas('producto', fn($q) => $q->where('emisor_id', $resolvedId))
+            ->with(['producto:id,nombre,codigo', 'bodega:id,nombre,tipo']);
+        $parametros = \App\Services\BusinessAccess::scopeStock($query, request()->user())->get();
         return response()->json(['data' => $parametros]);
     }
 
     // POST /emisores/{emisorId}/stock-parametros - Create/Update (upsert by producto_id+bodega_id)
     public function store(Request $request, string $emisorId): JsonResponse
     {
+        $resolvedId = $this->resolveEmisorId($emisorId);
         $validated = $request->validate([
-            'producto_id' => 'required|integer|exists:productos,id',
+            'producto_id' => ['required', 'integer', \Illuminate\Validation\Rule::exists('productos', 'id')->where('emisor_id', $resolvedId)->whereNull('deleted_at')],
             'bodega_id' => 'required|integer|exists:bodegas,id',
             'stock_minimo' => 'nullable|numeric|min:0',
             'stock_maximo' => 'nullable|numeric|min:0',
@@ -57,8 +58,10 @@ class StockParametroController extends Controller
     public function destroy(string $emisorId, string $id): JsonResponse
     {
         $resolvedId = $this->resolveEmisorId($emisorId);
-        $parametro = ProductoBodegaStock::whereHas('producto', fn($q) => $q->where('emisor_id', $resolvedId))->findOrFail($id);
-        $parametro->delete();
+        $query = ProductoBodegaStock::whereHas('producto', fn($q) => $q->where('emisor_id', $resolvedId));
+        $parametro = \App\Services\BusinessAccess::scopeStock($query, request()->user())->findOrFail($id);
+        // Parameters share the stock row: removing configuration must retain balances.
+        $parametro->update(['activo' => false, 'stock_minimo' => 0, 'stock_maximo' => 0, 'observacion' => null]);
         return response()->json(['message' => 'Parámetro de stock eliminado exitosamente']);
     }
 }

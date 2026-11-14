@@ -19,21 +19,54 @@ use Illuminate\Support\Facades\DB;
 
 class MovimientoInventarioService
 {
+    private function validateDetails(array $details): void
+    {
+        if (!$details) throw new InvalidWarehouseOperationException('Incluye al menos un producto.');
+        $products = [];
+        foreach ($details as $detail) {
+            $id = $detail['producto_id'] ?? null;
+            $quantity = (float) ($detail['cantidad'] ?? 0);
+            if (!$id || isset($products[$id]) || !is_finite($quantity) || $quantity <= 0) {
+                throw new InvalidWarehouseOperationException('Cada producto debe aparecer una vez y tener cantidad positiva.');
+            }
+            $products[$id] = true;
+            foreach (['lotes' => 'numero_lote', 'series' => 'numero_serie'] as $field => $identifier) {
+                $seen = [];
+                foreach ($detail[$field] ?? [] as $item) {
+                    $number = trim((string) ($item[$identifier] ?? ''));
+                    if ($number === '' || isset($seen[$number])) throw new InvalidWarehouseOperationException('No se permiten lotes o series vacíos o repetidos dentro del producto.');
+                    $seen[$number] = true;
+                    if ($field === 'lotes' && (!is_numeric($item['cantidad'] ?? null) || (float) $item['cantidad'] <= 0)) {
+                        throw new InvalidWarehouseOperationException('Cada lote requiere una cantidad positiva.');
+                    }
+                }
+            }
+        }
+    }
+
     private function generarNumero(TipoMovimientoInventario $tipo, int $emisorId): string
     {
         preg_match('/MOV_(\d+)/', $tipo->value, $matches);
         $prefijo = 'MOV' . ($matches[1] ?? 'XX');
 
+        // Serialize counters within the company transaction; retain historical numbers.
+        \App\Models\Company::whereKey($emisorId)->lockForUpdate()->firstOrFail();
         $count = RegistroOperativoMovimiento::where('emisor_id', $emisorId)
             ->where('tipo_movimiento', $tipo->value)
-            ->whereYear('fecha', now()->year)
-            ->count();
-            
-        return $prefijo . '-' . str_pad($count + 1, 6, '0', STR_PAD_LEFT);
+            ->whereYear('fecha', now()->year)->count();
+        return $prefijo . '-' . $emisorId . '-' . now()->year . '-' . str_pad($count + 1, 6, '0', STR_PAD_LEFT);
     }
 
     public function transferir(Bodega $origen, Bodega $destino, array $detalles, ?string $justificacion, int $usuarioId, ?int $motivoId = null): RegistroOperativoMovimiento
     {
+        app(BodegaValidationService::class)->validateManualOperation($origen);
+        app(BodegaValidationService::class)->validateTransferReception($destino);
+        if ($origen->tipo === TipoBodega::MERMAS) {
+            throw new InvalidWarehouseOperationException('Las salidas de MERMAS requieren el flujo de reacondicionamiento.');
+        }
+        if ($destino->tipo === TipoBodega::MERMAS && trim((string) $justificacion) === '') {
+            throw new InvalidWarehouseOperationException('El envío a MERMAS requiere una justificación.');
+        }
         if ($origen->establecimiento_id !== $destino->establecimiento_id) {
             throw new InvalidWarehouseOperationException("Las transferencias internas (MOV-06) solo están permitidas entre bodegas del mismo establecimiento.");
         }
@@ -65,13 +98,16 @@ class MovimientoInventarioService
             ]);
 
             foreach ($detalles as $detalle) {
-                $producto = Producto::find($detalle['producto_id']);
+                $producto = Producto::where('emisor_id', $emisorId)->find($detalle['producto_id']);
+                if (!$producto) {
+                    throw new InvalidWarehouseOperationException('El producto no pertenece a la empresa de la bodega.');
+                }
                 
                 // VALIDACIONES DE CONSISTENCIA
                 if ($producto->tipo_control_inventario->value === 'LOTE') {
                     $lotes = $detalle['lotes'] ?? [];
                     $sumaLotes = array_sum(array_column($lotes, 'cantidad'));
-                    if (floatval($sumaLotes) !== floatval($detalle['cantidad'])) {
+                    if (round((float) $sumaLotes, 6) !== round((float) $detalle['cantidad'], 6)) {
                         throw new InvalidWarehouseOperationException("La suma en los lotes ({$sumaLotes}) no coincide con la cantidad transferida ({$detalle['cantidad']}) para el producto {$producto->codigo}.");
                     }
                 } elseif ($producto->tipo_control_inventario->value === 'SERIE') {
@@ -232,13 +268,16 @@ class MovimientoInventarioService
             ]);
 
             foreach ($detalles as $detalle) {
-                $producto = Producto::find($detalle['producto_id']);
+                $producto = Producto::where('emisor_id', $emisorId)->find($detalle['producto_id']);
+                if (!$producto) {
+                    throw new InvalidWarehouseOperationException('El producto no pertenece a la empresa de la bodega.');
+                }
                 
                 // VALIDACIONES DE CONSISTENCIA
                 if ($producto->tipo_control_inventario->value === 'LOTE') {
                     $lotes = $detalle['lotes'] ?? [];
                     $sumaLotes = array_sum(array_column($lotes, 'cantidad'));
-                    if (floatval($sumaLotes) !== floatval($detalle['cantidad'])) {
+                    if (round((float) $sumaLotes, 6) !== round((float) $detalle['cantidad'], 6)) {
                         throw new InvalidWarehouseOperationException("La suma en los lotes ({$sumaLotes}) no coincide con la cantidad a reacondicionar ({$detalle['cantidad']}) para el producto {$producto->codigo}.");
                     }
                 } elseif ($producto->tipo_control_inventario->value === 'SERIE') {
@@ -368,6 +407,8 @@ class MovimientoInventarioService
 
     private function procesarEntrada(TipoMovimientoInventario $tipoEnum, Bodega $destino, array $detalles, string $justificacion, int $usuarioId, ?int $motivoId = null): RegistroOperativoMovimiento
     {
+        app(BodegaValidationService::class)->validateManualOperation($destino);
+        $this->validateDetails($detalles);
         if (empty(trim($justificacion))) {
             throw new InvalidWarehouseOperationException("Las entradas (ajustes o inventario inicial) requieren justificación.");
         }
@@ -389,9 +430,9 @@ class MovimientoInventarioService
             ]);
 
             foreach ($detalles as $detalle) {
-                $producto = Producto::find($detalle['producto_id']);
+                $producto = Producto::where('emisor_id', $emisorId)->find($detalle['producto_id']);
                 if (!$producto) {
-                    throw new InvalidWarehouseOperationException("Producto no encontrado.");
+                    throw new InvalidWarehouseOperationException('El producto no pertenece a la empresa de la bodega.');
                 }
 
                 // VALIDACIÓN MOV-01 (v6): Solo se permite antes de que dicha bodega haya tenido movimientos confirmados para este producto
@@ -410,7 +451,7 @@ class MovimientoInventarioService
                 if ($producto->tipo_control_inventario->value === 'LOTE') {
                     $lotes = $detalle['lotes'] ?? [];
                     $sumaLotes = array_sum(array_column($lotes, 'cantidad'));
-                    if (floatval($sumaLotes) !== floatval($detalle['cantidad'])) {
+                    if (round((float) $sumaLotes, 6) !== round((float) $detalle['cantidad'], 6)) {
                         throw new InvalidWarehouseOperationException("La suma de cantidades en los lotes ({$sumaLotes}) no coincide con la cantidad total del detalle ({$detalle['cantidad']}) para el producto {$producto->codigo}.");
                     }
                 } elseif ($producto->tipo_control_inventario->value === 'SERIE') {
@@ -464,7 +505,7 @@ class MovimientoInventarioService
                             ['producto_id' => $producto->id, 'numero_lote' => $loteData['numero_lote']],
                             [
                                 'fecha_fabricacion' => $loteData['fecha_fabricacion'] ?? null, 
-                                'fecha_vencimiento' => $loteData['fecha_vencimiento'] ?? now()->addYear(), 
+                                'fecha_vencimiento' => $loteData['fecha_vencimiento'] ?? null,
                                 'usuario_registro_id' => $usuarioId
                             ]
                         );
@@ -486,23 +527,15 @@ class MovimientoInventarioService
                     }
                 } elseif ($producto->tipo_control_inventario->value === 'SERIE' && !empty($detalle['series'])) {
                     foreach ($detalle['series'] as $serieData) {
-                        $serie = Serie::firstOrCreate(
-                            ['producto_id' => $producto->id, 'numero_serie' => $serieData['numero_serie']],
-                            [
-                                'bodega_actual_id' => $destino->id,
-                                'estado' => EstadoSerie::DISPONIBLE,
-                                'fecha_vencimiento' => now()->addYear(),
-                                'usuario_registro_id' => $usuarioId
-                            ]
-                        );
-
-                        // Si la serie ya existía pero estaba de baja, la revive
-                        if ($serie->estado !== EstadoSerie::DISPONIBLE || $serie->bodega_actual_id !== $destino->id) {
-                            $serie->update([
-                                'bodega_actual_id' => $destino->id,
-                                'estado' => EstadoSerie::DISPONIBLE
-                            ]);
+                        if (Serie::where('producto_id', $producto->id)->where('numero_serie', $serieData['numero_serie'])->exists()) {
+                            throw new InvalidWarehouseOperationException('La serie '.$serieData['numero_serie'].' ya está registrada; el ajuste no puede duplicarla ni reactivar una serie vendida.');
                         }
+                        $serie = Serie::create([
+                            'producto_id' => $producto->id, 'numero_serie' => $serieData['numero_serie'],
+                            'bodega_actual_id' => $destino->id, 'estado' => EstadoSerie::DISPONIBLE,
+                            'fecha_vencimiento' => $serieData['fecha_vencimiento'] ?? null,
+                            'usuario_registro_id' => $usuarioId,
+                        ]);
 
                         $registroDetalle->series()->create(['serie_id' => $serie->id]);
                     }
@@ -515,13 +548,25 @@ class MovimientoInventarioService
 
     public function ajustarNegativo(Bodega $origen, array $detalles, string $justificacion, int $usuarioId, ?int $motivoId = null): RegistroOperativoMovimiento
     {
+        return $this->procesarSalida($origen, $detalles, $justificacion, $usuarioId, $motivoId, TipoMovimientoInventario::MOV_10_AJUSTE_NEGATIVO);
+    }
+
+    public function ventaInmediata(Bodega $origen, array $detalles, string $justificacion, int $usuarioId): RegistroOperativoMovimiento
+    {
+        app(BodegaValidationService::class)->validateSale($origen);
+        return $this->procesarSalida($origen, $detalles, $justificacion, $usuarioId, null, TipoMovimientoInventario::MOV_03_VENTA_INMEDIATA);
+    }
+
+    private function procesarSalida(Bodega $origen, array $detalles, string $justificacion, int $usuarioId, ?int $motivoId, TipoMovimientoInventario $tipoEnum): RegistroOperativoMovimiento
+    {
+        app(BodegaValidationService::class)->validateManualOperation($origen);
+        $this->validateDetails($detalles);
         if (empty(trim($justificacion))) {
             throw new InvalidWarehouseOperationException("Los ajustes requieren justificación.");
         }
 
-        return DB::transaction(function () use ($origen, $detalles, $justificacion, $usuarioId, $motivoId) {
+        return DB::transaction(function () use ($origen, $detalles, $justificacion, $usuarioId, $motivoId, $tipoEnum) {
             $emisorId = $origen->establecimiento->emisor_id;
-            $tipoEnum = TipoMovimientoInventario::MOV_10_AJUSTE_NEGATIVO;
             
             $movimiento = RegistroOperativoMovimiento::create([
                 'emisor_id' => $emisorId,
@@ -537,13 +582,16 @@ class MovimientoInventarioService
             ]);
 
             foreach ($detalles as $detalle) {
-                $producto = Producto::find($detalle['producto_id']);
+                $producto = Producto::where('emisor_id', $emisorId)->find($detalle['producto_id']);
+                if (!$producto) {
+                    throw new InvalidWarehouseOperationException('El producto no pertenece a la empresa de la bodega.');
+                }
                 
                 // VALIDACIONES DE CONSISTENCIA
                 if ($producto->tipo_control_inventario->value === 'LOTE') {
                     $lotes = $detalle['lotes'] ?? [];
                     $sumaLotes = array_sum(array_column($lotes, 'cantidad'));
-                    if (floatval($sumaLotes) !== floatval($detalle['cantidad'])) {
+                    if (round((float) $sumaLotes, 6) !== round((float) $detalle['cantidad'], 6)) {
                         throw new InvalidWarehouseOperationException("La suma de cantidades en los lotes ({$sumaLotes}) no coincide con la cantidad total del detalle ({$detalle['cantidad']}) para el producto {$producto->codigo}.");
                     }
                 } elseif ($producto->tipo_control_inventario->value === 'SERIE') {
@@ -624,7 +672,7 @@ class MovimientoInventarioService
                         }
                         
                         $serie->update([
-                            'estado' => EstadoSerie::BAJA_POR_AJUSTE,
+                            'estado' => $tipoEnum === TipoMovimientoInventario::MOV_03_VENTA_INMEDIATA ? EstadoSerie::VENDIDA : EstadoSerie::BAJA_POR_AJUSTE,
                             'fecha_actualizacion_manual_estado' => now(),
                             'usuario_actualizacion_manual_id' => $usuarioId
                         ]);
@@ -749,12 +797,15 @@ class MovimientoInventarioService
             ]);
 
             foreach ($detalles as $detalle) {
-                $producto = Producto::find($detalle['producto_id']);
+                $producto = Producto::where('emisor_id', $emisorId)->find($detalle['producto_id']);
+                if (!$producto) {
+                    throw new InvalidWarehouseOperationException('El producto no pertenece a la empresa de la bodega.');
+                }
                 
                 // Consistencia básica
                 if ($producto->tipo_control_inventario->value === 'LOTE' && !empty($detalle['lotes'])) {
                     $sumaLotes = array_sum(array_column($detalle['lotes'], 'cantidad'));
-                    if (floatval($sumaLotes) !== floatval($detalle['cantidad'])) throw new InvalidWarehouseOperationException("Suma de lotes no coincide (MOV-07).");
+                    if (round((float) $sumaLotes, 6) !== round((float) $detalle['cantidad'], 6)) throw new InvalidWarehouseOperationException("Suma de lotes no coincide (MOV-07).");
                 } elseif ($producto->tipo_control_inventario->value === 'SERIE' && !empty($detalle['series'])) {
                     if (count($detalle['series']) != $detalle['cantidad']) throw new InvalidWarehouseOperationException("Conteo de series no coincide (MOV-07).");
                 }

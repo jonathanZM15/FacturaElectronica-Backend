@@ -149,22 +149,12 @@ class EmisorController extends Controller
             $query->addSelect(DB::raw('NULL as ultimo_comprobante'));
         }
 
-        // Aplicar filtro de permisos según rol del usuario actual
-        if ($currentUser && $currentUser->role !== UserRole::ADMINISTRADOR) {
-            if ($currentUser->role === UserRole::DISTRIBUIDOR) {
-                // Distribuidor solo ve emisores que creó
-                $query->where('created_by', $currentUser->id);
-            } elseif ($currentUser->role === UserRole::EMISOR) {
-                // Emisor ve:
-                // 1. Emisores que creó (si es que creó alguno)
-                // 2. El emisor específico donde está asignado (emisor_id)
-                $query->where(function ($q) use ($currentUser) {
-                    $q->where('created_by', $currentUser->id) // Emisores que creó
-                      ->orWhere('id', $currentUser->emisor_id); // Emisor específico asignado
-                });
-            }
+        // Cada tenant ve exclusivamente su empresa; distribuidor, su red.
+        if ($currentUser->role === UserRole::DISTRIBUIDOR) {
+            $query->where('emisores.created_by', $currentUser->id);
+        } elseif ($currentUser->role !== UserRole::ADMINISTRADOR) {
+            $query->where('emisores.id', $currentUser->emisor_id);
         }
-        // Admin ve todos los emisores
 
         // Basic text filters (calificados para evitar ambigüedad con JOINs)
         if ($request->filled('ruc')) $query->where('emisores.ruc', 'ILIKE', '%'.$request->input('ruc').'%');

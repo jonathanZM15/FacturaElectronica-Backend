@@ -2,12 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 
-// Servir el frontend React
+// React se sirve por separado; el backend no depende de una vista Blade inexistente.
 Route::get('/', function () {
-    return view('app');
+    return response()->json(['service' => 'Facturación API', 'status' => 'ok']);
 });
-
-// Catch-all para rutas del frontend (SPA)
-Route::get('{path?}', function () {
-    return view('app');
-})->where('path', '.*');

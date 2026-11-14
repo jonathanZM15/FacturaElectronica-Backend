@@ -27,6 +27,7 @@ class Producto extends Model
         'precio_3',
         'precio_por_defecto',
         'tipo_iva',
+        'tipo_impuesto_id',
         'impuesto_ice',
         'porcentaje_ice',
         'irbpnr',
@@ -72,6 +73,14 @@ class Producto extends Model
         'permite_devolucion' => 'boolean',
         'tiempo_garantia_devolucion' => 'integer',
     ];
+
+    protected $appends = ['impuesto'];
+
+    public function getImpuestoAttribute(): ?array
+    {
+        $tax = \App\Services\ProductTaxService::resolve($this);
+        return $tax ? $tax->only(['id', 'codigo_impuesto', 'codigo_porcentaje', 'tipo_impuesto', 'valor_tarifa', 'tipo_tarifa']) : null;
+    }
 
     public function company()
     {

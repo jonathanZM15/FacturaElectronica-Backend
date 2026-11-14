@@ -53,67 +53,20 @@ class ProductoStockService
             throw new InvalidInventoryControlException("Para stock inicial se requiere enviar 'bodega_destino_id'.");
         }
 
-        $bodega = Bodega::find($bodegaId);
-        if (!$bodega) {
-            throw new InvalidWarehouseOperationException('La bodega destino no existe.');
-        }
-
-        DB::transaction(function () use ($producto, $data, $bodega) {
-            $movimiento = MovimientoInventario::create([
-                'emisor_id' => $producto->emisor_id,
-                'bodega_destino_id' => $bodega->id,
-                'tipo_movimiento' => TipoMovimientoInventario::INGRESO_INICIAL,
-                'observacion' => 'Ingreso inicial automático de inventario',
-                'usuario_id' => auth()->id() ?? 1,
-            ]);
-
-            $cantidadTotal = 0.0;
-
-            if ($producto->tipo_control_inventario === TipoControlInventario::CANTIDAD) {
-                $cantidadTotal = (float) $data['cantidad'];
-                $movimiento->detalles()->create([
-                    'producto_id' => $producto->id,
-                    'cantidad' => $cantidadTotal,
-                    'costo_unitario' => $data['costo_unitario'] ?? null,
-                ]);
-            }
-
-            if ($producto->tipo_control_inventario === TipoControlInventario::LOTE) {
-                $lotes = $data['lotes'] ?? [];
-                foreach ($lotes as $lote) {
-                    $cantidadLote = (float) ($lote['cantidad_lote'] ?? 0);
-                    $cantidadTotal += $cantidadLote;
-                    $movimiento->detalles()->create([
-                        'producto_id' => $producto->id,
-                        'cantidad' => $cantidadLote,
-                        'codigo_lote' => $lote['codigo_lote'] ?? null,
-                        'costo_unitario' => $lote['costo_unitario'] ?? null,
-                    ]);
-                }
-            }
-
-            if ($producto->tipo_control_inventario === TipoControlInventario::SERIE) {
-                $series = $data['series'] ?? [];
-                $cantidadTotal = count($series);
-                foreach ($series as $serie) {
-                    $movimiento->detalles()->create([
-                        'producto_id' => $producto->id,
-                        'cantidad' => 1,
-                        'numero_serie' => $serie['numero_serie'] ?? null,
-                        'costo_unitario' => $serie['costo_unitario'] ?? null,
-                    ]);
-                }
-            }
-
-            $stock = ProductoBodegaStock::firstOrCreate(
-                ['producto_id' => $producto->id, 'bodega_id' => $bodega->id],
-                ['stock_minimo' => 0, 'stock_maximo' => 0, 'base_comparacion' => 'FISICO', 'activo' => true, 'observacion' => null, 'stock_fisico' => 0, 'stock_disponible' => 0, 'stock_reservado' => 0]
-            );
-
-            $stock->stock_fisico = (float) $stock->stock_fisico + $cantidadTotal;
-            $stock->stock_disponible = (float) $stock->stock_fisico - (float) $stock->stock_reservado;
-            $stock->save();
-        });
+        $bodega = Bodega::whereHas('establecimiento', fn ($q) => $q->where('emisor_id', $producto->emisor_id))->find($bodegaId);
+        if (!$bodega) throw new InvalidWarehouseOperationException('La bodega destino no pertenece a la empresa.');
+        $lotes = array_map(fn ($lote) => [
+            'numero_lote' => $lote['codigo_lote'], 'cantidad' => $lote['cantidad_lote'],
+            'fecha_fabricacion' => $lote['fecha_fabricacion'] ?? null,
+            'fecha_vencimiento' => $lote['fecha_vencimiento'] ?? null,
+        ], $data['lotes'] ?? []);
+        $series = array_map(fn ($serie) => is_array($serie) ? $serie : ['numero_serie' => $serie], $data['series'] ?? []);
+        $cantidad = $producto->tipo_control_inventario === TipoControlInventario::SERIE ? count($series)
+            : ($producto->tipo_control_inventario === TipoControlInventario::LOTE ? array_sum(array_column($lotes, 'cantidad')) : $data['cantidad']);
+        app(MovimientoInventarioService::class)->inventarioInicial($bodega, [[
+            'producto_id' => $producto->id, 'cantidad' => $cantidad, 'lotes' => $lotes, 'series' => $series,
+            'costo_unitario' => $data['costo_unitario'] ?? 0,
+        ]], 'Inventario inicial del producto', (int) auth()->id(), $data['motivo_id'] ?? null);
     }
 
     private function validateCantidadControl(array $data): void

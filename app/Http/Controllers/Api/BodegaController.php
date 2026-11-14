@@ -26,8 +26,10 @@ class BodegaController extends Controller
 
         $estIds = Establecimiento::where('emisor_id', $resolvedId)->pluck('id');
 
-        $query = Bodega::with(['creador:id,name', 'establecimiento:id,codigo,nombre,emisor_id'])
+        $query = Bodega::with(['creador:id,nombres,apellidos,username', 'establecimiento:id,codigo,nombre,emisor_id'])
             ->whereIn('establecimiento_id', $estIds);
+
+        \App\Services\BusinessAccess::scopeWarehouses($query, $request->user());
 
         if ($request->filled('establecimiento_id')) {
             $query->where('establecimiento_id', $request->input('establecimiento_id'));
@@ -58,13 +60,7 @@ class BodegaController extends Controller
         } else {
             $establecimiento = Establecimiento::where('emisor_id', $emisorId)->first();
             if (!$establecimiento) {
-                $establecimiento = Establecimiento::create([
-                    'emisor_id' => $emisorId,
-                    'codigo' => '001',
-                    'estado' => 'ABIERTO',
-                    'nombre' => 'Establecimiento Principal',
-                    'direccion' => 'S/N',
-                ]);
+                throw \Illuminate\Validation\ValidationException::withMessages(['establecimiento_id' => 'Registra primero una sucursal con sus datos reales.']);
             }
             $establecimientoId = $establecimiento->id;
         }
@@ -88,19 +84,22 @@ class BodegaController extends Controller
         ]);
 
         // 3. Generar código si no viene
-        $siguienteNum = Bodega::where('establecimiento_id', $establecimientoId)->count() + 1;
-        $codigo = 'BOD-' . str_pad($siguienteNum, 2, '0', STR_PAD_LEFT);
-
-        $bodega = Bodega::create([
+        $bodega = \Illuminate\Support\Facades\DB::transaction(function () use ($establecimientoId, $validated, $request, $emisorId) {
+            Company::whereKey($emisorId)->lockForUpdate()->firstOrFail();
+            $siguienteNum = Bodega::withTrashed()->where('establecimiento_id', $establecimientoId)->count() + 1;
+            do { $codigo = 'BOD-' . str_pad($siguienteNum++, 2, '0', STR_PAD_LEFT); }
+            while (Bodega::withTrashed()->where('establecimiento_id', $establecimientoId)->where('codigo', $codigo)->exists());
+            return Bodega::create([
             'establecimiento_id' => $establecimientoId,
             'codigo' => $codigo,
             'nombre' => $validated['nombre'],
             'tipo' => $validated['tipo'],
             'permite_venta' => $request->input('permite_venta', true),
-            'creador_id' => auth()->id() ?? 1,
-        ]);
+            'creador_id' => auth()->id(),
+            ]);
+        });
 
-        $bodega->load(['creador:id,name', 'establecimiento:id,codigo,nombre,emisor_id']);
+        $bodega->load(['creador:id,nombres,apellidos,username', 'establecimiento:id,codigo,nombre,emisor_id']);
 
         return response()->json(['message' => 'Bodega creada exitosamente', 'data' => $bodega], 201);
     }
@@ -112,7 +111,7 @@ class BodegaController extends Controller
             return response()->json(['message' => 'Emisor no encontrado.'], 404);
         }
 
-        $bodega = Bodega::with(['creador:id,name', 'establecimiento:id,codigo,nombre,emisor_id'])
+        $bodega = Bodega::with(['creador:id,nombres,apellidos,username', 'establecimiento:id,codigo,nombre,emisor_id'])
             ->whereHas('establecimiento', function ($q) use ($resolvedId) {
                 $q->where('emisor_id', $resolvedId);
             })->findOrFail($id);
@@ -158,7 +157,7 @@ class BodegaController extends Controller
         ]);
 
         $bodega->update($validated);
-        $bodega->load(['creador:id,name', 'establecimiento:id,codigo,nombre,emisor_id']);
+        $bodega->load(['creador:id,nombres,apellidos,username', 'establecimiento:id,codigo,nombre,emisor_id']);
 
         return response()->json(['message' => 'Bodega actualizada', 'data' => $bodega]);
     }
@@ -179,6 +178,12 @@ class BodegaController extends Controller
             $q->where('emisor_id', $resolvedId);
         })->findOrFail($id);
 
+        $hasStock = \App\Models\ProductoBodegaStock::where('bodega_id', $bodega->id)->where(function ($q) {
+            $q->where('stock_fisico', '!=', 0)->orWhere('stock_reservado', '!=', 0);
+        })->exists();
+        if ($hasStock || \App\Models\Kardex::where('bodega_id', $bodega->id)->exists()) {
+            return response()->json(['message' => 'No se puede eliminar una bodega con existencias o historial.'], 422);
+        }
         $bodega->delete();
 
         return response()->json(['message' => 'Bodega eliminada exitosamente']);

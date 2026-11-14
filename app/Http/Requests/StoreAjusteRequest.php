@@ -17,7 +17,7 @@ class StoreAjusteRequest extends FormRequest
             'bodega_id' => 'required|integer|exists:bodegas,id',
             'motivo_id' => 'required|integer|exists:motivos_movimiento,id',
             'tipo' => 'required|string|in:AJUSTE_POSITIVO,AJUSTE_NEGATIVO',
-            'observacion' => 'nullable|string|max:1000',
+            'observacion' => 'required|string|max:1000',
             'detalles' => 'required|array|min:1',
             'detalles.*.producto_id' => 'required|exists:productos,id',
             'detalles.*.cantidad' => 'required|numeric|min:0.000001',

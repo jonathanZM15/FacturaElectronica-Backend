@@ -51,7 +51,7 @@ class SuscripcionController extends Controller
 
             // Si es distribuidor, verificar que el emisor le pertenece
             if ($currentUser->role === UserRole::DISTRIBUIDOR) {
-                if ($emisor->created_by_id !== $currentUser->id) {
+                if ($emisor->created_by !== $currentUser->id) {
                     return response()->json([
                         'message' => 'No tienes acceso a este emisor'
                     ], Response::HTTP_FORBIDDEN);
@@ -244,7 +244,7 @@ class SuscripcionController extends Controller
             
             // Si es distribuidor, verificar que el emisor le pertenece
             if ($currentUser->role === UserRole::DISTRIBUIDOR) {
-                if ($emisor->created_by_id !== $currentUser->id) {
+                if ($emisor->created_by !== $currentUser->id) {
                     return response()->json([
                         'message' => 'No tienes acceso a este emisor'
                     ], Response::HTTP_FORBIDDEN);
@@ -367,7 +367,7 @@ class SuscripcionController extends Controller
             // Verificar permisos
             if ($currentUser->role === UserRole::DISTRIBUIDOR) {
                 $emisor = Company::findOrFail($emisorId);
-                if ($emisor->created_by_id !== $currentUser->id) {
+                if ($emisor->created_by !== $currentUser->id) {
                     return response()->json([
                         'message' => 'No tienes acceso a esta suscripción'
                     ], Response::HTTP_FORBIDDEN);
@@ -441,7 +441,7 @@ class SuscripcionController extends Controller
 
             // Si es distribuidor, verificar que el emisor le pertenece
             if ($currentUser->role === UserRole::DISTRIBUIDOR) {
-                if ($emisor->created_by_id !== $currentUser->id) {
+                if ($emisor->created_by !== $currentUser->id) {
                     return response()->json([
                         'message' => 'No tienes acceso a este emisor'
                     ], Response::HTTP_FORBIDDEN);
@@ -1001,7 +1001,7 @@ class SuscripcionController extends Controller
             // Verificar acceso al emisor
             $emisor = Company::findOrFail($emisorId);
             if ($currentUser->role === UserRole::DISTRIBUIDOR) {
-                if ($emisor->created_by_id !== $currentUser->id) {
+                if ($emisor->created_by !== $currentUser->id) {
                     return response()->json([
                         'message' => 'No tienes acceso a este emisor'
                     ], Response::HTTP_FORBIDDEN);
@@ -1088,7 +1088,7 @@ class SuscripcionController extends Controller
             // Verificar acceso
             $emisor = Company::findOrFail($emisorId);
             if ($currentUser->role === UserRole::DISTRIBUIDOR) {
-                if ($emisor->created_by_id !== $currentUser->id) {
+                if ($emisor->created_by !== $currentUser->id) {
                     return response()->json([
                         'message' => 'No tienes acceso a este emisor'
                     ], Response::HTTP_FORBIDDEN);
@@ -1155,7 +1155,7 @@ class SuscripcionController extends Controller
 
             // Si es distribuidor, verificar que el emisor le pertenece
             if ($currentUser->role === UserRole::DISTRIBUIDOR) {
-                if ($emisor->created_by_id !== $currentUser->id) {
+                if ($emisor->created_by !== $currentUser->id) {
                     return response()->json([
                         'message' => 'No tienes acceso a este emisor'
                     ], Response::HTTP_FORBIDDEN);
@@ -1330,7 +1330,7 @@ class SuscripcionController extends Controller
             // Verificar acceso al emisor
             $emisor = Company::findOrFail($emisorId);
             if ($currentUser->role === UserRole::DISTRIBUIDOR) {
-                if ($emisor->created_by_id !== $currentUser->id) {
+                if ($emisor->created_by !== $currentUser->id) {
                     return response()->json([
                         'message' => 'No tienes acceso a este emisor'
                     ], Response::HTTP_FORBIDDEN);

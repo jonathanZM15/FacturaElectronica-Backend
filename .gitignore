@@ -22,3 +22,33 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Configuracion local y certificados privados
+/.env.*
+!/.env.example
+*.p12
+*.pfx
+
+# Pruebas y archivos auxiliares locales
+/tests/
+/phpunit.xml
+/app/Console/Commands/TestCompanyDeletionFlow.php
+/routes/debug.php
+/scratch/
+/docx_extracted/
+/docx_text.txt
+/output.txt
+/temp.zip
+/test_*.php
+/update_test_emails.php
+/audit_system.php
+/check_backups.php
+/debug_*.php
+/verify_middleware.php
+/generate_*.py
+/patch_*.py
+/scripts/create_test_db.php
+/scripts/debug_created_by.php
+/scripts/send_test_mail.php
+/scripts/validate_refactoring.sh
+/public/index.html.bak

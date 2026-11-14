@@ -126,7 +126,7 @@ class UpdateUserRequest extends FormRequest
                 'sometimes',
                 'nullable',
                 'integer',
-                'exists:users,id'
+                'exists:emisores,id'
             ],
             'establecimientos_ids' => [
                 'sometimes',

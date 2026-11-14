@@ -37,17 +37,17 @@ class ConsultarAutorizacionSriJob implements ShouldQueue
             return;
         }
 
-        $lock = Cache::lock('sri-autorizacion-'.$comprobante->id, 300);
+        $lock = Cache::lock('sri-comprobante-'.$comprobante->id, 180);
         if (!$lock->get()) {
             return;
         }
 
         try {
-            if ($comprobante->estado_sri === SriEstadoComprobante::AUTORIZADO->value) {
+            if (in_array($comprobante->estado_sri, ['AUTORIZADO', 'NO_AUTORIZADO', 'DEVUELTA'], true)) {
                 return;
             }
 
-            $autorizacion = $soapService->autorizarComprobante($comprobante->clave_acceso);
+            $autorizacion = $soapService->autorizarComprobante($comprobante->clave_acceso, $comprobante->ambiente);
 
             $comprobante->forceFill([
                 'sri_intentos_autorizacion' => ((int) $comprobante->sri_intentos_autorizacion) + 1,
@@ -56,10 +56,11 @@ class ConsultarAutorizacionSriJob implements ShouldQueue
             ])->save();
 
             if ($autorizacion['success'] ?? false) {
-                $lifecycle->transition($comprobante, SriEstadoComprobante::AUTORIZADO->value, [
+                if ($comprobante->estado_sri !== 'RECIBIDA') $comprobante = $lifecycle->transition($comprobante, 'RECIBIDA');
+                $comprobante = $lifecycle->transition($comprobante, SriEstadoComprobante::AUTORIZADO->value, [
                     'sri_estado_autorizacion' => SriEstadoComprobante::AUTORIZADO->value,
                     'numero_autorizacion' => $autorizacion['numero_autorizacion'] ?? $comprobante->clave_acceso,
-                    'fecha_autorizacion' => $autorizacion['fecha_autorizacion'] ?: null,
+                    'fecha_autorizacion' => $autorizacion['fecha_autorizacion'] ?? null,
                     'xml_autorizado' => $autorizacion['xml_autorizado'] ?? null,
                     'autorizado_en' => now(),
                 ], [
@@ -74,6 +75,7 @@ class ConsultarAutorizacionSriJob implements ShouldQueue
                 try {
                     $pdfContent = $pdfService->generateRide($comprobante);
                     
+                    \App\Services\InvoiceSnapshots::apply($comprobante);
                     if ($comprobante->cliente && $comprobante->cliente->email) {
                         Mail::to($comprobante->cliente->email)->send(new FacturaAutorizadaMail($comprobante, $pdfContent));
                         Log::info('Correo de factura autorizada enviado', ['comprobante_id' => $comprobante->id, 'email' => $comprobante->cliente->email]);
@@ -89,12 +91,15 @@ class ConsultarAutorizacionSriJob implements ShouldQueue
             }
 
             $estado = $autorizacion['estado'] ?? 'DESCONOCIDO';
-            $estadoNormalizado = SriEstadoComprobante::NO_AUTORIZADO->value;
-
-            if (($autorizacion['errores'] ?? []) === [] && in_array($estado, ['EN PROCESO', 'RECIBIDA', 'DESCONOCIDO'], true)) {
-                $this->release((int) config('sri.retry_after_seconds'));
-                return;
+            if (!in_array($estado, ['NO_AUTORIZADO', 'NO AUTORIZADO'], true)) {
+                if (in_array($estado, ['EN PROCESO', 'RECIBIDA', 'DESCONOCIDO'], true) && $this->attempts() < (int) config('sri.max_authorization_attempts', 10)) {
+                    $this->release((int) config('sri.retry_after_seconds'));
+                    return;
+                }
+                throw new \RuntimeException($autorizacion['error'] ?? 'No se ha confirmado la autorización; no equivale a un rechazo del SRI.');
             }
+            if ($comprobante->estado_sri !== 'RECIBIDA') $comprobante = $lifecycle->transition($comprobante, 'RECIBIDA');
+            $estadoNormalizado = SriEstadoComprobante::NO_AUTORIZADO->value;
 
             $lifecycle->transition($comprobante, $estadoNormalizado, [
                 'sri_estado_autorizacion' => $estado,

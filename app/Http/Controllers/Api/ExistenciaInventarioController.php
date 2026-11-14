@@ -24,6 +24,8 @@ class ExistenciaInventarioController extends Controller
                 $q->where('emisor_id', $resolvedId);
             });
 
+        \App\Services\BusinessAccess::scopeStock($query, $request->user());
+
         if ($request->has('producto_id')) {
             $query->where('producto_id', $request->producto_id);
         }
@@ -51,6 +53,8 @@ class ExistenciaInventarioController extends Controller
             ->whereHas('bodega.establecimiento', function ($q) use ($resolvedId) {
                 $q->where('emisor_id', $resolvedId);
             });
+
+        \App\Services\BusinessAccess::scopeStock($query, $request->user());
 
         if ($request->has('producto_id')) {
             $query->where('producto_id', $request->producto_id);
@@ -88,6 +92,8 @@ class ExistenciaInventarioController extends Controller
             ->whereHas('producto', function ($q) use ($resolvedId) {
                 $q->where('emisor_id', $resolvedId);
             });
+
+        \App\Services\BusinessAccess::scopeStock($query, $request->user(), 'bodegaActual');
 
         if ($request->has('producto_id')) {
             $query->where('producto_id', $request->producto_id);

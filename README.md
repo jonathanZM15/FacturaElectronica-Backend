@@ -134,12 +134,6 @@ Nota:
 - Este proyecto usa `MAIL_SCHEME` / `MAIL_URL` (ver `config/mail.php`), no `MAIL_ENCRYPTION`.
 - Si tu red bloquea el puerto 587 (STARTTLS), prueba con 465 (SMTPS): `MAIL_PORT=465` y `MAIL_SCHEME=smtps`.
 
-## 🧪 Tests
-
-```bash
-php artisan test
-```
-
 ## 📄 Licencia
 
 Este proyecto está bajo la Licencia MIT.

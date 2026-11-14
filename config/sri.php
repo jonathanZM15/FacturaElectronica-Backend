@@ -2,6 +2,7 @@
 
 return [
     'environment' => env('SRI_ENVIRONMENT', 'PRUEBAS'),
+    'allow_network' => (bool) env('SRI_ALLOW_NETWORK', true),
     'certificate_path' => env('SRI_CERTIFICATE_PATH'),
     'certificate_password' => env('SRI_CERTIFICATE_PASSWORD'),
     'certificate_disk' => env('SRI_CERTIFICATE_DISK', 'local'),

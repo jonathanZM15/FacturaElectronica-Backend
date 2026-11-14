@@ -65,13 +65,27 @@ class User extends Authenticatable
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
         'role' => UserRole::class,
-        'establecimientos_ids' => 'json',
-        'puntos_emision_ids' => 'json',
+        'establecimientos_ids' => \App\Casts\IdList::class,
+        'puntos_emision_ids' => \App\Casts\IdList::class,
         'locked_until' => 'datetime',
         'last_login_at' => 'datetime',
     ];
 
-    protected $appends = ['establecimientos', 'puntos_emision'];
+    protected $appends = ['establecimientos', 'puntos_emision', 'permisos'];
+
+    public function getPermisosAttribute(): array
+    {
+        return $this->role ? \App\Services\PermissionService::obtenerPermisosPorRol($this->role) : [];
+    }
+
+    protected static function booted(): void
+    {
+        static::updated(function (User $user) {
+            if ($user->wasChanged(['estado', 'role', 'emisor_id', 'establecimientos_ids', 'puntos_emision_ids', 'password'])) {
+                $user->tokens()->delete();
+            }
+        });
+    }
 
     // ==================== Relaciones ====================
 
@@ -132,7 +146,7 @@ class User extends Authenticatable
             return [];
         }
         $ids = is_array($this->establecimientos_ids) ? $this->establecimientos_ids : json_decode($this->establecimientos_ids, true) ?? [];
-        $establecimientos = Establecimiento::whereIn('id', $ids)->get();
+        $establecimientos = Establecimiento::where('emisor_id', $this->emisor_id)->whereIn('id', $ids)->get();
         
         return $establecimientos->map(function ($est) {
             return [
@@ -154,7 +168,7 @@ class User extends Authenticatable
             return [];
         }
         $ids = is_array($this->puntos_emision_ids) ? $this->puntos_emision_ids : json_decode($this->puntos_emision_ids, true) ?? [];
-        $puntos = PuntoEmision::whereIn('id', $ids)->with('establecimiento')->get();
+        $puntos = PuntoEmision::where('emisor_id', $this->emisor_id)->whereIn('id', $ids)->with('establecimiento')->get();
         
         return $puntos->map(function ($punto) {
             return [

@@ -181,6 +181,7 @@ class SriXmlGeneratorService
 
     public function generarXmlFactura(Comprobante $comprobante): array
     {
+        InvoiceSnapshots::apply($comprobante);
         $company = $comprobante->company;
         $cliente = $comprobante->cliente;
         $establecimiento = $comprobante->establecimiento;
@@ -299,17 +300,20 @@ class SriXmlGeneratorService
 
         $pagos = $dom->createElement('pagos');
         $infoFactura->appendChild($pagos);
-        $pago = $dom->createElement('pago');
-        $this->appendText($dom, $pago, 'formaPago', '01');
-        $this->appendText($dom, $pago, 'total', $this->formatMoney($comprobante->total ?? 0));
-        $pagos->appendChild($pago);
+        if (!$comprobante->pagos) throw new \RuntimeException('La factura no tiene pagos registrados. No se puede inferir una forma de pago histórica.');
+        foreach ($comprobante->pagos as $payment) {
+            $pago = $dom->createElement('pago');
+            $this->appendText($dom, $pago, 'formaPago', $payment['forma_pago']);
+            $this->appendText($dom, $pago, 'total', $this->formatMoney($payment['total']));
+            $pagos->appendChild($pago);
+        }
 
         $detalles = $dom->createElement('detalles');
         $factura->appendChild($detalles);
 
         foreach ($comprobante->detalles ?? [] as $detalle) {
             $detalleNode = $dom->createElement('detalle');
-            $codigo = (string) ($detalle->producto_id ?? '');
+            $codigo = (string) ($detalle->codigo_principal ?? $detalle->producto_id ?? '');
                 if (!empty($codigo)) {
                     $this->appendText($dom, $detalleNode, 'codigoPrincipal', $codigo);
                 }
@@ -334,12 +338,17 @@ class SriXmlGeneratorService
             $detalles->appendChild($detalleNode);
         }
 
-        if (!empty($cliente->email ?? null)) {
+        $additional = $comprobante->informacion_adicional ?? [];
+        if (!empty($cliente->email ?? null)) array_unshift($additional, ['nombre' => 'Email', 'valor' => $cliente->email]);
+        if ($additional) {
             $infoAdicional = $dom->createElement('infoAdicional');
             $factura->appendChild($infoAdicional);
-            $campoAdicional = $dom->createElement('campoAdicional', $cliente->email);
-            $campoAdicional->setAttribute('nombre', 'Email');
-            $infoAdicional->appendChild($campoAdicional);
+            foreach ($additional as $item) {
+                $campoAdicional = $dom->createElement('campoAdicional');
+                $campoAdicional->appendChild($dom->createTextNode($item['valor']));
+                $campoAdicional->setAttribute('nombre', $item['nombre']);
+                $infoAdicional->appendChild($campoAdicional);
+            }
         }
 
         return [
@@ -911,6 +920,7 @@ class SriXmlGeneratorService
 
     private function mapCodigoPorcentaje($impuesto): string
     {
+        if ($impuesto->codigo_porcentaje !== null) return (string) $impuesto->codigo_porcentaje;
         $tipoImpuesto = $impuesto->tipoImpuesto ?? null;
         if (!empty($tipoImpuesto?->codigo_porcentaje)) {
             return (string) $tipoImpuesto->codigo_porcentaje;
@@ -946,6 +956,7 @@ class SriXmlGeneratorService
 
     private function mapCodigoImpuesto($impuesto): string
     {
+        if ($impuesto->codigo_impuesto !== null) return (string) $impuesto->codigo_impuesto;
         $tipoImpuesto = $impuesto->tipoImpuesto ?? null;
         if (!empty($tipoImpuesto?->codigo_impuesto)) {
             return (string) $tipoImpuesto->codigo_impuesto;

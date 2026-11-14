@@ -47,11 +47,12 @@ class TipoImpuestoController extends Controller
             
             // Parámetros de ordenamiento (por defecto: nombre ascendente)
             $sortBy = $request->input('sort_by', 'nombre');
+            if ($sortBy === 'codigo') $sortBy = 'codigo_porcentaje';
             $sortDir = strtolower($request->input('sort_dir', 'asc')) === 'desc' ? 'desc' : 'asc';
 
             // Validar columnas permitidas para ordenamiento
             $allowedSortColumns = [
-                'tipo_impuesto', 'nombre', 'codigo', 'valor_tarifa', 
+                'tipo_impuesto', 'nombre', 'codigo_porcentaje', 'valor_tarifa',
                 'tipo_tarifa', 'estado', 'created_at', 'updated_at'
             ];
             if (!in_array($sortBy, $allowedSortColumns)) {
@@ -96,8 +97,8 @@ class TipoImpuestoController extends Controller
             }
             
             // Código (parcial, case-insensitive)
-            if ($request->filled('codigo')) {
-                $query->where('codigo', 'ILIKE', '%' . $request->input('codigo') . '%');
+            if (($request->filled('codigo_porcentaje') || $request->filled('codigo'))) {
+                $query->whereRaw('CAST(codigo_porcentaje AS TEXT) LIKE ?', ['%' . $request->input('codigo_porcentaje', $request->input('codigo')) . '%']);
             }
             
             // Valor tarifa (menor o igual)
@@ -240,7 +241,8 @@ class TipoImpuestoController extends Controller
             $tipoImpuesto = TipoImpuesto::create([
                 'tipo_impuesto' => $request->tipo_impuesto,
                 'tipo_tarifa' => $request->tipo_tarifa,
-                'codigo' => $request->codigo,
+                'codigo_impuesto' => $request->codigo_impuesto,
+                'codigo_porcentaje' => $request->codigo_porcentaje,
                 'nombre' => $request->nombre,
                 'valor_tarifa' => $request->valor_tarifa,
                 'estado' => $request->estado ?? 'Activo',
@@ -330,7 +332,7 @@ class TipoImpuestoController extends Controller
             try {
                 // Si tiene productos asociados, solo se puede editar el estado
                 if ($tieneProductos) {
-                    $camposRestringidos = ['tipo_impuesto', 'tipo_tarifa', 'codigo', 'nombre', 'valor_tarifa'];
+                    $camposRestringidos = ['tipo_impuesto', 'tipo_tarifa', 'codigo_impuesto', 'codigo_porcentaje', 'nombre', 'valor_tarifa'];
                     foreach ($camposRestringidos as $campo) {
                         if ($request->has($campo) && $request->input($campo) != $tipoImpuesto->$campo) {
                             return response()->json([
@@ -349,7 +351,8 @@ class TipoImpuestoController extends Controller
                     $tipoImpuesto->fill($request->only([
                         'tipo_impuesto',
                         'tipo_tarifa',
-                        'codigo',
+                        'codigo_impuesto',
+                        'codigo_porcentaje',
                         'nombre',
                         'valor_tarifa',
                         'estado',
@@ -357,21 +360,6 @@ class TipoImpuestoController extends Controller
                 }
 
                 $tipoImpuesto->updated_by_id = $currentUser->id;
-
-                // Si se desactiva y tiene productos, eliminar asociaciones
-                if ($estadoAnterior === 'Activo' && $nuevoEstado === 'Desactivado' && $tieneProductos) {
-                    // Eliminar asociación con productos
-                    if (\Illuminate\Support\Facades\Schema::hasTable('productos')) {
-                        $productosAfectados = DB::table('productos')
-                            ->where('tipo_impuesto_id', $id)
-                            ->update(['tipo_impuesto_id' => null]);
-                        
-                        Log::warning('Productos desasociados por desactivación de tipo de impuesto', [
-                            'tipo_impuesto_id' => $id,
-                            'productos_afectados' => $productosAfectados,
-                        ]);
-                    }
-                }
 
                 $tipoImpuesto->save();
 
@@ -510,7 +498,7 @@ class TipoImpuestoController extends Controller
                 return TipoImpuesto::activos()
                     ->orderBy('tipo_impuesto')
                     ->orderBy('nombre')
-                    ->get(['id', 'tipo_impuesto', 'tipo_tarifa', 'codigo', 'nombre', 'valor_tarifa']);
+                    ->get(['id', 'tipo_impuesto', 'tipo_tarifa', 'codigo_impuesto', 'codigo_porcentaje', 'nombre', 'valor_tarifa']);
             });
 
             return response()->json([
@@ -567,10 +555,11 @@ class TipoImpuestoController extends Controller
     public function checkCodigo(Request $request)
     {
         try {
-            $codigo = $request->query('codigo');
+            $codigo = $request->query('codigo_porcentaje', $request->query('codigo'));
             $excludeId = $request->query('exclude_id');
 
-            $query = TipoImpuesto::where('codigo', $codigo);
+            $query = TipoImpuesto::where('codigo_porcentaje', $codigo);
+            if ($request->filled('codigo_impuesto')) $query->where('codigo_impuesto', $request->input('codigo_impuesto'));
             
             if ($excludeId) {
                 $query->where('id', '!=', $excludeId);

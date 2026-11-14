@@ -27,6 +27,8 @@ class KardexController extends Controller
             $q->where('emisor_id', $resolvedId);
         });
 
+        \App\Services\BusinessAccess::scopeStock($query, $request->user());
+
         // 1. Filtro por Producto
         if ($request->filled('producto_id')) {
             $query->where('producto_id', $request->producto_id);

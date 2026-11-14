@@ -227,10 +227,12 @@ class PuntoEmisionController extends Controller
             ]);
             if ($permInfo instanceof JsonResponse) return $permInfo;
             
-            $puntos = PuntoEmision::with(['user:id,username,role,nombres,apellidos'])
+            $query = PuntoEmision::with(['user:id,username,role,nombres,apellidos'])
                 ->where('emisor_id', $companyId)
-                ->where('establecimiento_id', $establecimientoId)
-                ->get();
+                ->where('establecimiento_id', $establecimientoId);
+            $scope = \App\Services\BusinessAccess::pointIds(auth()->user());
+            if ($scope !== null) $query->whereIn('id', $scope);
+            $puntos = $query->get();
 
             if (($permInfo['limited'] ?? false) && !empty($permInfo['puntos_ids'])) {
                 $assigned = $permInfo['puntos_ids'];
@@ -545,6 +547,8 @@ class PuntoEmisionController extends Controller
                 }
             }
             
+            $scope = \App\Services\BusinessAccess::pointIds($currentUser);
+            if ($scope !== null) $query->whereIn('id', $scope);
             $puntos = $query->get();
 
             \Log::info('Puntos de emisión para emisor', [

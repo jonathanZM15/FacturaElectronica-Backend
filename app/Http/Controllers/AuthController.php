@@ -36,9 +36,11 @@ class AuthController extends Controller
         }
 
         $user = User::create([
-            'name' => $data['name'],
+            'nombres' => $data['name'],
             'email' => $data['email'],
             'password' => $data['password'],
+            'role' => \App\Enums\UserRole::CAJERO,
+            'estado' => 'nuevo',
         ]);
 
         $token = $user->createToken('default')->plainTextToken;
@@ -304,7 +306,7 @@ class AuthController extends Controller
     public function me(Request $request)
     {
         try {
-            Log::info('Me endpoint', ['bearer' => $request->bearerToken(), 'user_id' => $request->user()?->id]);
+            Log::info('Me endpoint', ['user_id' => $request->user()?->id]);
         } catch (\Throwable $e) {
             Log::info('Me endpoint error', ['err' => $e->getMessage()]);
         }

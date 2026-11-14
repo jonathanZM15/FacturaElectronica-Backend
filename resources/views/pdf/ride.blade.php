@@ -28,7 +28,7 @@
     <table class="w-100 mb-2" style="margin-bottom: 0px;">
         <tr>
             <td class="w-50" style="padding-right: 10px;">
-                <div class="text-center mb-2" style="height: 100px; display: table-cell; vertical-align: middle; width: 300px;">
+                <div class="text-center mb-2" style="height: 100px; display: block; width: 300px;">
                     @if($logoBase64)
                         <img src="{{ $logoBase64 }}" style="max-height: 90px; max-width: 100%;">
                     @endif
@@ -41,16 +41,16 @@
                     <div><strong>Dirección Matriz:</strong> {{ $company->direccion_matriz }}</div>
                     <div><strong>Dirección Establecimiento:</strong> {{ $establecimiento->direccion ?: $company->direccion_matriz }}</div>
                     
-                    @if($company->contribuyente_especial)
+                    @if($company->contribuyente_especial === 'SI')
                         <div><strong>Contribuyente Especial Nro:</strong> {{ $company->numero_resolucion_contribuyente_especial }}</div>
                     @endif
                     
-                    <div><strong>OBLIGADO A LLEVAR CONTABILIDAD:</strong> {{ $company->obligado_contabilidad ? 'SI' : 'NO' }}</div>
+                    <div><strong>OBLIGADO A LLEVAR CONTABILIDAD:</strong> {{ $company->obligado_contabilidad === 'SI' ? 'SI' : 'NO' }}</div>
                     
-                    @if($company->regimen_tributario)
+                    @if(str_contains(strtoupper($company->regimen_tributario ?? ''), 'RIMPE'))
                         <div><strong>CONTRIBUYENTE RÉGIMEN RIMPE</strong></div>
                     @endif
-                    @if($company->agente_retencion)
+                    @if($company->agente_retencion === 'SI')
                         <div><strong>Agente de Retención Resolución No.</strong> {{ $company->numero_resolucion_agente_retencion }}</div>
                     @endif
                 </div>
@@ -58,7 +58,7 @@
             <td class="w-50 border">
                 <div class="fw-bold fs-large">R.U.C.: {{ $company->ruc }}</div>
                 <div class="fw-bold fs-xlarge text-center mt-2 mb-2" style="letter-spacing: 2px;">FACTURA</div>
-                <div class="mb-2">No. {{ $comprobante->secuencial_formateado }}</div>
+                <div class="mb-2">No. {{ $comprobante->codigo_establecimiento }}-{{ $comprobante->punto_emision_codigo }}-{{ $comprobante->secuencial_formateado }}</div>
                 
                 <div class="fw-bold">NÚMERO DE AUTORIZACIÓN</div>
                 <div class="mb-2" style="font-size: 11px;">{{ $comprobante->numero_autorizacion ?: $comprobante->clave_acceso }}</div>
@@ -118,10 +118,10 @@
         <tbody>
             @foreach($comprobante->detalles as $detalle)
             <tr>
-                <td>{{ $detalle->producto ? $detalle->producto->codigo : 'pprueba' }}</td>
-                <td>{{ $detalle->producto ? $detalle->producto->codigo_auxiliar : '' }}</td>
+                <td>{{ $detalle->codigo_principal ?? $detalle->producto?->codigo ?? '' }}</td>
+                <td>{{ $detalle->codigo_auxiliar ?? $detalle->producto?->codigo_auxiliar ?? '' }}</td>
                 <td>{{ $detalle->descripcion }}</td>
-                <td class="text-right">{{ number_format($detalle->cantidad, 2) }}</td>
+                <td class="text-right">{{ rtrim(rtrim(number_format($detalle->cantidad, 6, '.', ''), '0'), '.') }}</td>
                 <td class="text-right">{{ number_format($detalle->precio_unitario, 6) }}</td>
                 <td class="text-right">{{ number_format($detalle->descuento, 2) }}</td>
                 <td class="text-right">{{ number_format($detalle->subtotal, 2) }}</td>
@@ -154,6 +154,9 @@
                             <td style="padding: 2px;">{{ $cliente->email }}</td>
                         </tr>
                         @endif
+                        @foreach($comprobante->informacion_adicional ?? [] as $item)
+                        <tr><td style="padding: 2px;">{{ $item['nombre'] }}</td><td style="padding: 2px;">{{ $item['valor'] }}</td></tr>
+                        @endforeach
                     </table>
                 </div>
                 
@@ -166,10 +169,14 @@
                             </tr>
                         </thead>
                         <tbody>
+                            @forelse($comprobante->pagos ?? [] as $pago)
                             <tr>
-                                <td style="padding: 2px;">SIN UTILIZACION DEL SISTEMA FINANCIERO</td>
-                                <td class="text-right" style="padding: 2px;">{{ number_format($comprobante->total, 2) }}</td>
+                                <td style="padding: 2px;">{{ ['01' => 'SIN UTILIZACION DEL SISTEMA FINANCIERO', '15' => 'COMPENSACION DE DEUDAS', '16' => 'TARJETA DE DEBITO', '17' => 'DINERO ELECTRONICO', '18' => 'TARJETA PREPAGO', '19' => 'TARJETA DE CREDITO', '20' => 'OTROS CON UTILIZACION DEL SISTEMA FINANCIERO', '21' => 'ENDOSO DE TITULOS'][$pago['forma_pago']] ?? $pago['forma_pago'] }}</td>
+                                <td class="text-right" style="padding: 2px;">{{ number_format($pago['total'], 2) }}</td>
                             </tr>
+                            @empty
+                            <tr><td colspan="2">Forma de pago histórica no registrada</td></tr>
+                            @endforelse
                         </tbody>
                     </table>
                 </div>
@@ -177,7 +184,7 @@
             <td style="width: 35%; padding: 0;">
                 <table class="w-100 table-items">
                     <tr>
-                        <td style="padding: 3px;">SUBTOTAL 15%</td>
+                        <td style="padding: 3px;">SUBTOTAL GRAVADO IVA</td>
                         <td class="text-right" style="padding: 3px;">{{ number_format($comprobante->subtotal_iva, 2) }}</td>
                     </tr>
                     <tr>
@@ -201,7 +208,7 @@
                         <td class="text-right" style="padding: 3px;">{{ number_format($comprobante->total_descuento, 2) }}</td>
                     </tr>
                     <tr>
-                        <td style="padding: 3px;">IVA 15%</td>
+                        <td style="padding: 3px;">IVA</td>
                         <td class="text-right" style="padding: 3px;">{{ number_format($comprobante->total_iva, 2) }}</td>
                     </tr>
                     <tr>

@@ -12,7 +12,7 @@ class PermissionService
      */
     public static function obtenerPermisosPorRol(UserRole $role): array
     {
-        return match ($role) {
+        $permissions = match ($role) {
             UserRole::ADMINISTRADOR => [
                 'users.create' => true,
                 'users.read' => true,
@@ -164,6 +164,34 @@ class PermissionService
                 'dashboard.cliente' => true,
             ],
         };
+
+        $admin = $role === UserRole::ADMINISTRADOR;
+        $owner = $role === UserRole::EMISOR;
+        $manager = $role === UserRole::GERENTE;
+        $cashier = $role === UserRole::CAJERO;
+        return array_replace($permissions, [
+            'emisores.read' => true,
+            'planes.read' => $admin,
+            'impuestos.read' => $admin,
+            'catalogo.write' => $owner,
+            'productos.read' => $admin || $owner || $manager || $cashier,
+            'inventario.read' => $admin || $owner || $manager || $cashier,
+            'kardex.read' => $admin || $owner || $manager,
+            'inventario.manage' => $owner || $manager,
+            'clientes.read' => $admin || $owner || $manager || $cashier,
+            'clientes.write' => $owner || $cashier,
+            'clientes.delete' => $owner,
+            'clientes.manage' => $owner,
+            'proveedores.read' => $admin || $owner || $manager,
+            'proveedores.write' => $owner,
+            'pos.operate' => $cashier,
+            'comprobantes.create' => $cashier,
+            'comprobantes.read' => $admin || $owner || $manager || $cashier,
+            'comprobantes.update' => false,
+            'comprobantes.retry' => $owner || $cashier,
+            'establecimientos.read' => true,
+            'puntos_emision.read' => true,
+        ]);
     }
 
     /**
@@ -208,8 +236,8 @@ class PermissionService
     /**
      * Verifica jerarquía: ¿Puedo gestionar este usuario?
      * Un admin puede gestionar a cualquiera
-     * Un distribuidor puede gestionar a emisores, gerentes y cajeros creados por él
-     * Un emisor puede gestionar a gerentes y cajeros creados por él
+     * Un distribuidor gestiona emisores, gerentes y cajeros de las empresas de su red
+     * Un emisor gestiona gerentes y cajeros de su empresa sin depender del creador
      * Un gerente puede gestionar a cajeros en sus establecimientos
      * Un cajero no puede gestionar a nadie
      */
@@ -246,16 +274,18 @@ class PermissionService
                 ->exists();
         }
 
-        // Emisor puede gestionar gerentes y cajeros creados por él
+        // La pertenencia a la empresa define el alcance; el creador es auditoría.
         if ($roleGestor === UserRole::EMISOR) {
-            return $objetivo->created_by_id === $gestor->id &&
-                   in_array($roleObjetivo->value, ['gerente', 'cajero']);
+            return $gestor->emisor_id && (int) $objetivo->emisor_id === (int) $gestor->emisor_id
+                && in_array($roleObjetivo, [UserRole::GERENTE, UserRole::CAJERO], true);
         }
 
         // Gerente puede gestionar cajeros en sus establecimientos
         if ($roleGestor === UserRole::GERENTE) {
-            return $objetivo->created_by_id === $gestor->id &&
-                   $roleObjetivo === UserRole::CAJERO;
+            $allowed = BusinessAccess::establishmentIds($gestor);
+            return $gestor->emisor_id && (int) $objetivo->emisor_id === (int) $gestor->emisor_id
+                && $roleObjetivo === UserRole::CAJERO && !empty($objetivo->establecimientos_ids)
+                && empty(array_diff($objetivo->establecimientos_ids, $allowed));
         }
 
         return false;

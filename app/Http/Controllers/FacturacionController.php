@@ -39,36 +39,13 @@ class FacturacionController extends Controller
             return response()->json(['success' => false, 'message' => 'No autenticado.'], 401);
         }
 
-        // Administrador puede emitir para pruebas si cuenta con firma y punto válido
-        if ($user->role === \App\Enums\UserRole::ADMINISTRADOR) {
-            return null;
+        if ($user->role !== \App\Enums\UserRole::CAJERO) {
+            return response()->json(['success' => false, 'message' => 'Solo Cajero puede confirmar ventas.'], 403);
         }
-
-        // Distribuidor no emite comprobantes directamente
-        if ($user->role === \App\Enums\UserRole::DISTRIBUIDOR) {
-            return response()->json(['success' => false, 'message' => 'El rol distribuidor no tiene autorización para emitir comprobantes.'], 403);
-        }
-
-        // Emisor, Gerente y Cajero deben pertenecer al emisor
-        if ((int)$user->emisor_id !== (int)$emisorId) {
-            return response()->json(['success' => false, 'message' => 'No tienes autorización para emitir comprobantes en este emisor.'], 403);
-        }
-
-        // Gerente: si tiene establecimientos asignados, debe emitir en uno de ellos
-        if ($user->role === \App\Enums\UserRole::GERENTE) {
-            $estIds = json_decode($user->establecimientos_ids ?? '[]', true);
-            if (!empty($estIds) && !in_array($establecimientoId, $estIds)) {
-                return response()->json(['success' => false, 'message' => 'No tienes autorización para emitir comprobantes en este establecimiento.'], 403);
-            }
-        }
-
-        // Cajero: debe emitir en uno de sus puntos de emisión asignados
-        if ($user->role === \App\Enums\UserRole::CAJERO) {
-            $ptoIds = json_decode($user->puntos_emision_ids ?? '[]', true);
-            if (!empty($ptoIds) && !in_array($puntoEmisionId, $ptoIds)) {
-                return response()->json(['success' => false, 'message' => 'No tienes asignado este punto de emisión para facturar.'], 403);
-            }
-        }
+        \App\Services\BusinessAccess::company($user, $emisorId);
+        \App\Services\BusinessAccess::establishment($user, $establecimientoId, $emisorId);
+        $point = \App\Services\BusinessAccess::point($user, $puntoEmisionId, $emisorId);
+        abort_if((int) $point->establecimiento_id !== $establecimientoId, 422, 'El punto no pertenece a la sucursal.');
 
         return null;
     }
@@ -308,284 +285,38 @@ class FacturacionController extends Controller
 
     public function emitirFactura(Request $request): JsonResponse
     {
-        $request->validate([
-            'firma' => ['required', 'file', 'extensions:p12,pfx'],
-            'password' => ['required', 'string'],
-            'payload' => ['required', 'json'],
-        ]);
-
-        $payloadData = json_decode($request->input('payload'), true);
-
-        $rules = [
-            'emisor_id' => ['required', 'integer', 'exists:emisores,id'],
-            'establecimiento_id' => ['required', 'integer', 'exists:establecimientos,id'],
-            'punto_emision_id' => ['required', 'integer', 'exists:puntos_emision,id'],
-            'pos_turno_id' => ['nullable', 'integer', 'exists:pos_turnos,id'],
-            'cliente.tipo_identificacion' => ['required', 'string'],
-            'cliente.identificacion' => ['required', 'string'],
-            'cliente.razon_social' => ['required', 'string', 'max:255'],
-            'cliente.direccion' => ['required', 'string', 'max:500'],
-            'cliente.email' => ['required', 'email', 'max:255'],
-            'cliente.telefono' => ['nullable', 'string', 'max:50'],
-            'detalles' => ['required', 'array', 'min:1'],
-            'detalles.*.descripcion' => ['required', 'string', 'max:500'],
-            'detalles.*.cantidad' => ['required', 'numeric', 'min:0.000001'],
-            'detalles.*.precio_unitario' => ['required', 'numeric', 'min:0'],
-            'detalles.*.descuento' => ['nullable', 'numeric', 'min:0'],
-            'detalles.*.impuesto.tipo_impuesto_id' => ['nullable', 'integer', 'exists:tipos_impuesto,id'],
-            'detalles.*.impuesto.tarifa' => ['nullable', 'numeric', 'min:0'],
-            'detalles.*.impuesto.tipo' => ['nullable', 'string'],
-            'detalles.*.impuesto.codigo_porcentaje' => ['nullable', 'numeric'],
-            'detalles.*.impuesto.codigo_impuesto' => ['nullable', 'numeric'],
-            'detalles.*.impuesto.codigo' => ['nullable', 'numeric'],
-        ];
-
-        $validator = Validator::make($payloadData, $rules);
-        $validator->after(function ($v) use ($payloadData) {
-            $cliente = $payloadData['cliente'] ?? [];
-            $tipo = strtoupper((string) ($cliente['tipo_identificacion'] ?? ''));
-            $id = (string) ($cliente['identificacion'] ?? '');
-
-            if ($tipo === 'RUC') {
-                if (!EcuadorIdentificationValidator::validateRuc($id)) {
-                    $v->errors()->add('cliente.identificacion', 'RUC no valido segun reglas del SRI.');
-                }
-                return;
-            }
-
-            if ($tipo === 'CEDULA') {
-                if (!EcuadorIdentificationValidator::validateCedula($id)) {
-                    $v->errors()->add('cliente.identificacion', 'Cedula no valida segun reglas del Registro Civil.');
-                }
-                return;
-            }
-
-            if ($tipo === 'CONSUMIDOR_FINAL') {
-                if ($id !== '9999999999999') {
-                    $v->errors()->add('cliente.identificacion', 'Consumidor final debe usar 9999999999999.');
-                }
-                return;
-            }
-        });
-
-        if ($validator->fails()) {
-            return response()->json(['message' => 'Validation error', 'errors' => $validator->errors()], 422);
-        }
-
-        $data = $validator->validated();
-
-        $archivoFirma = $request->file('firma');
-        $passwordFirma = trim((string) $request->input('password'));
-        $extension = strtolower($archivoFirma->getClientOriginalExtension() ?: 'p12');
-        $nombreAlmacenado = uniqid('cert_', true) . '.' . $extension;
-        $disk = config('sri.certificate_disk', 'local');
-
-        Log::info('Recibiendo certificado P12 para emision SRI.', [
-            'nombre_original' => $archivoFirma->getClientOriginalName(),
-            'extension' => $extension,
-            'mime' => $archivoFirma->getMimeType(),
-            'tamanio_bytes' => $archivoFirma->getSize(),
-            'longitud_clave' => strlen($passwordFirma),
-        ]);
-
-        $pathFirma = $archivoFirma->storeAs('sri/certificados', $nombreAlmacenado, $disk);
-        $rutaAbsoluta = Storage::disk($disk)->path($pathFirma);
-
-        Log::info('Certificado P12 almacenado temporalmente.', [
-            'path_relativo' => $pathFirma,
-            'ruta_absoluta' => $rutaAbsoluta,
-            'bytes_en_disco' => is_file($rutaAbsoluta) ? filesize($rutaAbsoluta) : null,
-        ]);
-
+        $request->validate(['payload' => ['required', 'json'], 'firma' => ['prohibited'], 'password' => ['prohibited']]);
+        $payload = json_decode($request->input('payload'), true);
+        abort_unless(is_array($payload), 422, 'Payload debe ser un objeto JSON.');
+        $sales = app(\App\Services\InvoiceSaleService::class);
+        $data = $sales->validate($payload);
+        \App\Services\BusinessAccess::company($request->user(), (int) $data['emisor_id']);
+        $processing = app(\App\Services\InvoiceProcessingService::class);
+        $exists = Comprobante::where('emisor_id', $data['emisor_id'])->where('operacion_id', $data['operacion_id'])->exists();
         try {
-            $this->signatureService->verificarP12($rutaAbsoluta, $passwordFirma);
+            $certificate = $exists ? null : $processing->certificate((int) $data['emisor_id']);
+            $result = $sales->confirm($request->user(), $data);
         } catch (SriFirmaException $e) {
-            Storage::disk($disk)->delete($pathFirma);
-
-            Log::error('Validacion temprana de P12 fallida.', [
-                'path' => $pathFirma,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'message' => $e->getMessage(),
-                'errors' => ['firma' => [$e->getMessage()]],
-            ], 422);
+            return response()->json(['message' => $e->getMessage(), 'errors' => ['firma' => [$e->getMessage()]]], 422);
+        } catch (\App\Exceptions\InvalidWarehouseOperationException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
         }
-        $detalles = $this->resolverImpuestosDetalle($data['detalles']);
-        if ($detalles === null) {
-            return response()->json([
-                'message' => 'Validation error',
-                'errors' => ['detalles' => ['No se pudo resolver el tipo de impuesto para uno o mas detalles.']],
-            ], 422);
+        $invoice = $result['comprobante'];
+        if ($result['created']) {
+            try {
+                $processing->dispatch($invoice, $certificate);
+            } catch (\Throwable $e) {
+                $invoice->update(['estado_sri' => 'ERROR_SISTEMA', 'ultimo_error_sri' => 'Venta confirmada; no se pudo programar el procesamiento. Reintenta este mismo comprobante.']);
+                Log::error('No se pudo programar comprobante SRI.', ['comprobante_id' => $invoice->id, 'error' => $e->getMessage()]);
+            }
         }
-        $data['detalles'] = $detalles;
-        $emisorId = (int) $data['emisor_id'];
-        $establecimientoId = (int) $data['establecimiento_id'];
-        $puntoEmisionId = (int) $data['punto_emision_id'];
-
-        $transactionResult = DB::transaction(function () use ($data, $detalles, $emisorId, $establecimientoId, $puntoEmisionId) {
-            $calculo = $this->calculator->calcularComprobante($detalles);
-
-            $clienteData = $data['cliente'];
-            $cliente = Cliente::firstOrCreate(
-                [
-                    'emisor_id' => $emisorId,
-                    'tipo_identificacion' => $clienteData['tipo_identificacion'],
-                    'identificacion' => $clienteData['identificacion'],
-                ],
-                [
-                    'razon_social' => $clienteData['razon_social'],
-                    'nombre_comercial' => $clienteData['razon_social'],
-                    'direccion' => $clienteData['direccion'],
-                    'email' => $clienteData['email'],
-                    'telefono' => $clienteData['telefono'] ?? null,
-                    'created_by' => Auth::id(),
-                    'updated_by' => Auth::id(),
-                ]
-            );
-
-            $cliente->fill([
-                'razon_social' => $clienteData['razon_social'],
-                'direccion' => $clienteData['direccion'],
-                'email' => $clienteData['email'],
-                'telefono' => $clienteData['telefono'] ?? null,
-                'updated_by' => Auth::id(),
-            ]);
-            $cliente->save();
-
-            $company = Company::findOrFail($emisorId);
-            $establecimiento = Establecimiento::where('emisor_id', $emisorId)->findOrFail($establecimientoId);
-            $punto = PuntoEmision::where('emisor_id', $emisorId)
-                ->where('establecimiento_id', $establecimientoId)
-                ->findOrFail($puntoEmisionId);
-
-            $secuencialData = $punto->nextSecuencialFactura();
-            $subtotales = $this->buildSubtotales($calculo['detalles']);
-
-            $comprobante = Comprobante::create([
-                'emisor_id' => $emisorId,
-                'establecimiento_id' => $establecimientoId,
-                'punto_emision_id' => $puntoEmisionId,
-                'pos_turno_id' => $data['pos_turno_id'] ?? null,
-                'cliente_id' => $cliente->id,
-                'tipo_comprobante' => 'FACTURA',
-                'secuencial' => $secuencialData['secuencial'],
-                'secuencial_formateado' => $secuencialData['secuencial_formateado'],
-                'codigo_establecimiento' => $establecimiento->codigo,
-                'punto_emision_codigo' => $punto->codigo,
-                'fecha_emision' => now()->toDateString(),
-                'subtotal_sin_impuestos' => $calculo['totales']['subtotal_sin_impuestos'],
-                'subtotal_iva_0' => $subtotales['subtotal_iva_0'],
-                'subtotal_iva' => $subtotales['subtotal_iva'],
-                'subtotal_no_objeto' => $subtotales['subtotal_no_objeto'],
-                'subtotal_exento' => $subtotales['subtotal_exento'],
-                'total_descuento' => $calculo['totales']['total_descuento'],
-                'total_iva' => $calculo['totales']['total_iva'],
-                'total_impuestos' => $calculo['totales']['total_iva'],
-                'total' => $calculo['totales']['importe_total'],
-                'estado_sri' => 'BORRADOR',
-                'ambiente' => $company->ambiente ?? 'PRUEBAS',
-                'tipo_emision' => $company->tipo_emision ?? 'NORMAL',
-            ]);
-
-            foreach ($calculo['detalles'] as $detalle) {
-                $detalleModel = ComprobanteDetalle::create([
-                    'comprobante_id' => $comprobante->id,
-                    'producto_id' => $detalle['producto_id'] ?? null,
-                    'descripcion' => $detalle['descripcion'],
-                    'cantidad' => $detalle['cantidad'],
-                    'precio_unitario' => $detalle['precio_unitario'],
-                    'descuento' => $detalle['descuento'] ?? 0,
-                    'subtotal' => $detalle['precio_total_sin_impuesto'],
-                ]);
-
-                if ($comprobante->tipo_comprobante === 'FACTURA' && !empty($detalle['producto_id'])) {
-                    $producto = \App\Models\Producto::find($detalle['producto_id']);
-                    $bodega = \App\Models\Bodega::where('establecimiento_id', $establecimientoId)
-                                    ->where('tipo', 'PRINCIPAL')
-                                    ->first();
-                    if (!$bodega) {
-                        $bodega = \App\Models\Bodega::where('establecimiento_id', $establecimientoId)->first();
-                    }
-                    if ($bodega && $producto) {
-                        $stockRow = \App\Models\ProductoBodegaStock::where('producto_id', $producto->id)
-                                        ->where('bodega_id', $bodega->id)
-                                        ->lockForUpdate()
-                                        ->first();
-                        
-                        if ($stockRow) {
-                            $stockRow->decrement('stock_actual', $detalle['cantidad']);
-                            $saldo = $stockRow->fresh()->stock_actual;
-                        } else {
-                            $saldo = 0;
-                        }
-
-                        \App\Models\Kardex::create([
-                            'fecha_hora' => now(),
-                            'producto_id' => $producto->id,
-                            'bodega_id' => $bodega->id,
-                            'tipo_movimiento' => \App\Enums\TipoMovimientoInventario::MOV_03_VENTA_INMEDIATA,
-                            'documento_origen_tipo' => 'Comprobante',
-                            'documento_origen_id' => $comprobante->id,
-                            'numero_documento' => $comprobante->secuencial_formateado,
-                            'entrada' => 0,
-                            'salida' => $detalle['cantidad'],
-                            'saldo' => $saldo,
-                            'usuario_id' => \Illuminate\Support\Facades\Auth::id() ?? 1,
-                        ]);
-                    }
-                }
-                
-                $impuesto = $detalle['impuesto'] ?? null;
-                if ($impuesto) {
-                    $tarifa = (float) ($impuesto['tarifa'] ?? 0);
-                    $valor = round($detalle['precio_total_sin_impuesto'] * ($tarifa / 100), 2, PHP_ROUND_HALF_UP);
-
-                    ComprobanteImpuesto::create([
-                        'comprobante_id' => $comprobante->id,
-                        'comprobante_detalle_id' => $detalleModel->id,
-                        'tipo_impuesto_id' => $impuesto['tipo_impuesto_id'] ?? null,
-                        'base_imponible' => $detalle['precio_total_sin_impuesto'],
-                        'tarifa' => $tarifa,
-                        'valor' => $valor,
-                    ]);
-                }
-            }
-
-            foreach ($calculo['impuestos'] as $impuesto) {
-                ComprobanteImpuesto::create([
-                    'comprobante_id' => $comprobante->id,
-                    'comprobante_detalle_id' => null,
-                    'tipo_impuesto_id' => $impuesto['tipo_impuesto_id'] ?? null,
-                    'base_imponible' => $impuesto['base_imponible'],
-                    'tarifa' => $impuesto['tarifa'],
-                    'valor' => $impuesto['valor'],
-                ]);
-            }
-
-            return [
-                'comprobante_id' => $comprobante->id,
-                'secuencial' => $secuencialData['secuencial'],
-                'secuencial_formateado' => $secuencialData['secuencial_formateado'],
-            ];
-        });
-
-        ProcesarFacturaSriJob::dispatch(
-            $transactionResult['comprobante_id'],
-            $pathFirma,
-            Crypt::encryptString($passwordFirma)
-        )->afterCommit();
-
         return response()->json([
-            'success' => true,
-            'estado' => 'PROCESANDO',
-            'comprobante_id' => $transactionResult['comprobante_id'],
-            'secuencial' => $transactionResult['secuencial'],
-            'secuencial_formateado' => $transactionResult['secuencial_formateado'],
+            'success' => true, 'message' => 'Venta confirmada. Consulta el estado del procesamiento SRI.',
+            'comprobante_id' => $invoice->id, 'estado_sri' => $invoice->estado_sri,
+            'secuencial' => $invoice->secuencial, 'secuencial_formateado' => $invoice->secuencial_formateado,
+            'total' => (float) $invoice->total, 'repetida' => !$result['created'],
         ], 202);
     }
-
 
     public function emitirGuiaRemision(Request $request): JsonResponse
     {
@@ -1329,6 +1060,7 @@ class FacturacionController extends Controller
 
     public function estadoComprobante(Comprobante $comprobante): JsonResponse
     {
+        \App\Services\BusinessAccess::invoice(request()->user(), $comprobante);
         return response()->json([
             'comprobante_id' => $comprobante->id,
             'clave_acceso' => $comprobante->clave_acceso,
@@ -1350,30 +1082,16 @@ class FacturacionController extends Controller
 
     public function reintentarProcesamiento(Comprobante $comprobante): JsonResponse
     {
-        if (in_array($comprobante->estado_sri, ['AUTORIZADO'], true)) {
-            return response()->json([
-                'message' => 'El comprobante ya fue autorizado y no requiere reintento.',
-            ], 409);
+        \App\Services\BusinessAccess::invoice(request()->user(), $comprobante);
+        if (in_array($comprobante->estado_sri, ['AUTORIZADO', 'NO_AUTORIZADO', 'DEVUELTA'], true)) {
+            return response()->json(['message' => 'El comprobante tiene una respuesta final. Requiere revisión, no otra venta ni un reenvío automático.'], 409);
         }
-
-        if (!$comprobante->clave_acceso) {
-            return response()->json([
-                'message' => 'El comprobante no tiene clave de acceso generada; debe reemitirse desde cero.',
-            ], 422);
-        }
-
-        if (!empty($comprobante->xml_firmado)) {
+        if (in_array($comprobante->estado_sri, ['RECIBIDA', 'ENVIADO', 'ERROR_AUTORIZACION'], true) && $comprobante->clave_acceso) {
             ConsultarAutorizacionSriJob::dispatch($comprobante->id)->afterCommit();
-
-            return response()->json([
-                'message' => 'Se reprogramo la consulta de autorizacion SRI.',
-                'comprobante_id' => $comprobante->id,
-            ], 202);
+        } else {
+            app(\App\Services\InvoiceProcessingService::class)->dispatch($comprobante);
         }
-
-        return response()->json([
-            'message' => 'El comprobante aun no tiene XML firmado; vuelva a emitirlo para reiniciar el flujo.',
-        ], 422);
+        return response()->json(['message' => 'Procesamiento del mismo comprobante programado. No se repite el cobro ni el movimiento de inventario.'], 202);
     }
 
     private function buildSubtotales(array $detalles): array
@@ -1483,38 +1201,28 @@ class FacturacionController extends Controller
             $query->where('estado_sri', strtoupper($request->input('estado')));
         }
 
-        // Filtrar y aislar por rol y emisor
-        if ($user && $user->role !== \App\Enums\UserRole::ADMINISTRADOR) {
-            if ($user->role === \App\Enums\UserRole::DISTRIBUIDOR) {
-                $query->whereHas('company', function ($q) use ($user) {
-                    $q->where('created_by', $user->id);
-                });
-                if ($request->filled('emisor_id')) {
-                    $query->where('emisor_id', $request->input('emisor_id'));
-                }
-            } else {
-                // Emisor, Gerente y Cajero: solo su propio emisor asignado
-                $query->where('emisor_id', $user->emisor_id);
-
-                if ($user->role === \App\Enums\UserRole::GERENTE) {
-                    $estIds = json_decode($user->establecimientos_ids ?? '[]', true);
-                    if (!empty($estIds)) {
-                        $query->whereIn('establecimiento_id', $estIds);
-                    }
-                } elseif ($user->role === \App\Enums\UserRole::CAJERO) {
-                    $ptoIds = json_decode($user->puntos_emision_ids ?? '[]', true);
-                    if (!empty($ptoIds)) {
-                        $query->whereIn('punto_emision_id', $ptoIds);
-                    }
-                }
-            }
-        } elseif ($request->filled('emisor_id')) {
+        \App\Services\BusinessAccess::scopeInvoices($query, $user);
+        if ($request->filled('emisor_id')) {
+            \App\Services\BusinessAccess::company($user, (int) $request->input('emisor_id'));
             $query->where('emisor_id', $request->input('emisor_id'));
         }
 
-        $comprobantes = $query->limit(100)->get();
+        $request->validate(['fecha_inicio' => ['nullable', 'date_format:Y-m-d'], 'fecha_fin' => ['nullable', 'date_format:Y-m-d']]);
+        if ($request->filled('fecha_inicio')) $query->whereDate('fecha_emision', '>=', $request->input('fecha_inicio'));
+        if ($request->filled('fecha_fin')) $query->whereDate('fecha_emision', '<=', $request->input('fecha_fin'));
+        if ($request->filled('search')) {
+            $search = '%'.trim($request->input('search')).'%';
+            $query->where(function ($q) use ($search) {
+                $q->where('secuencial_formateado', 'ilike', $search)->orWhere('clave_acceso', 'ilike', $search)
+                    ->orWhereRaw("(codigo_establecimiento || '-' || punto_emision_codigo || '-' || secuencial_formateado) ILIKE ?", [$search])
+                    ->orWhereHas('cliente', fn ($c) => $c->where('razon_social', 'ilike', $search)->orWhere('identificacion', 'ilike', $search));
+            });
+        }
+        $paginator = $query->paginate(max(1, min(100, (int) $request->input('per_page', 20))));
+        $comprobantes = $paginator->getCollection();
 
         return response()->json([
+            'pagination' => ['current_page' => $paginator->currentPage(), 'last_page' => $paginator->lastPage(), 'total' => $paginator->total()],
             'data' => $comprobantes->map(fn ($c) => [
                 'id'                    => $c->id,
                 'tipo_comprobante'      => $c->tipo_comprobante,
@@ -1529,8 +1237,8 @@ class FacturacionController extends Controller
                     str_pad($c->secuencial ?? '1',      9, '0', STR_PAD_LEFT)
                 ),
                 'fecha_emision'         => $c->fecha_emision?->format('Y-m-d'),
-                'cliente_razon_social'  => $c->cliente?->razon_social ?? 'CONSUMIDOR FINAL',
-                'cliente_identificacion'=> $c->cliente?->identificacion ?? '9999999999999',
+                'cliente_razon_social'  => $c->cliente_snapshot['razon_social'] ?? $c->cliente?->razon_social ?? 'CONSUMIDOR FINAL',
+                'cliente_identificacion'=> $c->cliente_snapshot['identificacion'] ?? $c->cliente?->identificacion ?? '9999999999999',
                 'total'                 => (float) $c->total,
                 'subtotal_sin_impuestos'=> (float) $c->subtotal_sin_impuestos,
                 'total_iva'             => (float) $c->total_iva,
@@ -1546,6 +1254,7 @@ class FacturacionController extends Controller
 
     public function downloadPdf(Comprobante $comprobante, \App\Services\PdfRideService $pdfService): mixed
     {
+        \App\Services\BusinessAccess::invoice(request()->user(), $comprobante);
         if ($comprobante->estado_sri !== 'AUTORIZADO') {
             return response()->json(['message' => 'El comprobante no está autorizado.'], 403);
         }
@@ -1559,6 +1268,7 @@ class FacturacionController extends Controller
 
     public function downloadXml(Comprobante $comprobante): mixed
     {
+        \App\Services\BusinessAccess::invoice(request()->user(), $comprobante);
         if ($comprobante->estado_sri !== 'AUTORIZADO' || !$comprobante->xml_autorizado) {
             return response()->json(['message' => 'El comprobante no está autorizado o no tiene XML.'], 403);
         }

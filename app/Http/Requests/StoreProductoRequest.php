@@ -19,7 +19,7 @@ class StoreProductoRequest extends FormRequest
     public function rules()
     {
         return [
-            'codigo' => 'required|string|max:255',
+            'codigo' => ['required', 'string', 'max:255', \Illuminate\Validation\Rule::unique('productos', 'codigo')->where('emisor_id', $this->route('emisorId'))],
             'codigo_auxiliar' => 'nullable|string|max:255',
             'nombre' => 'required|string|max:255',
             'descripcion' => 'nullable|string',
@@ -30,6 +30,7 @@ class StoreProductoRequest extends FormRequest
             'precio_3' => 'nullable|numeric|min:0',
             'precio_por_defecto' => 'nullable|integer|in:1,2,3',
             
+            'tipo_impuesto_id' => ['nullable', 'integer', \Illuminate\Validation\Rule::exists('tipos_impuesto', 'id')->where('estado', 'Activo')->where('tipo_impuesto', 'IVA')],
             'tipo_iva' => 'required|string',
             'impuesto_ice' => 'nullable|boolean',
             'porcentaje_ice' => 'nullable|numeric|min:0',
@@ -50,7 +51,7 @@ class StoreProductoRequest extends FormRequest
             'permite_compra' => 'required|boolean',
             'uso_interno' => 'required|boolean',
             'permite_exhibicion' => 'required|boolean',
-            'categoria_id' => 'nullable|exists:categorias,id',
+            'categoria_id' => ['nullable', \Illuminate\Validation\Rule::exists('categorias', 'id')->where('emisor_id', $this->route('emisorId'))],
             'unidad_medida' => 'nullable|string|max:255',
             'subsidio_unitario' => 'nullable|numeric|min:0',
             'ubicacion_referencial' => 'nullable|string|max:255',

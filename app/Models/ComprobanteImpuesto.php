@@ -9,6 +9,7 @@ class ComprobanteImpuesto extends Model
     protected $table = 'comprobante_impuestos';
 
     protected $fillable = [
+        'codigo_impuesto', 'codigo_porcentaje',
         'comprobante_id',
         'comprobante_detalle_id',
         'tipo_impuesto_id',
