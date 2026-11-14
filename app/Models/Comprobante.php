@@ -65,6 +65,10 @@ class Comprobante extends Model
         'enviado_en',
         'recibido_en',
         'autorizado_en',
+        'email_estado',
+        'email_intentos',
+        'email_enviado_en',
+        'email_error',
     ];
 
     protected $casts = [
@@ -76,6 +80,8 @@ class Comprobante extends Model
         'enviado_en' => 'datetime',
         'recibido_en' => 'datetime',
         'autorizado_en' => 'datetime',
+        'email_enviado_en' => 'datetime',
+        'email_intentos' => 'integer',
         'guia_remision_data' => 'array',
         'subtotal_sin_impuestos' => 'decimal:2',
         'subtotal_iva_0' => 'decimal:2',

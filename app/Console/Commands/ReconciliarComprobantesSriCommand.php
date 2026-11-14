@@ -1,0 +1,93 @@
+<?php
+
+namespace App\Console\Commands;
+
+use App\Models\Comprobante;
+use App\Jobs\ConsultarAutorizacionSriJob;
+use App\Services\InvoiceProcessingService;
+use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
+
+class ReconciliarComprobantesSriCommand extends Command
+{
+    /**
+     * The name and signature of the console command.
+     *
+     * @var string
+     */
+    protected $signature = 'sri:reconciliar {--minutes=5 : Minutos de inactividad antes de reconciliar}';
+
+    /**
+     * The console command description.
+     *
+     * @var string
+     */
+    protected $description = 'P09: Reconciliar comprobantes detenidos sin trabajo en cola o en estados no terminales';
+
+    /**
+     * Execute the console command.
+     */
+    public function handle(): int
+    {
+        $minutes = max(0, (int) $this->option('minutes'));
+        $threshold = $minutes > 0 ? now()->subMinutes($minutes) : now()->addSecond();
+
+        $comprobantes = Comprobante::whereIn('estado_sri', [
+            'BORRADOR',
+            'FIRMADO',
+            'ENVIADO',
+            'RECIBIDA',
+            'ERROR_ENVIO',
+            'ERROR_FIRMA',
+            'ERROR_AUTORIZACION',
+            'ERROR_SISTEMA',
+        ])
+        ->where('updated_at', '<=', $threshold)
+        ->get();
+
+        $this->info("Reconciliador SRI: Encontrados {$comprobantes->count()} comprobantes candidatos con más de {$minutes} minutos sin actividad.");
+
+        $reconciliados = 0;
+        $processingService = app(InvoiceProcessingService::class);
+
+        foreach ($comprobantes as $comprobante) {
+            $lock = Cache::lock('sri-comprobante-' . $comprobante->id, 60);
+
+            if (!$lock->get()) {
+                $this->line("Comprobante {$comprobante->id}: Omitido (bloqueo activo en procesamiento).");
+                continue;
+            }
+
+            try {
+                $comprobante->refresh();
+
+                if (in_array($comprobante->estado_sri, ['AUTORIZADO', 'NO_AUTORIZADO', 'DEVUELTA'], true)) {
+                    continue;
+                }
+
+                if (in_array($comprobante->estado_sri, ['RECIBIDA', 'ENVIADO', 'ERROR_AUTORIZACION'], true) && $comprobante->clave_acceso) {
+                    ConsultarAutorizacionSriJob::dispatch($comprobante->id);
+                    $this->info("Comprobante {$comprobante->id} [{$comprobante->estado_sri}]: Reprogramada consulta de autorización.");
+                    $reconciliados++;
+                } else {
+                    try {
+                        $processingService->dispatch($comprobante);
+                        $this->info("Comprobante {$comprobante->id} [{$comprobante->estado_sri}]: Reprogramado despacho a proceso y firma.");
+                        $reconciliados++;
+                    } catch (\Illuminate\Validation\ValidationException $e) {
+                        $this->warn("Comprobante {$comprobante->id}: Emisor sin firma configurada todavía.");
+                    } catch (\Throwable $e) {
+                        $this->error("Comprobante {$comprobante->id}: Error al despachar: " . $e->getMessage());
+                    }
+                }
+            } finally {
+                $lock->release();
+            }
+        }
+
+        $this->info("Reconciliador SRI: Proceso finalizado. {$reconciliados} comprobantes reconciliados.");
+
+        return Command::SUCCESS;
+    }
+}

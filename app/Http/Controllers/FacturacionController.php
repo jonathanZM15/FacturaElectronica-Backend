@@ -309,6 +309,20 @@ class FacturacionController extends Controller
                 $invoice->update(['estado_sri' => 'ERROR_SISTEMA', 'ultimo_error_sri' => 'Venta confirmada; no se pudo programar el procesamiento. Reintenta este mismo comprobante.']);
                 Log::error('No se pudo programar comprobante SRI.', ['comprobante_id' => $invoice->id, 'error' => $e->getMessage()]);
             }
+        } else {
+            // P09: Si la venta ya existía pero quedó en un estado no terminal ni autorizado sin procesar
+            // (ej. interrupción entre confirmación y encolado en un envío previo),
+            // reprogramar el despacho según corresponda sin duplicar stock ni cobros.
+            if (in_array($invoice->estado_sri, ['BORRADOR', 'ERROR_SISTEMA', 'ERROR_ENVIO', 'ERROR_FIRMA'], true)) {
+                try {
+                    $cert = $processing->certificate((int) $data['emisor_id']);
+                    $processing->dispatch($invoice, $cert);
+                } catch (\Throwable $e) {
+                    Log::warning('No se pudo despachar comprobante repetido pendiente.', ['comprobante_id' => $invoice->id, 'error' => $e->getMessage()]);
+                }
+            } elseif (in_array($invoice->estado_sri, ['RECIBIDA', 'ENVIADO', 'ERROR_AUTORIZACION'], true) && $invoice->clave_acceso) {
+                \App\Jobs\ConsultarAutorizacionSriJob::dispatch($invoice->id)->afterCommit();
+            }
         }
         return response()->json([
             'success' => true, 'message' => 'Venta confirmada. Consulta el estado del procesamiento SRI.',
@@ -1076,9 +1090,11 @@ class FacturacionController extends Controller
         ], 202);
     }
 
-    public function estadoComprobante(Comprobante $comprobante): JsonResponse
+    public function estadoComprobante(Request $request, Comprobante $comprobante): JsonResponse
     {
-        \App\Services\BusinessAccess::invoice(request()->user(), $comprobante);
+        if ($user = $request->user()) {
+            \App\Services\BusinessAccess::invoice($user, $comprobante);
+        }
         return response()->json([
             'comprobante_id' => $comprobante->id,
             'clave_acceso' => $comprobante->clave_acceso,
@@ -1094,8 +1110,36 @@ class FacturacionController extends Controller
             'enviado_en' => $comprobante->enviado_en,
             'recibido_en' => $comprobante->recibido_en,
             'autorizado_en' => $comprobante->autorizado_en,
+            'email_estado' => $comprobante->email_estado,
+            'email_intentos' => $comprobante->email_intentos,
+            'email_enviado_en' => $comprobante->email_enviado_en,
+            'email_error' => $comprobante->email_error,
             'logs' => $comprobante->sriLogs()->latest()->take(20)->get(),
         ]);
+    }
+
+    /**
+     * P10: Reintento independiente de RIDE y correo para facturas autorizadas.
+     */
+    public function reenviarEmail(Request $request, Comprobante $comprobante): JsonResponse
+    {
+        \App\Services\BusinessAccess::invoice($request->user(), $comprobante);
+
+        if ($comprobante->estado_sri !== 'AUTORIZADO') {
+            return response()->json(['message' => 'Solo se pueden enviar por correo comprobantes debidamente AUTORIZADOS por el SRI.'], 422);
+        }
+
+        \App\Services\InvoiceSnapshots::apply($comprobante);
+        if (empty($comprobante->cliente?->email)) {
+            return response()->json(['message' => 'El cliente no tiene una dirección de correo electrónico registrada.'], 422);
+        }
+
+        \App\Jobs\EnviarComprobanteEmailJob::dispatch($comprobante->id)->afterCommit();
+
+        return response()->json([
+            'success' => true,
+            'message' => "Envío de RIDE y XML por correo programado para {$comprobante->cliente->email}.",
+        ], 200);
     }
 
     public function reintentarProcesamiento(Comprobante $comprobante): JsonResponse
@@ -1409,6 +1453,8 @@ class FacturacionController extends Controller
                 'subtotal_sin_impuestos'=> (float) $c->subtotal_sin_impuestos,
                 'total_iva'             => (float) $c->total_iva,
                 'estado_sri'            => $c->estado_sri,
+                'email_estado'          => $c->email_estado,
+                'email_error'           => $c->email_error,
                 'clave_acceso'          => $c->clave_acceso,
                 'ambiente'              => $c->ambiente,
                 'emisor_id'             => $c->emisor_id,

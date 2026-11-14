@@ -16,33 +16,39 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use App\Services\PdfRideService;
 use App\Mail\FacturaAutorizadaMail;
+use App\Jobs\EnviarComprobanteEmailJob;
 use Throwable;
 
 class ConsultarAutorizacionSriJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $tries = 10;
-    public int $timeout = 90;
+    public int $timeout = 60;
+
+    public function tries(): int
+    {
+        return (int) config('sri.max_authorization_attempts', 10);
+    }
 
     public function __construct(public int $comprobanteId)
     {
     }
 
-    public function handle(SriSoapService $soapService, SriComprobanteLifecycleService $lifecycle, PdfRideService $pdfService): void
+    public function handle(SriSoapService $soapService, SriComprobanteLifecycleService $lifecycle): void
     {
-        $comprobante = Comprobante::find($this->comprobanteId);
-
-        if (!$comprobante || !$comprobante->clave_acceso) {
-            return;
-        }
-
-        $lock = Cache::lock('sri-comprobante-'.$comprobante->id, 180);
+        $lock = Cache::lock('sri-comprobante-'.$this->comprobanteId, 180);
         if (!$lock->get()) {
+            $this->release(10);
             return;
         }
 
         try {
+            $comprobante = Comprobante::find($this->comprobanteId);
+
+            if (!$comprobante || !$comprobante->clave_acceso) {
+                return;
+            }
+
             if (in_array($comprobante->estado_sri, ['AUTORIZADO', 'NO_AUTORIZADO', 'DEVUELTA'], true)) {
                 return;
             }
@@ -78,21 +84,8 @@ class ConsultarAutorizacionSriJob implements ShouldQueue
                     'respuesta_payload' => json_encode($autorizacion, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                 ]);
 
-                // Generar PDF y Enviar Correo
-                try {
-                    $pdfContent = $pdfService->generateRide($comprobante);
-                    
-                    \App\Services\InvoiceSnapshots::apply($comprobante);
-                    if ($comprobante->cliente && $comprobante->cliente->email) {
-                        Mail::to($comprobante->cliente->email)->send(new FacturaAutorizadaMail($comprobante, $pdfContent));
-                        Log::info('Correo de factura autorizada enviado', ['comprobante_id' => $comprobante->id, 'email' => $comprobante->cliente->email]);
-                    }
-                } catch (Throwable $e) {
-                    Log::error('Error al generar PDF o enviar correo de factura', [
-                        'comprobante_id' => $comprobante->id,
-                        'error' => $e->getMessage()
-                    ]);
-                }
+                // P10: Despacho desacoplado y reintentable para generación de RIDE y envío por correo
+                EnviarComprobanteEmailJob::dispatch($comprobante->id)->afterCommit();
 
                 return;
             }
@@ -153,6 +146,29 @@ class ConsultarAutorizacionSriJob implements ShouldQueue
             throw $e;
         } finally {
             optional($lock)->release();
+        }
+    }
+
+    /**
+     * P08: Registrar agotamiento o muerte del worker con un estado recuperable
+     */
+    public function failed(Throwable $exception): void
+    {
+        Log::error('ConsultarAutorizacionSriJob agotó reintentos o falló.', [
+            'comprobante_id' => $this->comprobanteId,
+            'error' => $exception->getMessage(),
+        ]);
+
+        $comprobante = Comprobante::find($this->comprobanteId);
+        if ($comprobante && !in_array($comprobante->estado_sri, ['AUTORIZADO', 'NO_AUTORIZADO', 'DEVUELTA'], true)) {
+            app(SriComprobanteLifecycleService::class)->transition($comprobante, SriEstadoComprobante::ERROR_AUTORIZACION->value, [
+                'ultimo_error_sri' => 'Reintentos de consulta de autorización agotados: ' . $exception->getMessage(),
+            ], [
+                'etapa' => 'autorizacion',
+                'codigo' => 'CONSULTA_AGOTADA',
+                'mensaje' => 'Agotados los reintentos automáticos de consulta de autorización SRI.',
+                'detalles' => ['error' => $exception->getMessage()],
+            ]);
         }
     }
 

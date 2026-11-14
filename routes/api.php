@@ -229,6 +229,7 @@ Route::post('/facturacion/emitir-guia-remision', [FacturacionController::class, 
 Route::get('/facturacion/comprobantes/{comprobante}', [FacturacionController::class, 'estadoComprobante'])->middleware($businessMiddleware);
 Route::post('/facturacion/comprobantes/{comprobante}/reintentar', [FacturacionController::class, 'reintentarProcesamiento'])->middleware($businessMiddleware);
 Route::post('/facturacion/comprobantes/{comprobante}/corregir-fiscal', [FacturacionController::class, 'corregirFiscal'])->middleware($businessMiddleware);
+Route::post('/facturacion/comprobantes/{comprobante}/reenviar-email', [FacturacionController::class, 'reenviarEmail'])->middleware($businessMiddleware);
 Route::get('/facturacion/comprobantes/{comprobante}/pdf', [FacturacionController::class, 'downloadPdf'])->middleware($businessMiddleware);
 Route::get('/facturacion/comprobantes/{comprobante}/xml', [FacturacionController::class, 'downloadXml'])->middleware($businessMiddleware);
 Route::get('/facturacion/comprobantes', [FacturacionController::class, 'listarComprobantes'])->middleware($businessMiddleware);

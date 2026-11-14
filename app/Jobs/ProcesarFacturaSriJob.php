@@ -27,7 +27,7 @@ class ProcesarFacturaSriJob implements ShouldQueue
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public int $tries = 3;
-    public int $timeout = 120;
+    public int $timeout = 60;
     public array $backoff = [300, 900, 1800];
 
     /**
@@ -50,15 +50,19 @@ class ProcesarFacturaSriJob implements ShouldQueue
         SriComprobanteLifecycleService $lifecycle,
         SriSoapService $soapService
     ): void {
-        $comprobante = Comprobante::with(['company', 'cliente', 'establecimiento', 'detalles.impuestos.tipoImpuesto', 'impuestos.tipoImpuesto'])->find($this->comprobanteId);
-        if (!$comprobante || in_array($comprobante->estado_sri, ['AUTORIZADO', 'NO_AUTORIZADO', 'DEVUELTA'], true)) {
-            $this->deleteCertificate();
+        $lock = Cache::lock('sri-comprobante-'.$this->comprobanteId, 180);
+        if (!$lock->get()) {
+            $this->release(10);
             return;
         }
-        $lock = Cache::lock('sri-comprobante-'.$comprobante->id, 180);
-        if (!$lock->get()) return;
+
         $finished = false;
         try {
+            $comprobante = Comprobante::with(['company', 'cliente', 'establecimiento', 'detalles.impuestos.tipoImpuesto', 'impuestos.tipoImpuesto'])->find($this->comprobanteId);
+            if (!$comprobante || in_array($comprobante->estado_sri, ['AUTORIZADO', 'NO_AUTORIZADO', 'DEVUELTA'], true)) {
+                $finished = true;
+                return;
+            }
             if (in_array($comprobante->estado_sri, ['RECIBIDA', 'ERROR_AUTORIZACION'], true)) {
                 ConsultarAutorizacionSriJob::dispatch($comprobante->id);
                 $finished = true;
@@ -145,6 +149,18 @@ class ProcesarFacturaSriJob implements ShouldQueue
             'error' => $exception->getMessage(),
         ]);
         
+        $comprobante = Comprobante::find($this->comprobanteId);
+        if ($comprobante && !in_array($comprobante->estado_sri, ['AUTORIZADO', 'NO_AUTORIZADO', 'DEVUELTA'], true)) {
+            app(SriComprobanteLifecycleService::class)->transition($comprobante, 'ERROR_SISTEMA', [
+                'ultimo_error_sri' => 'El procesamiento agotó sus reintentos máximos o el worker terminó inesperadamente: ' . $exception->getMessage(),
+            ], [
+                'etapa' => 'orquestacion',
+                'codigo' => 'PROCESO_AGOTADO',
+                'mensaje' => 'Agotados los reintentos automáticos de procesamiento y firma SRI.',
+                'detalles' => ['error' => $exception->getMessage()],
+            ]);
+        }
+
         $this->deleteCertificate();
     }
 
