@@ -9,39 +9,97 @@ class SriResponseParserService
         $estado = $this->stringValue($this->get($response, ['RespuestaRecepcionComprobante', 'estado']));
         $comprobante = $this->firstNode($this->get($response, ['RespuestaRecepcionComprobante', 'comprobantes', 'comprobante']));
         $mensajes = $this->toArray($this->get($comprobante, ['mensajes', 'mensaje']));
+        $errores = $this->mapMensajes($mensajes);
+
+        // P05: Identificar si el SRI tiene la clave en proceso (código 70) o ya registrada (código 43)
+        $esClaveEnProceso = false;
+        $esClaveRegistrada = false;
+        foreach ($errores as $err) {
+            $id = (string) ($err['identificador'] ?? '');
+            if ($id === '70') {
+                $esClaveEnProceso = true;
+            } elseif ($id === '43') {
+                $esClaveRegistrada = true;
+            }
+        }
 
         return [
             'estado' => $estado ?: 'DESCONOCIDO',
             'success' => $estado === 'RECIBIDA',
-            'errores' => $this->mapMensajes($mensajes),
+            'es_clave_en_proceso' => $esClaveEnProceso,
+            'es_clave_registrada' => $esClaveRegistrada,
+            'errores' => $errores,
             'raw' => $response,
         ];
     }
 
-    public function parseAutorizacion(mixed $response): array
+    public function parseAutorizacion(mixed $response, ?string $expectedClaveAcceso = null, ?string $expectedAmbiente = null): array
     {
-        $autorizacion = $this->firstNode($this->get($response, ['RespuestaAutorizacionComprobante', 'autorizaciones', 'autorizacion']));
-        $estado = $this->stringValue($this->get($autorizacion, ['estado']));
+        $autorizaciones = $this->toArray($this->get($response, ['RespuestaAutorizacionComprobante', 'autorizaciones', 'autorizacion']));
+        $autorizacion = null;
 
-        $payload = [
-            'estado' => $estado ?: 'DESCONOCIDO',
-            'success' => $estado === 'AUTORIZADO',
-            'numero_autorizacion' => $this->stringValue($this->get($autorizacion, ['numeroAutorizacion'])),
-            'fecha_autorizacion' => $this->stringValue($this->get($autorizacion, ['fechaAutorizacion'])),
-            'xml_autorizado' => $this->stringValue($this->get($autorizacion, ['comprobante'])),
-            'errores' => $this->mapMensajes($this->toArray($this->get($autorizacion, ['mensajes', 'mensaje']))),
+        // P07: Seleccionar el nodo correspondiente a la clave consultada si existen varios
+        if ($expectedClaveAcceso !== null && !empty($autorizaciones)) {
+            foreach ($autorizaciones as $cand) {
+                $numAut = $this->stringValue($this->get($cand, ['numeroAutorizacion']));
+                if ($numAut === $expectedClaveAcceso) {
+                    $autorizacion = $cand;
+                    break;
+                }
+            }
+        }
+
+        if ($autorizacion === null) {
+            $autorizacion = $this->firstNode($autorizaciones);
+        }
+
+        $rawEstado = strtoupper(trim((string) $this->stringValue($this->get($autorizacion, ['estado']))));
+        $numeroAutorizacion = $this->stringValue($this->get($autorizacion, ['numeroAutorizacion']));
+        $fechaAutorizacion = $this->stringValue($this->get($autorizacion, ['fechaAutorizacion']));
+        $ambiente = $this->stringValue($this->get($autorizacion, ['ambiente']));
+        $xmlAutorizado = $this->stringValue($this->get($autorizacion, ['comprobante']));
+        $errores = $this->mapMensajes($this->toArray($this->get($autorizacion, ['mensajes', 'mensaje'])));
+
+        // Normalización de estados oficiales del SRI (Ficha Técnica F1 sección 7.3)
+        $isAutorizado = ($rawEstado === 'AUTORIZADO');
+        $isRechazado = in_array($rawEstado, ['NO AUTORIZADO', 'NO_AUTORIZADO', 'RECHAZADO'], true);
+        $isEnProceso = in_array($rawEstado, ['EN PROCESO', 'PENDIENTE'], true);
+
+        // P07: AUTORIZADO solo es válido si contiene evidencia completa y correspondiente
+        if ($isAutorizado) {
+            if (empty($numeroAutorizacion) || empty($fechaAutorizacion)) {
+                $isAutorizado = false;
+                $rawEstado = 'INCONSISTENTE';
+                $errores[] = [
+                    'identificador' => 'ERR_METADATOS',
+                    'mensaje' => 'La respuesta del SRI marca AUTORIZADO pero carece de número o fecha de autorización.',
+                    'informacion_adicional' => null,
+                    'tipo' => 'ERROR'
+                ];
+            } elseif ($expectedClaveAcceso !== null && $numeroAutorizacion !== $expectedClaveAcceso) {
+                $isAutorizado = false;
+                $rawEstado = 'INCONSISTENTE';
+                $errores[] = [
+                    'identificador' => 'ERR_CLAVE_DISCORDANTE',
+                    'mensaje' => "El número de autorización devuelto ({$numeroAutorizacion}) no coincide con la clave de acceso de la factura ({$expectedClaveAcceso}).",
+                    'informacion_adicional' => null,
+                    'tipo' => 'ERROR'
+                ];
+            }
+        }
+
+        $estadoFinal = $isAutorizado ? 'AUTORIZADO' : ($isRechazado ? 'NO_AUTORIZADO' : ($isEnProceso ? 'EN_PROCESO' : ($rawEstado ?: 'DESCONOCIDO')));
+
+        return [
+            'estado' => $estadoFinal,
+            'success' => $isAutorizado,
+            'ambiente' => $ambiente,
+            'numero_autorizacion' => $numeroAutorizacion,
+            'fecha_autorizacion' => $fechaAutorizacion,
+            'xml_autorizado' => $xmlAutorizado,
+            'errores' => $errores,
             'raw' => $response,
         ];
-
-        if ($payload['success']) {
-            return $payload;
-        }
-
-        if ($payload['estado'] === 'NO AUTORIZADO') {
-            $payload['estado'] = 'NO_AUTORIZADO';
-        }
-
-        return $payload;
     }
 
     private function mapMensajes(array $mensajes): array
@@ -82,7 +140,10 @@ class SriResponseParserService
     private function firstNode(mixed $node): mixed
     {
         if (is_array($node)) {
-            return $node[0] ?? null;
+            if (array_is_list($node)) {
+                return $node[0] ?? null;
+            }
+            return $node;
         }
 
         return $node;
@@ -95,7 +156,10 @@ class SriResponseParserService
         }
 
         if (is_array($node)) {
-            return $node;
+            if (array_is_list($node)) {
+                return $node;
+            }
+            return [$node];
         }
 
         return [$node];

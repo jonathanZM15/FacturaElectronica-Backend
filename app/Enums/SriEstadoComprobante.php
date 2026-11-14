@@ -25,9 +25,9 @@ enum SriEstadoComprobante: string
             self::FIRMADO => in_array($next, [self::ENVIADO, self::ERROR_ENVIO, self::ERROR_SISTEMA], true),
             self::ENVIADO => in_array($next, [self::RECIBIDA, self::DEVUELTA, self::ERROR_ENVIO, self::ERROR_AUTORIZACION, self::ERROR_SISTEMA], true),
             self::RECIBIDA => in_array($next, [self::AUTORIZADO, self::NO_AUTORIZADO, self::ERROR_AUTORIZACION, self::ERROR_SISTEMA], true),
-            self::DEVUELTA => in_array($next, [self::ENVIADO, self::ERROR_ENVIO, self::ERROR_SISTEMA], true),
+            self::DEVUELTA => in_array($next, [self::PROCESANDO, self::FIRMADO, self::ENVIADO, self::ERROR_ENVIO, self::ERROR_SISTEMA], true),
             self::AUTORIZADO => false,
-            self::NO_AUTORIZADO => false,
+            self::NO_AUTORIZADO => in_array($next, [self::PROCESANDO, self::FIRMADO], true),
             self::ERROR_FIRMA, self::ERROR_ENVIO, self::ERROR_AUTORIZACION, self::ERROR_SISTEMA => true,
         };
     }

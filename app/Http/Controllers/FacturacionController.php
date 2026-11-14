@@ -1102,7 +1102,7 @@ class FacturacionController extends Controller
     {
         \App\Services\BusinessAccess::invoice(request()->user(), $comprobante);
         if (in_array($comprobante->estado_sri, ['AUTORIZADO', 'NO_AUTORIZADO', 'DEVUELTA'], true)) {
-            return response()->json(['message' => 'El comprobante tiene una respuesta final. Requiere revisión, no otra venta ni un reenvío automático.'], 409);
+            return response()->json(['message' => 'El comprobante tiene una respuesta final del SRI. Si presenta inconsistencias en datos fiscales, utilice la opción de corrección fiscal controlada.'], 409);
         }
         if (in_array($comprobante->estado_sri, ['RECIBIDA', 'ENVIADO', 'ERROR_AUTORIZACION'], true) && $comprobante->clave_acceso) {
             ConsultarAutorizacionSriJob::dispatch($comprobante->id)->afterCommit();
@@ -1110,6 +1110,154 @@ class FacturacionController extends Controller
             app(\App\Services\InvoiceProcessingService::class)->dispatch($comprobante);
         }
         return response()->json(['message' => 'Procesamiento del mismo comprobante programado. No se repite el cobro ni el movimiento de inventario.'], 202);
+    }
+
+    /**
+     * P06: Corrección fiscal controlada de facturas devueltas o no autorizadas por inconsistencias fiscales.
+     * Permite corregir datos del cliente, regenera el XML y reprograma la firma/envío sin duplicar cobro ni stock.
+     */
+    public function corregirFiscal(Request $request, Comprobante $comprobante): JsonResponse
+    {
+        \App\Services\BusinessAccess::invoice($request->user(), $comprobante);
+
+        if ($comprobante->estado_sri === 'AUTORIZADO') {
+            return response()->json(['message' => 'Una factura AUTORIZADA por el SRI no puede ser modificada.'], 422);
+        }
+
+        if (!in_array($comprobante->estado_sri, ['DEVUELTA', 'NO_AUTORIZADO', 'ERROR_ENVIO', 'ERROR_FIRMA', 'ERROR_AUTORIZACION'], true)) {
+            return response()->json(['message' => 'Solo se pueden corregir facturas en estado DEVUELTA, NO_AUTORIZADO o con error de procesamiento.'], 422);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'cliente' => ['required', 'array'],
+            'cliente.tipo_identificacion' => ['required', 'string'],
+            'cliente.identificacion' => ['required', 'string', 'max:13'],
+            'cliente.razon_social' => ['required', 'string', 'max:255'],
+            'cliente.direccion' => ['required', 'string', 'max:500'],
+            'cliente.email' => ['required', 'email', 'max:255'],
+            'cliente.telefono' => ['nullable', 'string', 'max:50'],
+            'motivo_correccion' => ['required', 'string', 'min:5', 'max:500'],
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Datos de corrección inválidos.',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $clientData = $request->input('cliente');
+        $tipoId = (string) $clientData['tipo_identificacion'];
+        $idNum = trim((string) $clientData['identificacion']);
+
+        if (!\App\Services\ClientIdentification::valid($tipoId, $idNum)) {
+            return response()->json([
+                'message' => 'La identificación ingresada no es válida para el tipo seleccionado según las reglas del SRI.',
+                'errors' => ['cliente.identificacion' => ['Identificación no válida.']]
+            ], 422);
+        }
+
+        // Validación P02: Consumidor final no permitido si el total supera $50.00
+        $normTipo = \App\Services\ClientIdentification::normalize($tipoId);
+        if (($normTipo === 'CONSUMIDOR_FINAL' || $idNum === '9999999999999') && (float) $comprobante->total > 50.00) {
+            return response()->json([
+                'message' => 'Por normativa del SRI, en facturas superiores a $50.00 no se admite Consumidor Final.',
+                'errors' => ['cliente.identificacion' => ['Monto superior a $50.00 requiere cliente identificado.']]
+            ], 422);
+        }
+
+        return DB::transaction(function () use ($request, $comprobante, $clientData, $normTipo, $idNum) {
+            $clienteAnterior = $comprobante->cliente ? [
+                'tipo_identificacion' => $comprobante->cliente->tipo_identificacion,
+                'identificacion' => $comprobante->cliente->identificacion,
+                'razon_social' => $comprobante->cliente->razon_social,
+            ] : null;
+
+            // Actualizar o asociar cliente corregido
+            $cliente = Cliente::where('emisor_id', $comprobante->emisor_id)
+                ->where('identificacion', $idNum)
+                ->first();
+
+            if ($cliente) {
+                $cliente->update([
+                    'tipo_identificacion' => $clientData['tipo_identificacion'],
+                    'razon_social' => $clientData['razon_social'],
+                    'direccion' => $clientData['direccion'],
+                    'email' => $clientData['email'],
+                    'telefono' => $clientData['telefono'] ?? null,
+                ]);
+            } else {
+                $cliente = Cliente::create([
+                    'emisor_id' => $comprobante->emisor_id,
+                    'tipo_identificacion' => $clientData['tipo_identificacion'],
+                    'identificacion' => $idNum,
+                    'razon_social' => $clientData['razon_social'],
+                    'direccion' => $clientData['direccion'],
+                    'email' => $clientData['email'],
+                    'telefono' => $clientData['telefono'] ?? null,
+                    'estado' => 'ACTIVO',
+                ]);
+            }
+
+            $comprobante->cliente_id = $cliente->id;
+            $comprobante->setRelation('cliente', $cliente);
+
+            // Regenerar XML manteniendo secuencial, emisor y montos
+            $xmlService = app(\App\Services\SriXmlGeneratorService::class);
+            $generated = $xmlService->generarXmlFactura($comprobante);
+
+            $comprobante->xml_generado = $generated['xml'];
+            $comprobante->clave_acceso = $generated['clave_acceso'];
+            $comprobante->xml_firmado = null;
+            $comprobante->sri_intentos_envio = 0;
+            $comprobante->sri_intentos_autorizacion = 0;
+            $comprobante->ultimo_error_sri = null;
+            $comprobante->save();
+
+            // Transicionar estado y registrar evento auditado en el historial
+            $lifecycle = app(\App\Services\SriComprobanteLifecycleService::class);
+            $user = $request->user();
+            $motivo = $request->input('motivo_correccion');
+
+            $lifecycle->transition($comprobante, 'PROCESANDO', [], [
+                'etapa' => 'correccion_fiscal',
+                'codigo' => 'CORRECCION_FISCAL_CONTROLADA',
+                'mensaje' => "Corrección fiscal controlada por {$user->username}: {$motivo}",
+                'detalles' => [
+                    'cliente_anterior' => $clienteAnterior,
+                    'cliente_nuevo' => [
+                        'tipo_identificacion' => $clientData['tipo_identificacion'],
+                        'identificacion' => $idNum,
+                        'razon_social' => $clientData['razon_social'],
+                    ],
+                    'motivo' => $motivo,
+                    'usuario_id' => $user->id,
+                    'ip' => $request->ip(),
+                ]
+            ]);
+
+            // Reprogramar despacho durable sin afectar stock ni caja si la empresa tiene firma configurada
+            $despachado = false;
+            try {
+                app(\App\Services\InvoiceProcessingService::class)->dispatch($comprobante);
+                $despachado = true;
+            } catch (\Illuminate\Validation\ValidationException $e) {
+                // Si la empresa aún no tiene certificado digital configurado en el sistema,
+                // la factura queda actualizada con los nuevos datos fiscales y en estado PROCESANDO lista para firmarse cuando se cargue el certificado.
+                \Illuminate\Support\Facades\Log::warning("Comprobante {$comprobante->id} corregido fiscalmente pero no despachado por falta de firma: " . $e->getMessage());
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => $despachado 
+                    ? 'Comprobante corregido fiscalmente y reprogramado para autorización. No se repitió el cobro ni el movimiento de inventario.'
+                    : 'Comprobante corregido fiscalmente. Se firmará y enviará cuando el emisor configure su firma electrónica.',
+                'despachado' => $despachado,
+                'comprobante_id' => $comprobante->id,
+                'clave_acceso' => $comprobante->clave_acceso,
+                'estado_sri' => $comprobante->fresh()->estado_sri,
+            ], 200);
+        });
     }
 
     private function buildSubtotales(array $detalles): array

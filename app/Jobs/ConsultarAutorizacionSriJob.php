@@ -56,13 +56,20 @@ class ConsultarAutorizacionSriJob implements ShouldQueue
             ])->save();
 
             if ($autorizacion['success'] ?? false) {
+                // P07: Verificar que la autorización traiga evidencia real y no sustituir con dato inventado
+                $numAut = trim((string) ($autorizacion['numero_autorizacion'] ?? ''));
+                if (empty($numAut)) {
+                    throw new \RuntimeException('La respuesta del SRI no contiene un número de autorización válido.');
+                }
+
                 if ($comprobante->estado_sri !== 'RECIBIDA') $comprobante = $lifecycle->transition($comprobante, 'RECIBIDA');
                 $comprobante = $lifecycle->transition($comprobante, SriEstadoComprobante::AUTORIZADO->value, [
                     'sri_estado_autorizacion' => SriEstadoComprobante::AUTORIZADO->value,
-                    'numero_autorizacion' => $autorizacion['numero_autorizacion'] ?? $comprobante->clave_acceso,
+                    'numero_autorizacion' => $numAut,
                     'fecha_autorizacion' => $autorizacion['fecha_autorizacion'] ?? null,
                     'xml_autorizado' => $autorizacion['xml_autorizado'] ?? null,
                     'autorizado_en' => now(),
+                    'ultimo_error_sri' => null,
                 ], [
                     'etapa' => 'autorizacion',
                     'codigo' => 'AUTORIZADO',
@@ -91,9 +98,24 @@ class ConsultarAutorizacionSriJob implements ShouldQueue
             }
 
             $estado = $autorizacion['estado'] ?? 'DESCONOCIDO';
-            if (!in_array($estado, ['NO_AUTORIZADO', 'NO AUTORIZADO'], true)) {
-                if (in_array($estado, ['EN PROCESO', 'RECIBIDA', 'DESCONOCIDO'], true) && $this->attempts() < (int) config('sri.max_authorization_attempts', 10)) {
-                    $this->release((int) config('sri.retry_after_seconds'));
+            if ($estado === 'INCONSISTENTE') {
+                $errMsg = $this->flattenErrors($autorizacion['errores'] ?? [], 'Inconsistencia en la respuesta de autorización del SRI.');
+                $lifecycle->transition($comprobante, SriEstadoComprobante::ERROR_AUTORIZACION->value, [
+                    'ultimo_error_sri' => $errMsg,
+                ], [
+                    'etapa' => 'autorizacion',
+                    'codigo' => 'INCONSISTENTE',
+                    'mensaje' => 'Respuesta no correlacionada con la clave de acceso de la factura.',
+                    'solicitud_payload' => $comprobante->clave_acceso,
+                    'respuesta_payload' => json_encode($autorizacion, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    'detalles' => $autorizacion['errores'] ?? [],
+                ]);
+                return;
+            }
+
+            if (!in_array($estado, ['NO_AUTORIZADO', 'NO AUTORIZADO', 'RECHAZADO'], true)) {
+                if (in_array($estado, ['EN PROCESO', 'EN_PROCESO', 'RECIBIDA', 'DESCONOCIDO'], true) && $this->attempts() < (int) config('sri.max_authorization_attempts', 10)) {
+                    $this->release((int) config('sri.retry_after_seconds', 300));
                     return;
                 }
                 throw new \RuntimeException($autorizacion['error'] ?? 'No se ha confirmado la autorización; no equivale a un rechazo del SRI.');
@@ -107,7 +129,7 @@ class ConsultarAutorizacionSriJob implements ShouldQueue
             ], [
                 'etapa' => 'autorizacion',
                 'codigo' => $estado,
-                'mensaje' => 'El comprobante aun no se autoriza o fue rechazado.',
+                'mensaje' => 'El comprobante fue devuelto/rechazado por el SRI en fase de autorización.',
                 'solicitud_payload' => $comprobante->clave_acceso,
                 'respuesta_payload' => json_encode($autorizacion, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                 'detalles' => $autorizacion['errores'] ?? [],

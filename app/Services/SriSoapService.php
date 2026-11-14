@@ -42,7 +42,7 @@ class SriSoapService
 
             $response = $client->autorizacionComprobante(['claveAccesoComprobante' => $claveAcceso]);
 
-            return $this->parser->parseAutorizacion($response);
+            return $this->parser->parseAutorizacion($response, $claveAcceso, $ambiente);
         } catch (SoapFault $e) {
             return [
                 'success' => false,

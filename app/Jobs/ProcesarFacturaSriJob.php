@@ -90,6 +90,29 @@ class ProcesarFacturaSriJob implements ShouldQueue
             }
             if ($comprobante->estado_sri !== 'ENVIADO') $comprobante = $lifecycle->transition($comprobante, 'ENVIADO', ['enviado_en' => now()], ['etapa' => 'recepcion', 'mensaje' => 'Respuesta del servicio de recepción recibida.']);
             if (($recepcion['estado'] ?? '') === 'DEVUELTA') {
+                // P05: Si el SRI devuelve código 70 (en procesamiento) o 43 (clave ya registrada),
+                // no marcar como fallo terminal DEVUELTA, sino programar consulta de autorización con la misma clave.
+                if (!empty($recepcion['es_clave_en_proceso']) || !empty($recepcion['es_clave_registrada'])) {
+                    $motivo = !empty($recepcion['es_clave_en_proceso'])
+                        ? 'Clave de acceso en procesamiento en el SRI (código 70). Se programa consulta de autorización sin anular comprobante.'
+                        : 'Clave de acceso ya registrada en el SRI (código 43). Se programa consulta de autorización para reconciliación.';
+
+                    $lifecycle->transition($comprobante, 'RECIBIDA', [
+                        'sri_estado_recepcion' => !empty($recepcion['es_clave_en_proceso']) ? 'EN_PROCESO' : 'REGISTRADA',
+                        'recibido_en' => now(),
+                        'ultimo_error_sri' => null,
+                    ], [
+                        'etapa' => 'recepcion',
+                        'codigo' => !empty($recepcion['es_clave_en_proceso']) ? '70' : '43',
+                        'mensaje' => $motivo,
+                        'respuesta_payload' => json_encode($recepcion, JSON_UNESCAPED_UNICODE),
+                    ]);
+
+                    ConsultarAutorizacionSriJob::dispatch($comprobante->id)->delay(now()->addSeconds((int) config('sri.retry_after_seconds', 300)));
+                    $finished = true;
+                    return;
+                }
+
                 $lifecycle->transition($comprobante, 'DEVUELTA', ['sri_estado_recepcion' => 'DEVUELTA', 'ultimo_error_sri' => $this->flattenErrors($recepcion['errores'] ?? [], $recepcion['error'] ?? null)], ['etapa' => 'recepcion', 'mensaje' => 'Devolución real del servicio SRI.', 'respuesta_payload' => json_encode($recepcion, JSON_UNESCAPED_UNICODE)]);
                 $finished = true;
                 return;
