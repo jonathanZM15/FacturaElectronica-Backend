@@ -88,6 +88,39 @@ class ReconciliarComprobantesSriCommand extends Command
 
         $this->info("Reconciliador SRI: Proceso finalizado. {$reconciliados} comprobantes reconciliados.");
 
+        // P12: Depuración segura de certificados temporales huérfanos sin tocar originales
+        $this->depurarTemporalesHuerfanos();
+
         return Command::SUCCESS;
+    }
+
+    /**
+     * P12: Depurar certificados temporales huérfanos en sri/trabajos con más de 1 hora de antigüedad
+     */
+    private function depurarTemporalesHuerfanos(): void
+    {
+        $disk = \Illuminate\Support\Facades\Storage::disk(config('sri.certificate_disk', 'local'));
+        if (!$disk->exists('sri/trabajos')) {
+            return;
+        }
+
+        $files = $disk->files('sri/trabajos');
+        $eliminados = 0;
+        $limiteTiempo = now()->subHour()->getTimestamp();
+
+        foreach ($files as $file) {
+            try {
+                if ($disk->lastModified($file) < $limiteTiempo) {
+                    $disk->delete($file);
+                    $eliminados++;
+                }
+            } catch (\Throwable $e) {
+                // Continuar si el archivo está en uso
+            }
+        }
+
+        if ($eliminados > 0) {
+            $this->info("Reconciliador SRI: Se depuraron {$eliminados} certificados temporales huérfanos de sri/trabajos.");
+        }
     }
 }

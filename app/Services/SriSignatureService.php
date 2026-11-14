@@ -12,18 +12,12 @@ use RobRichards\XMLSecLibs\XMLSecurityKey;
 class SriSignatureService
 {
     /**
-     * Verifica que el P12 sea legible con la contraseña indicada (sin firmar XML).
+     * Verifica que el P12 sea legible con la contraseña indicada y válido temporal y estructuralmente (sin firmar XML).
      */
-    public function verificarP12(string $rutaFirmaP12, string $passwordFirma): void
+    public function verificarP12(string $rutaFirmaP12, string $passwordFirma): array
     {
-        try {
-            $this->abrirPkcs12DesdeArchivo($rutaFirmaP12, $passwordFirma);
-        } catch (SriFirmaException $e) {
-            if (str_contains($e->getMessage(), 'CADUCADO')) {
-                throw $e;
-            }
-            throw $e;
-        }
+        $certs = $this->abrirPkcs12DesdeArchivo($rutaFirmaP12, $passwordFirma);
+        return $this->validarCertificados($certs);
     }
 
 
@@ -307,10 +301,10 @@ class SriSignatureService
         $privateKey = $certs['pkey'] ?? null;
         $publicCert = $certs['cert'] ?? null;
         if (!$privateKey || !$publicCert) {
-            throw new SriFirmaException('El P12 no contiene certificado o llave privada.');
+            throw new SriFirmaException('El archivo P12 no contiene certificado o llave privada.');
         }
 
-        // Verificar si el certificado principal corresponde a la llave privada
+        // P11: Verificar si el certificado principal corresponde a la llave privada
         if (!@openssl_x509_check_private_key($publicCert, $privateKey)) {
             Log::warning('El certificado público principal no coincide con la llave privada. Buscando en extracerts...');
             $foundMatch = false;
@@ -327,38 +321,68 @@ class SriSignatureService
             }
 
             if (!$foundMatch) {
-                Log::warning('Ningún certificado del P12 coincide con la llave privada.');
+                Log::error('Ningún certificado del P12 coincide con la llave privada.');
+                throw new SriFirmaException('Ningún certificado presente en el archivo .p12 corresponde a la clave privada.');
             }
         }
 
         $parsed = openssl_x509_parse($publicCert);
-        if ($parsed) {
-            $validToTime = $parsed['validTo_time_t'] ?? null;
-            $subjectName = $parsed['subject']['CN'] ?? ($parsed['subject']['O'] ?? 'desconocido');
-            $fechaCaducidad = $validToTime ? date('d/m/Y H:i', $validToTime) : 'desconocida';
+        if (!$parsed) {
+            throw new SriFirmaException('No se pudo interpretar el certificado público del archivo .p12.');
+        }
 
-            Log::info('Certificado final seleccionado para firma:', [
+        $validFromTime = $parsed['validFrom_time_t'] ?? null;
+        $validToTime = $parsed['validTo_time_t'] ?? null;
+        $subjectName = $parsed['subject']['CN'] ?? ($parsed['subject']['O'] ?? 'desconocido');
+        $issuerName = $parsed['issuer']['CN'] ?? ($parsed['issuer']['O'] ?? 'desconocido');
+        $fechaCaducidad = $validToTime ? date('d/m/Y H:i', $validToTime) : 'desconocida';
+        $fechaInicio = $validFromTime ? date('d/m/Y H:i', $validFromTime) : 'desconocida';
+
+        Log::info('Certificado final seleccionado para firma:', [
+            'subject' => $subjectName,
+            'issuer' => $issuerName,
+            'validFrom' => $fechaInicio,
+            'validTo' => $fechaCaducidad,
+        ]);
+
+        // P11: Verificar que el certificado ya esté en su período de vigencia
+        if ($validFromTime && time() < $validFromTime) {
+            Log::warning('Certificado P12 aún no vigente.', [
                 'subject' => $subjectName,
-                'issuer' => $parsed['issuer']['CN'] ?? ($parsed['issuer']['O'] ?? 'desconocido'),
+                'validFrom' => $fechaInicio,
+            ]);
+
+            throw new SriFirmaException(
+                "El certificado digital (.p12) de '{$subjectName}' aún no está vigente (vigente a partir del {$fechaInicio}). " .
+                "El SRI rechaza firmas electrónicas emitidas en el futuro o con fecha de vigencia no iniciada."
+            );
+        }
+
+        // P11: Verificar que el certificado no esté caducado
+        if ($validToTime && time() > $validToTime) {
+            Log::warning('Certificado P12 caducado.', [
+                'subject' => $subjectName,
                 'validTo' => $fechaCaducidad,
             ]);
 
-            if ($validToTime && time() > $validToTime) {
-                Log::warning('Certificado P12 caducado.', [
-                    'subject' => $subjectName,
-                    'validTo' => $fechaCaducidad,
-                ]);
-
-                if (!config('sri.permitir_certificados_caducados', false)) {
-                    throw new SriFirmaException(
-                        "El certificado digital (.p12) de '{$subjectName}' se encuentra CADUCADO desde el {$fechaCaducidad}. " .
-                        "El SRI rechaza firmas electrónicas vencidas. Por favor utiliza un certificado vigente."
-                    );
-                }
+            if (!config('sri.permitir_certificados_caducados', false)) {
+                throw new SriFirmaException(
+                    "El certificado digital (.p12) de '{$subjectName}' se encuentra CADUCADO desde el {$fechaCaducidad}. " .
+                    "El SRI rechaza firmas electrónicas vencidas. Por favor utiliza un certificado vigente."
+                );
             }
         }
 
-        return ['pkey' => $privateKey, 'cert' => $publicCert];
+        return [
+            'pkey' => $privateKey,
+            'cert' => $publicCert,
+            'subject' => $subjectName,
+            'issuer' => $issuerName,
+            'valid_from' => $fechaInicio,
+            'valid_to' => $fechaCaducidad,
+            'valid_to_time' => $validToTime,
+            'vigente' => ($validFromTime === null || time() >= $validFromTime) && ($validToTime === null || time() <= $validToTime),
+        ];
     }
 
 
@@ -420,10 +444,14 @@ CNF;
         // sino en la carpeta extras/ssl de PHP.
         $legacyProviderPath = $this->resolveLegacyProviderPath();
 
-        $command = [$opensslBin, 'pkcs12', '-in', $p12Path, '-nodes', '-passin', 'pass:' . $password, '-legacy'];
+        // P12: Entregar el secreto a OpenSSL por un canal seguro (variable de entorno)
+        // para que no quede expuesto en argumentos de línea de comandos (/proc o wmic/ps).
+        $env['OPENSSL_PASS'] = $password;
+
+        $command = [$opensslBin, 'pkcs12', '-in', $p12Path, '-nodes', '-passin', 'env:OPENSSL_PASS', '-legacy'];
         if ($legacyProviderPath !== null) {
             // Pasar -provider-path antes de -legacy para que openssl sepa dónde buscar el .dll
-            $command = [$opensslBin, 'pkcs12', '-in', $p12Path, '-nodes', '-passin', 'pass:' . $password,
+            $command = [$opensslBin, 'pkcs12', '-in', $p12Path, '-nodes', '-passin', 'env:OPENSSL_PASS',
                 '-provider-path', $legacyProviderPath,
                 '-provider', 'default',
                 '-provider', 'legacy',
@@ -436,15 +464,17 @@ CNF;
                 ->env($env)
                 ->run($command);
         } catch (\Throwable $e) {
-            Log::warning('CLI OpenSSL no disponible para P12.', ['error' => $e->getMessage()]);
+            $cleanError = str_replace($password, '********', $e->getMessage());
+            Log::warning('CLI OpenSSL no disponible para P12.', ['error' => $cleanError]);
 
             return null;
         }
 
         if (!$result->successful()) {
+            $cleanStderr = str_replace($password, '********', $result->errorOutput());
             Log::warning('CLI OpenSSL pkcs12 falló.', [
                 'exit_code' => $result->exitCode(),
-                'stderr' => $result->errorOutput(),
+                'stderr' => $cleanStderr,
             ]);
 
             return null;
@@ -800,5 +830,128 @@ CNF;
         }
 
         return ltrim($result, '0') ?: '0';
+    }
+
+    /**
+     * V01: Validación criptográfica independiente de firma XAdES-BES.
+     * Verifica la integridad del documento, referencias y SignatureValue según la Ficha Técnica del SRI.
+     */
+    public function verificarXmlFirmado(string $xmlFirmado): array
+    {
+        $dom = new \DOMDocument();
+        $dom->preserveWhiteSpace = true;
+        if (!@$dom->loadXML($xmlFirmado)) {
+            return ['valida' => false, 'error' => 'El XML firmado no es un documento XML válido.'];
+        }
+
+        $xpath = new \DOMXPath($dom);
+        $xpath->registerNamespace('ds', 'http://www.w3.org/2000/09/xmldsig#');
+        $xpath->registerNamespace('etsi', 'http://uri.etsi.org/01903/v1.3.2#');
+
+        $signatureNodes = $xpath->query('//ds:Signature');
+        if ($signatureNodes->length === 0) {
+            return ['valida' => false, 'error' => 'No se encontró el elemento ds:Signature en el documento.'];
+        }
+
+        $signatureNode = $signatureNodes->item(0);
+
+        // 1. Extraer certificado público X509 embebido
+        $x509CertNodes = $xpath->query('.//ds:KeyInfo/ds:X509Data/ds:X509Certificate', $signatureNode);
+        if ($x509CertNodes->length === 0) {
+            return ['valida' => false, 'error' => 'No se encontró ds:X509Certificate en KeyInfo.'];
+        }
+        $certBase64 = preg_replace('/\s+/', '', $x509CertNodes->item(0)->textContent);
+        $certPem = "-----BEGIN CERTIFICATE-----\n" . chunk_split($certBase64, 64, "\n") . "-----END CERTIFICATE-----\n";
+        $publicKey = openssl_pkey_get_public($certPem);
+        if (!$publicKey) {
+            return ['valida' => false, 'error' => 'No se pudo extraer la clave pública del certificado X509 embebido.'];
+        }
+
+        // 2. Extraer SignatureValue
+        $sigValueNodes = $xpath->query('.//ds:SignatureValue', $signatureNode);
+        if ($sigValueNodes->length === 0) {
+            return ['valida' => false, 'error' => 'No se encontró el elemento ds:SignatureValue.'];
+        }
+        $signatureValue = base64_decode(preg_replace('/\s+/', '', $sigValueNodes->item(0)->textContent));
+
+        // 3. Extraer SignedInfo y verificar firma criptográfica RSA-SHA1
+        $signedInfoNodes = $xpath->query('.//ds:SignedInfo', $signatureNode);
+        if ($signedInfoNodes->length === 0) {
+            return ['valida' => false, 'error' => 'No se encontró el elemento ds:SignedInfo.'];
+        }
+        $signedInfoNode = $signedInfoNodes->item(0);
+        $c14nSignedInfo = $signedInfoNode->C14N();
+
+        $verifyResult = openssl_verify($c14nSignedInfo, $signatureValue, $publicKey, OPENSSL_ALGO_SHA1);
+        if ($verifyResult !== 1) {
+            return [
+                'valida' => false,
+                'error' => 'La firma digital (SignatureValue) no corresponde criptográficamente al contenido de SignedInfo (firma alterada o clave no coincidente).'
+            ];
+        }
+
+        // 4. Verificar referencias y sus DigestValues
+        $referenceNodes = $xpath->query('.//ds:Reference', $signedInfoNode);
+        if ($referenceNodes->length === 0) {
+            return ['valida' => false, 'error' => 'SignedInfo no contiene referencias de verificación.'];
+        }
+
+        foreach ($referenceNodes as $refNode) {
+            $uri = $refNode->getAttribute('URI');
+            $expectedDigest = trim($xpath->query('.//ds:DigestValue', $refNode)->item(0)?->textContent ?? '');
+
+            if ($uri === '' || str_starts_with($uri, '#')) {
+                $targetId = ltrim($uri, '#');
+                $targetElement = null;
+
+                if ($targetId === '') {
+                    $targetElement = $dom->documentElement;
+                } else {
+                    $elements = $xpath->query("//*[@Id='{$targetId}'] | //*[@id='{$targetId}']");
+                    if ($elements->length > 0) {
+                        $targetElement = $elements->item(0);
+                    }
+                }
+
+                if ($targetElement) {
+                    $hasEnveloped = false;
+                    $transforms = $xpath->query('.//ds:Transforms/ds:Transform', $refNode);
+                    foreach ($transforms as $t) {
+                        if ($t->getAttribute('Algorithm') === 'http://www.w3.org/2000/09/xmldsig#enveloped-signature') {
+                            $hasEnveloped = true;
+                            break;
+                        }
+                    }
+
+                    if ($hasEnveloped) {
+                        $cloneDoc = new \DOMDocument();
+                        $cloneDoc->preserveWhiteSpace = true;
+                        $cloneDoc->loadXML($dom->saveXML());
+                        $cloneXpath = new \DOMXPath($cloneDoc);
+                        $cloneXpath->registerNamespace('ds', 'http://www.w3.org/2000/09/xmldsig#');
+                        foreach ($cloneXpath->query('//ds:Signature') as $sigToRemove) {
+                            $sigToRemove->parentNode->removeChild($sigToRemove);
+                        }
+                        $targetXmlC14n = $cloneDoc->documentElement->C14N();
+                    } else {
+                        $targetXmlC14n = $targetElement->C14N();
+                    }
+
+                    $calculatedDigest = base64_encode(sha1($targetXmlC14n, true));
+                    if ($calculatedDigest !== $expectedDigest) {
+                        return [
+                            'valida' => false,
+                            'error' => "El resumen digest del elemento con ID '{$targetId}' no coincide (el contenido fue alterado tras la firma)."
+                        ];
+                    }
+                }
+            }
+        }
+
+        return [
+            'valida' => true,
+            'mensaje' => 'Firma XAdES-BES criptográficamente íntegra y verificada según la normativa del SRI.',
+            'algoritmo' => 'RSA-SHA1',
+        ];
     }
 }

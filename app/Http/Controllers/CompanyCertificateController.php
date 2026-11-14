@@ -11,12 +11,35 @@ use Illuminate\Support\Facades\{DB, Storage};
 
 class CompanyCertificateController extends Controller
 {
-    public function show(Request $request, int $emisorId)
+    public function show(Request $request, int $emisorId, SriSignatureService $signer)
     {
         abort_unless(\App\Services\PermissionService::tienePermiso($request->user(), 'comprobantes.read'), 403);
         BusinessAccess::company($request->user(), $emisorId);
         $certificate = CompanyCertificate::where('emisor_id', $emisorId)->first();
-        return response()->json(['configured' => $certificate !== null, 'original_name' => $certificate?->original_name]);
+        if (!$certificate) {
+            return response()->json(['configured' => false, 'original_name' => null]);
+        }
+
+        $info = null;
+        try {
+            $disk = Storage::disk(config('sri.certificate_disk', 'local'));
+            if ($disk->exists($certificate->path)) {
+                $info = $signer->verificarP12($disk->path($certificate->path), $certificate->password);
+            }
+        } catch (\Throwable $e) {
+            $info = ['error' => $e->getMessage(), 'vigente' => false];
+        }
+
+        return response()->json([
+            'configured' => true,
+            'original_name' => $certificate->original_name,
+            'emitido_a' => $info['subject'] ?? null,
+            'emitido_por' => $info['issuer'] ?? null,
+            'valido_desde' => $info['valid_from'] ?? null,
+            'valido_hasta' => $info['valid_to'] ?? null,
+            'vigente' => $info['vigente'] ?? false,
+            'error_vigencia' => $info['error'] ?? null,
+        ]);
     }
 
     public function store(Request $request, int $emisorId, SriSignatureService $signer)

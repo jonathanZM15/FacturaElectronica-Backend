@@ -1478,15 +1478,43 @@ class FacturacionController extends Controller
             ->header('Content-Disposition', 'attachment; filename="' . $comprobante->clave_acceso . '.pdf"');
     }
 
-    public function downloadXml(Comprobante $comprobante): mixed
+    public function downloadXml(Request $request, Comprobante $comprobante): mixed
     {
-        \App\Services\BusinessAccess::invoice(request()->user(), $comprobante);
-        if ($comprobante->estado_sri !== 'AUTORIZADO' || !$comprobante->xml_autorizado) {
+        \App\Services\BusinessAccess::invoice($request->user(), $comprobante);
+        if ($comprobante->estado_sri !== 'AUTORIZADO' || (!$comprobante->xml_autorizado && !$comprobante->xml_firmado)) {
             return response()->json(['message' => 'El comprobante no está autorizado o no tiene XML.'], 403);
         }
 
-        return response($comprobante->xml_autorizado)
+        $formato = strtolower((string) $request->query('formato', 'paquete'));
+        $innerXml = $comprobante->xml_autorizado ?: $comprobante->xml_firmado;
+
+        if ($formato === 'firmado' || $formato === 'comprobante') {
+            return response($innerXml)
+                ->header('Content-Type', 'application/xml')
+                ->header('Content-Disposition', 'attachment; filename="' . $comprobante->clave_acceso . '.xml"');
+        }
+
+        // A03: Generar paquete XML oficial de autorización del SRI (Ficha Técnica esquema fuera de línea)
+        if (str_contains($innerXml, '<autorizacion>') || str_contains($innerXml, '<autorizacion ')) {
+            $paqueteXml = $innerXml;
+        } else {
+            $fechaAut = $comprobante->fecha_autorizacion ? $comprobante->fecha_autorizacion->toIso8601String() : now()->toIso8601String();
+            $numAut = $comprobante->numero_autorizacion ?: $comprobante->clave_acceso;
+            $ambiente = $comprobante->ambiente ?: 'PRUEBAS';
+
+            $paqueteXml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" .
+                "<autorizacion>\n" .
+                "    <estado>AUTORIZADO</estado>\n" .
+                "    <numeroAutorizacion>{$numAut}</numeroAutorizacion>\n" .
+                "    <fechaAutorizacion class=\"fechaAutorizacion\">{$fechaAut}</fechaAutorizacion>\n" .
+                "    <ambiente>{$ambiente}</ambiente>\n" .
+                "    <comprobante><![CDATA[{$innerXml}]]></comprobante>\n" .
+                "    <mensajes/>\n" .
+                "</autorizacion>";
+        }
+
+        return response($paqueteXml)
             ->header('Content-Type', 'application/xml')
-            ->header('Content-Disposition', 'attachment; filename="' . $comprobante->clave_acceso . '.xml"');
+            ->header('Content-Disposition', 'attachment; filename="' . $comprobante->clave_acceso . '_autorizado.xml"');
     }
 }
