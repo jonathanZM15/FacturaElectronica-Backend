@@ -359,7 +359,7 @@ class EmisorController extends Controller
         }
 
         if ($request->hasFile('logo')) {
-            $path = $request->file('logo')->store('emisores/logos', 'public');
+            $path = app(\App\Services\SafeLogoStorage::class)->store($request->file('logo'), 'emisores/logos');
             $company->logo_path = $path;
         }
 
@@ -538,7 +538,7 @@ class EmisorController extends Controller
                 'size' => $request->file('logo')->getSize(),
                 'mime' => $request->file('logo')->getMimeType(),
             ]);
-            $path = $request->file('logo')->store('emisores/logos', 'public');
+            $path = app(\App\Services\SafeLogoStorage::class)->store($request->file('logo'), 'emisores/logos');
             // delete old
             if ($company->logo_path && Storage::disk('public')->exists($company->logo_path)) {
                 try { Storage::disk('public')->delete($company->logo_path); } catch (\Exception $_) {}

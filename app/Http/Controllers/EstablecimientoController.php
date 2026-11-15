@@ -147,7 +147,7 @@ class EstablecimientoController extends Controller
 
         // logo file handling
         if ($request->hasFile('logo')) {
-            $path = $request->file('logo')->store('establecimientos/logos', 'public');
+            $path = app(\App\Services\SafeLogoStorage::class)->store($request->file('logo'), 'establecimientos/logos');
             $data['logo_path'] = $path;
         }
 
@@ -384,7 +384,7 @@ class EstablecimientoController extends Controller
             $data['logo_path'] = null;
             Log::info('Establecimiento logo removed', ['establecimiento_id' => $est->id]);
         } elseif ($request->hasFile('logo')) {
-            $path = $request->file('logo')->store('establecimientos/logos', 'public');
+            $path = app(\App\Services\SafeLogoStorage::class)->store($request->file('logo'), 'establecimientos/logos');
             if ($est->logo_path && Storage::disk('public')->exists($est->logo_path)) {
                 try { Storage::disk('public')->delete($est->logo_path); } catch (\Exception $_) {}
             }

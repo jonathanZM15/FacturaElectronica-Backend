@@ -86,6 +86,7 @@ class StoreUserRequest extends FormRequest
                 'nullable',
                 'string',
                 'min:8',
+                'max:72', new \App\Rules\PasswordStorageLimit(),
                 'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/', // Al menos 1 mayúscula, 1 minúscula, 1 número, 1 carácter especial
                 'confirmed' // Debe coincidir con password_confirmation
             ],

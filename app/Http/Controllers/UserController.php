@@ -2501,202 +2501,51 @@ class UserController extends Controller
      */
     public function verifyEmail(Request $request)
     {
-        $initialTransactionLevel = DB::transactionLevel();
-        try {
-            $request->validate([
-                'token' => 'required|string'
-            ]);
-
-            // Primero buscar el token sin filtrar por 'used' para poder dar mensajes específicos
-            $tokenRecord = DB::table('user_verification_tokens')
-                ->where('token', $request->token)
-                ->where('type', 'email_verification')
-                ->first();
-
-            // Si el token no existe
-            if (!$tokenRecord) {
-                return response()->json([
-                    'message' => 'Token inválido o no encontrado',
-                    'code' => 'TOKEN_NOT_FOUND'
-                ], Response::HTTP_BAD_REQUEST);
-            }
-
-            // Si el token ya fue usado
-            if ($tokenRecord->used) {
-                return response()->json([
-                    'message' => 'Este enlace de verificación ya fue utilizado anteriormente',
-                    'code' => 'TOKEN_ALREADY_USED'
-                ], Response::HTTP_CONFLICT); // 409 Conflict
-            }
-
-            // Si el token expiró
-            if ($tokenRecord->expires_at <= now()) {
-                return response()->json([
-                    'message' => 'El enlace de verificación ha expirado',
-                    'code' => 'TOKEN_EXPIRED'
-                ], Response::HTTP_BAD_REQUEST);
-            }
-
-            $token = $tokenRecord;
-
-            $user = User::find($token->user_id);
-            
-            if (!$user) {
-                return response()->json([
-                    'message' => 'Usuario no encontrado'
-                ], Response::HTTP_NOT_FOUND);
-            }
-
-            // Validar que el token fue emitido para el email actual del usuario.
-            // Esto evita que enlaces antiguos (emitidos a correos anteriores) puedan activar la cuenta.
-            $metadata = json_decode($token->metadata ?? '{}', true);
-            if (!is_array($metadata)) {
-                $metadata = [];
-            }
-            $emailSentTo = isset($metadata['email_sent_to']) ? (string) $metadata['email_sent_to'] : '';
-            if ($emailSentTo !== '' && mb_strtolower($emailSentTo) !== mb_strtolower((string) $user->email)) {
-                return response()->json([
-                    'message' => 'Este enlace fue emitido para un correo anterior y ya no es válido',
-                    'code' => 'TOKEN_EMAIL_MISMATCH'
-                ], Response::HTTP_BAD_REQUEST);
-            }
-
-            DB::beginTransaction();
-
-            // Marcar token como usado
-            DB::table('user_verification_tokens')
-                ->where('id', $token->id)
-                ->update([
-                    'used' => true,
-                    'used_at' => now()
-                ]);
-
-            // Actualizar estado del usuario a activo
-            $user->estado = 'activo';
-            $user->email_verified_at = now();
-            $user->save();
-
-            DB::commit();
-
-            $estadoAnterior = $metadata['estado_anterior'] ?? 'nuevo';
-
-            Log::info('Email verificado', [
-                'usuario_id' => $user->id,
-                'email' => $user->email,
-                'estado_anterior' => $estadoAnterior
-            ]);
-
-            // Solo enviar correo de setup de contraseña si el usuario era NUEVO
-            // Los usuarios suspendidos/retirados ya tienen contraseña
-            if ($estadoAnterior === 'nuevo') {
-                try {
-                    $this->sendPasswordSetupEmail($user);
-                    Log::info('Correo de setup de contraseña enviado', ['usuario_id' => $user->id]);
-                } catch (\Exception $emailError) {
-                    Log::error('Error enviando correo de setup de contraseña', [
-                        'usuario_id' => $user->id,
-                        'error' => $emailError->getMessage()
-                    ]);
+        $request->validate(['token' => 'required|string|max:100']);
+        return app(\App\Services\VerificationTokenService::class)->consume(
+            $request->token, 'email_verification', function (User $user, array $metadata) {
+                if (!in_array($user->estado, ['nuevo', 'pendiente_verificacion'], true)) {
+                    return response()->json(['message' => 'La cuenta no está pendiente de esta verificación'], 409);
                 }
-
+                $isNew = ($metadata['estado_anterior'] ?? 'nuevo') === 'nuevo';
+                $user->estado = 'activo';
+                $user->email_verified_at = now();
+                if ($isNew) $user->password_setup_required = true;
+                $user->save();
+                if ($isNew) {
+                    // Se genera bajo el mismo bloqueo: no existe una ventana de acceso con clave temporal.
+                    $this->sendPasswordSetupEmail($user);
+                }
                 return response()->json([
-                    'message' => 'Email verificado exitosamente. Revisa tu correo para establecer tu contraseña.',
-                    'data' => [
-                        'email' => $user->email,
-                        'estado' => $user->estado
-                    ]
-                ]);
-            } else {
-                // Usuario reactivado (era suspendido/retirado)
-                return response()->json([
-                    'message' => 'Cuenta reactivada exitosamente. Ya puedes iniciar sesión con tu contraseña anterior.',
-                    'data' => [
-                        'email' => $user->email,
-                        'estado' => $user->estado
-                    ]
+                    'message' => $isNew
+                        ? 'Email verificado exitosamente. Revisa tu correo para establecer tu contraseña.'
+                        : 'Cuenta reactivada exitosamente. Ya puedes iniciar sesión con tu contraseña anterior.',
+                    'data' => ['email' => $user->email, 'estado' => $user->estado],
                 ]);
             }
-        } catch (\Exception $e) {
-            if (DB::transactionLevel() > $initialTransactionLevel) DB::rollBack($initialTransactionLevel);
-            Log::error('Error verificando email', [
-                'error' => $e->getMessage()
-            ]);
-            return response()->json([
-                'message' => 'Error al verificar email'
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
+        );
     }
 
-    /**
-     * Cambiar contraseña inicial con token
-     */
     public function changeInitialPassword(Request $request)
     {
-        $initialTransactionLevel = DB::transactionLevel();
-        try {
-            $request->validate([
-                'token' => 'required|string',
-                'password' => 'required|string|min:8|confirmed'
-            ]);
-
-            $token = DB::table('user_verification_tokens')
-                ->where('token', $request->token)
-                ->where('type', 'password_setup')
-                ->where('used', false)
-                ->where('expires_at', '>', now())
-                ->first();
-
-            if (!$token) {
+        $request->validate([
+            'token' => 'required|string|max:100',
+            'password' => ['required', 'string', 'max:72', new \App\Rules\PasswordStorageLimit(), 'confirmed', \Illuminate\Validation\Rules\Password::min(8)->mixedCase()->numbers()->symbols()],
+        ]);
+        return app(\App\Services\VerificationTokenService::class)->consume(
+            $request->token, 'password_setup', function (User $user) use ($request) {
+                if ($user->estado !== 'activo') {
+                    return response()->json(['message' => 'La cuenta no está habilitada para establecer la contraseña'], 409);
+                }
+                $user->password = $request->password;
+                $user->password_setup_required = false;
+                $user->save();
                 return response()->json([
-                    'message' => 'Token inválido o expirado'
-                ], Response::HTTP_BAD_REQUEST);
-            }
-
-            $user = User::find($token->user_id);
-            
-            if (!$user) {
-                return response()->json([
-                    'message' => 'Usuario no encontrado'
-                ], Response::HTTP_NOT_FOUND);
-            }
-
-            DB::beginTransaction();
-
-            // Marcar token como usado
-            DB::table('user_verification_tokens')
-                ->where('id', $token->id)
-                ->update([
-                    'used' => true,
-                    'used_at' => now()
+                    'message' => 'Contraseña establecida exitosamente. Ya puedes iniciar sesión.',
+                    'data' => ['email' => $user->email, 'username' => $user->username],
                 ]);
-
-            // Actualizar contraseña
-            $user->password = Hash::make($request->password);
-            $user->save();
-
-            DB::commit();
-
-            Log::info('Contraseña inicial establecida', [
-                'usuario_id' => $user->id,
-                'email' => $user->email
-            ]);
-
-            return response()->json([
-                'message' => 'Contraseña establecida exitosamente. Ya puedes iniciar sesión.',
-                'data' => [
-                    'email' => $user->email,
-                    'username' => $user->username
-                ]
-            ]);
-        } catch (\Exception $e) {
-            if (DB::transactionLevel() > $initialTransactionLevel) DB::rollBack($initialTransactionLevel);
-            Log::error('Error cambiando contraseña inicial', [
-                'error' => $e->getMessage()
-            ]);
-            return response()->json([
-                'message' => 'Error al establecer contraseña'
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
+            }
+        );
     }
 
     /**
@@ -3084,12 +2933,16 @@ class UserController extends Controller
             }
 
             $request->validate([
-                'new_email' => 'required|email|unique:users,email'
+                'new_email' => 'required|email|max:255|unique:users,email',
+                'current_password' => 'required|string|max:1024',
             ], [
                 'new_email.required' => 'El nuevo correo es requerido',
                 'new_email.email' => 'El correo debe ser válido',
                 'new_email.unique' => 'El correo ya está registrado en el sistema',
             ]);
+            if (!Hash::check($request->input('current_password'), $currentUser->password)) {
+                return response()->json(['message' => 'La contraseña actual de quien realiza el cambio es incorrecta'], 422);
+            }
             $newEmail = $request->input('new_email');
 
             // Verificar que no sea el mismo correo
@@ -3166,104 +3019,25 @@ class UserController extends Controller
      */
     public function confirmEmailChange(Request $request)
     {
-        $initialTransactionLevel = DB::transactionLevel();
-        try {
-            $request->validate([
-                'token' => 'required|string'
-            ]);
-
-            // Buscar el token
-            $tokenRecord = DB::table('user_verification_tokens')
-                ->where('token', $request->token)
-                ->where('type', 'email_change_confirmation')
-                ->where('used', false)
-                ->where('expires_at', '>', now())
-                ->first();
-
-            if (!$tokenRecord) {
+        $request->validate(['token' => 'required|string|max:100']);
+        return app(\App\Services\VerificationTokenService::class)->consume(
+            $request->token, 'email_change_confirmation', function (User $user, array $metadata) {
+                if ($user->estado !== 'pendiente_verificacion' || empty($metadata['new_email'])) {
+                    return response()->json(['message' => 'La cuenta no está pendiente de este cambio de correo'], 409);
+                }
+                $newEmail = $metadata['new_email'];
+                if (User::whereRaw('LOWER(email) = ?', [mb_strtolower($newEmail)])->where('id', '!=', $user->id)->exists()) {
+                    return response()->json(['message' => 'El correo ya está registrado en el sistema'], 409);
+                }
+                $user->email = $newEmail;
+                $user->estado = 'activo';
+                $user->email_verified_at = now();
+                $user->save();
                 return response()->json([
-                    'message' => 'Token inválido, expirado o ya fue utilizado',
-                    'code' => 'TOKEN_INVALID'
-                ], Response::HTTP_BAD_REQUEST);
-            }
-
-            $user = User::find($tokenRecord->user_id);
-            if (!$user) {
-                return response()->json([
-                    'message' => 'Usuario no encontrado'
-                ], Response::HTTP_NOT_FOUND);
-            }
-
-            // Obtener el nuevo correo desde metadata
-            $metadata = json_decode($tokenRecord->metadata ?? '{}', true);
-            if (!is_array($metadata)) {
-                $metadata = [];
-            }
-            $newEmail = $metadata['new_email'] ?? null;
-
-            if (!$newEmail) {
-                return response()->json([
-                    'message' => 'Datos de token inválidos'
-                ], Response::HTTP_BAD_REQUEST);
-            }
-
-            // Verificar que el nuevo correo no exista ya en otro usuario
-            if (User::where('email', $newEmail)->where('id', '!=', $user->id)->exists()) {
-                return response()->json([
-                    'message' => 'El correo ya está registrado en el sistema'
-                ], Response::HTTP_CONFLICT);
-            }
-
-            DB::beginTransaction();
-
-            // Actualizar email del usuario
-            $oldEmail = $user->email;
-            $user->email = $newEmail;
-            $user->estado = 'activo';
-            $user->email_verified_at = now();
-            $user->save();
-
-            // Marcar token como usado
-            DB::table('user_verification_tokens')
-                ->where('id', $tokenRecord->id)
-                ->update([
-                    'used' => true,
-                    'used_at' => now()
+                    'message' => 'Correo actualizado exitosamente. Ya puedes iniciar sesión con tu nuevo correo.',
+                    'data' => ['email' => $user->email, 'estado' => $user->estado],
                 ]);
-
-            // Invalidar tokens de cambio de correo anteriores para este usuario
-            DB::table('user_verification_tokens')
-                ->where('user_id', $user->id)
-                ->where('type', 'email_change_confirmation')
-                ->where('id', '!=', $tokenRecord->id)
-                ->update([
-                    'used' => true,
-                    'used_at' => now()
-                ]);
-
-            DB::commit();
-
-            Log::info('Cambio de correo confirmado', [
-                'usuario_id' => $user->id,
-                'correo_anterior' => $oldEmail,
-                'correo_nuevo' => $newEmail
-            ]);
-
-            return response()->json([
-                'message' => 'Correo actualizado exitosamente. Ya puedes iniciar sesión con tu nuevo correo.',
-                'data' => [
-                    'email' => $user->email,
-                    'estado' => $user->estado
-                ]
-            ]);
-        } catch (\Exception $e) {
-            if (DB::transactionLevel() > $initialTransactionLevel) DB::rollBack($initialTransactionLevel);
-            Log::error('Error confirmando cambio de correo', [
-                'error' => $e->getMessage()
-            ]);
-            return response()->json([
-                'message' => 'Error al confirmar cambio de correo'
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
+            }
+        );
     }
 }

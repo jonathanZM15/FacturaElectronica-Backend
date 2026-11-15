@@ -40,15 +40,20 @@ class UserEmailService
     {
         $token = Str::random(60);
 
-        DB::table('user_verification_tokens')->insert([
-            'user_id' => $userId,
-            'token' => $token,
-            'type' => $tokenType,
-            'metadata' => json_encode($metadata),
-            'expires_at' => now()->addHours($expirationHours),
-            'created_at' => now(),
-            'updated_at' => now()
-        ]);
+        DB::transaction(function () use ($userId, $tokenType, $metadata, $expirationHours, $token) {
+            $user = User::whereKey($userId)->lockForUpdate()->firstOrFail();
+            $this->invalidatePreviousTokens($userId, $tokenType);
+            $metadata['email_sent_to'] = $metadata['email_sent_to'] ?? $user->email;
+            DB::table('user_verification_tokens')->insert([
+                'user_id' => $userId,
+                'token' => VerificationTokenService::digest($token),
+                'type' => $tokenType,
+                'metadata' => json_encode($metadata),
+                'expires_at' => now()->addHours($expirationHours),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }, 3);
 
         return $token;
     }

@@ -17,20 +17,22 @@ use App\Http\Controllers\FacturacionController;
 $businessMiddleware = ['auth:sanctum', \App\Http\Middleware\EnsureActiveUser::class, \App\Http\Middleware\AuthorizeBusinessAction::class];
 
 //rutas para inicio y registro de sesion
-Route::post('/register', [AuthController::class, 'register']);
-Route::post('/login', [AuthController::class, 'login']);
-Route::post('/password-recovery', [AuthController::class, 'passwordRecovery']);
-Route::post('/password-reset', [AuthController::class, 'resetPassword']);
+Route::post('/register', [AuthController::class, 'register'])->middleware('throttle:auth-email');
+Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:auth-login');
+Route::post('/password-recovery', [AuthController::class, 'passwordRecovery'])->middleware('throttle:auth-email');
+Route::post('/password-reset', [AuthController::class, 'resetPassword'])->middleware('throttle:auth-link');
 
 // Rutas públicas para verificación de email y cambio de contraseña inicial
-Route::post('/verify-email', [UserController::class, 'verifyEmail']);
-Route::post('/change-initial-password', [UserController::class, 'changeInitialPassword']);
-Route::post('/confirm-email-change', [UserController::class, 'confirmEmailChange']);
+Route::post('/verify-email', [UserController::class, 'verifyEmail'])->middleware('throttle:auth-link');
+Route::post('/change-initial-password', [UserController::class, 'changeInitialPassword'])->middleware('throttle:auth-link');
+Route::post('/confirm-email-change', [UserController::class, 'confirmEmailChange'])->middleware('throttle:auth-link');
 
-// Rutas públicas para verificar disponibilidad de usuario, cédula y email
-Route::get('/usuarios/check/username', [UserController::class, 'checkUsername']);
-Route::get('/usuarios/check/cedula', [UserController::class, 'checkCedula']);
-Route::get('/usuarios/check/email', [UserController::class, 'checkEmail']);
+// La disponibilidad de datos personales sólo se consulta al gestionar usuarios.
+Route::middleware([...$businessMiddleware, 'throttle:account-check'])->group(function () {
+    Route::get('/usuarios/check/username', [UserController::class, 'checkUsername']);
+    Route::get('/usuarios/check/cedula', [UserController::class, 'checkCedula']);
+    Route::get('/usuarios/check/email', [UserController::class, 'checkEmail']);
+});
 
 // Rutas públicas para descargar backups (accesibles desde email sin autenticación)
 Route::get('/company-deletion/{company}/download-backup', [CompanyDeletionController::class, 'downloadBackup'])->middleware($businessMiddleware)->name('company-deletion.download-backup');
@@ -40,10 +42,10 @@ Route::middleware(['auth:sanctum', \App\Http\Middleware\EnsureActiveUser::class,
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/user', [AuthController::class, 'me']);
     Route::get('/catalogos/impuestos', [\App\Http\Controllers\TaxCatalogController::class, 'index']);
-    Route::post('/cambiarClave', [AuthController::class, 'cambiarPassword']);
+    Route::post('/cambiarClave', [AuthController::class, 'cambiarPassword'])->middleware('throttle:account-sensitive');
 
     // Rutas públicas para usuarios autenticados
-    Route::post('/usuarios/{usuario}/request-email-change', [UserController::class, 'requestEmailChange']);
+    Route::post('/usuarios/{usuario}/request-email-change', [UserController::class, 'requestEmailChange'])->middleware('throttle:account-sensitive');
 
     // Rutas de Usuarios (admin y distribuidor)
     Route::middleware('admin_or_distribuidor')->group(function () {
@@ -52,7 +54,7 @@ Route::middleware(['auth:sanctum', \App\Http\Middleware\EnsureActiveUser::class,
         Route::get('/usuarios/{usuario}', [UserController::class, 'show']);
         Route::put('/usuarios/{usuario}', [UserController::class, 'update']);
         Route::delete('/usuarios/{usuario}', [UserController::class, 'destroy']);
-        Route::post('/usuarios/{usuario}/resend-verification', [UserController::class, 'resendVerificationEmail']);
+        Route::post('/usuarios/{usuario}/resend-verification', [UserController::class, 'resendVerificationEmail'])->middleware('throttle:account-sensitive');
     });
 
     // Rutas solo admins
@@ -105,7 +107,7 @@ Route::middleware(['auth:sanctum', \App\Http\Middleware\EnsureActiveUser::class,
     Route::get('/emisores/{id}/usuarios/{usuario}', [UserController::class, 'showByEmisor']);
     Route::put('/emisores/{id}/usuarios/{usuario}', [UserController::class, 'updateByEmisor']);
     Route::delete('/emisores/{id}/usuarios/{usuario}', [UserController::class, 'destroyByEmisor']);
-    Route::post('/emisores/{id}/usuarios/{usuario}/resend-verification', [UserController::class, 'resendVerificationEmailByEmisor']);
+    Route::post('/emisores/{id}/usuarios/{usuario}/resend-verification', [UserController::class, 'resendVerificationEmailByEmisor'])->middleware('throttle:account-sensitive');
     
     // Establecimientos (sucursales) relacionados a un emisor
     Route::get('/emisores/{id}/establecimientos', [App\Http\Controllers\EstablecimientoController::class, 'index']);

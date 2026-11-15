@@ -25,6 +25,32 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        if ($this->app->isProduction()) {
+            config(['app.debug' => false]);
+        }
+        \Illuminate\Support\Facades\RateLimiter::for('auth-login', static function (\Illuminate\Http\Request $request) {
+            $value = $request->input('email');
+            $identifier = hash('sha256', mb_strtolower(trim(is_string($value) ? $value : '')));
+            return [
+                \Illuminate\Cache\RateLimiting\Limit::perMinute(30)->by('login-ip:'.$request->ip()),
+                \Illuminate\Cache\RateLimiting\Limit::perMinute(5)->by('login-user:'.$identifier.':'.$request->ip()),
+            ];
+        });
+        \Illuminate\Support\Facades\RateLimiter::for('auth-email', static function (\Illuminate\Http\Request $request) {
+            $value = $request->input('email', $request->input('new_email', ''));
+            $email = hash('sha256', mb_strtolower(trim(is_string($value) ? $value : '')));
+            return [
+                \Illuminate\Cache\RateLimiting\Limit::perMinute(5)->by('email-ip:'.$request->ip()),
+                \Illuminate\Cache\RateLimiting\Limit::perHour(10)->by('email-address:'.$email),
+            ];
+        });
+        \Illuminate\Support\Facades\RateLimiter::for('auth-link', static fn (\Illuminate\Http\Request $request) =>
+            \Illuminate\Cache\RateLimiting\Limit::perMinute(10)->by($request->ip()));
+        \Illuminate\Support\Facades\RateLimiter::for('account-sensitive', static fn (\Illuminate\Http\Request $request) =>
+            \Illuminate\Cache\RateLimiting\Limit::perMinute(5)->by((string) $request->user()?->id.':'.$request->ip()));
+        \Illuminate\Support\Facades\RateLimiter::for('account-check', static fn (\Illuminate\Http\Request $request) =>
+            \Illuminate\Cache\RateLimiting\Limit::perMinute(60)->by((string) $request->user()?->id.':'.$request->ip()));
+
         Relation::morphMap([
             'RegistroOperativo' => \App\Models\RegistroOperativoMovimiento::class,
             'Comprobante' => \App\Models\Comprobante::class,

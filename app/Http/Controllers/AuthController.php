@@ -12,10 +12,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Password;
-use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
-use App\Mail\PasswordRecoveryMail;
-use App\Mail\LoginAttemptsAlertMail;
 use Illuminate\Auth\Events\PasswordReset;
 use Jenssegers\Agent\Agent;
 
@@ -28,7 +25,7 @@ class AuthController extends Controller
         $validator = Validator::make($data, [
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', 'unique:users,email'],
-            'password' => ['required', 'string', 'min:6'],
+            'password' => ['required', 'string', 'max:72', new \App\Rules\PasswordStorageLimit(), \Illuminate\Validation\Rules\Password::min(8)->mixedCase()->numbers()->symbols()],
         ]);
 
         if ($validator->fails()) {
@@ -54,7 +51,7 @@ class AuthController extends Controller
 
         $validator = Validator::make($data, [
             'email' => ['required','string', 'max:255'],
-            'password' => ['required','string'],
+            'password' => ['required','string', 'max:1024'],
         ]);
 
         if ($validator->fails()) {
@@ -101,6 +98,8 @@ class AuthController extends Controller
             return response()->json(['message' => 'Credenciales inválidas'], Response::HTTP_UNAUTHORIZED);
         }
 
+        $passwordMatches = Hash::check($password, $user->password);
+
         // Verificar si la cuenta está bloqueada
         if ($user->locked_until && now()->lt($user->locked_until)) {
             // Calcular minutos restantes correctamente
@@ -132,8 +131,10 @@ class AuthController extends Controller
             ]);
 
             return response()->json([
-                'message' => "Cuenta bloqueada. Intenta de nuevo en {$minutesRemaining} minutos."
-            ], Response::HTTP_FORBIDDEN);
+                'message' => $passwordMatches
+                    ? "Cuenta bloqueada. Intenta de nuevo en {$minutesRemaining} minutos."
+                    : 'Credenciales inválidas'
+            ], $passwordMatches ? Response::HTTP_FORBIDDEN : Response::HTTP_UNAUTHORIZED);
         }
 
         // Desbloquear automáticamente si el tiempo ya pasó
@@ -144,41 +145,8 @@ class AuthController extends Controller
             Log::info('Account Auto-Unlocked', ['user_id' => $user->id]);
         }
 
-        // Validar estado del usuario (solo "activo" puede hacer login)
-        if ($user->estado !== 'activo') {
-            LoginAttempt::create([
-                'user_id' => $user->id,
-                'identifier' => $identifier,
-                'ip_address' => $ipAddress,
-                'user_agent' => $userAgent,
-                'device_type' => $deviceType,
-                'browser' => $browser,
-                'platform' => $platform,
-                'success' => false,
-                'failure_reason' => "Estado: {$user->estado}",
-                'attempted_at' => now(),
-            ]);
-
-            $mensajes = [
-                'nuevo' => 'Debes verificar tu correo electrónico antes de iniciar sesión.',
-                'pendiente_verificacion' => 'Tu cuenta está pendiente de verificación.',
-                'suspendido' => 'Tu cuenta ha sido suspendida. Contacta al administrador.',
-                'retirado' => 'Tu cuenta ha sido dada de baja.',
-            ];
-
-            $mensaje = $mensajes[$user->estado] ?? 'Tu cuenta no está activa.';
-
-            Log::warning('Login Denied - Account Not Active', [
-                'user_id' => $user->id,
-                'estado' => $user->estado,
-                'ip' => $ipAddress
-            ]);
-
-            return response()->json(['message' => $mensaje], Response::HTTP_FORBIDDEN);
-        }
-
         // Verificar contraseña
-        if (!Hash::check($password, $user->password)) {
+        if (!$passwordMatches) {
             // Incrementar intentos fallidos
             $user->failed_login_attempts = ($user->failed_login_attempts ?? 0) + 1;
             
@@ -217,8 +185,8 @@ class AuthController extends Controller
                 Log::info('Suspicious login email job dispatched', ['user_id' => $user->id]);
 
                 return response()->json([
-                    'message' => 'Demasiados intentos fallidos. Tu cuenta ha sido bloqueada por 10 minutos. Se ha enviado una notificación a tu correo.'
-                ], Response::HTTP_FORBIDDEN);
+                    'message' => 'Credenciales inválidas'
+                ], Response::HTTP_UNAUTHORIZED);
             }
 
             $user->save();
@@ -236,7 +204,6 @@ class AuthController extends Controller
                 'attempted_at' => now(),
             ]);
 
-            $intentosRestantes = 5 - $user->failed_login_attempts;
 
             Log::error('Authentication Failed: Invalid password', [
                 'user_id' => $user->id,
@@ -246,11 +213,41 @@ class AuthController extends Controller
             ]);
 
             return response()->json([
-                'message' => $intentosRestantes > 0 
-                    ? "Credenciales inválidas. Te quedan {$intentosRestantes} intentos antes del bloqueo"
-                    : 'Credenciales inválidas',
-                'intentos_restantes' => $intentosRestantes > 0 ? $intentosRestantes : 0
+                'message' => 'Credenciales inválidas'
             ], Response::HTTP_UNAUTHORIZED);
+        }
+
+        // Validar estado del usuario (solo "activo" puede hacer login)
+        if ($user->estado !== 'activo' || $user->password_setup_required) {
+            LoginAttempt::create([
+                'user_id' => $user->id,
+                'identifier' => $identifier,
+                'ip_address' => $ipAddress,
+                'user_agent' => $userAgent,
+                'device_type' => $deviceType,
+                'browser' => $browser,
+                'platform' => $platform,
+                'success' => false,
+                'failure_reason' => "Estado: {$user->estado}",
+                'attempted_at' => now(),
+            ]);
+
+            $mensajes = [
+                'nuevo' => 'Debes verificar tu correo electrónico antes de iniciar sesión.',
+                'pendiente_verificacion' => 'Tu cuenta está pendiente de verificación.',
+                'suspendido' => 'Tu cuenta ha sido suspendida. Contacta al administrador.',
+                'retirado' => 'Tu cuenta ha sido dada de baja.',
+            ];
+
+            $mensaje = $user->password_setup_required ? 'Establece tu contraseña desde el enlace recibido por correo antes de iniciar sesión.' : ($mensajes[$user->estado] ?? 'Tu cuenta no está activa.');
+
+            Log::warning('Login Denied - Account Not Active', [
+                'user_id' => $user->id,
+                'estado' => $user->estado,
+                'ip' => $ipAddress
+            ]);
+
+            return response()->json(['message' => $mensaje], Response::HTTP_FORBIDDEN);
         }
 
         // Login exitoso - Resetear intentos fallidos
@@ -319,58 +316,33 @@ class AuthController extends Controller
         $data = $request->only(['email']);
 
         $validator = Validator::make($data, [
-            'email' => ['required', 'email']
+            'email' => ['required', 'email', 'max:255']
         ]);
 
         if ($validator->fails()) {
             return response()->json(['errors' => $validator->errors()], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        // Normalizar email a minúsculas para búsqueda case-insensitive
-        $email = strtolower(trim($data['email']));
-        $user = User::whereRaw('LOWER(email) = ?', [$email])->first();
-
-        if (! $user) {
-            return response()->json(['message' => 'Email no registrado'], Response::HTTP_NOT_FOUND);
-        }
-
-        // Verificar si existe un token reciente (throttling manual más informativo)
-        $recentToken = DB::table('password_reset_tokens')
-            ->where('email', $user->email)
-            ->first();
-
-        if ($recentToken) {
-            $createdAt = \Carbon\Carbon::parse($recentToken->created_at);
-            $throttleSeconds = config('auth.passwords.users.throttle', 60);
-            $secondsRemaining = $throttleSeconds - $createdAt->diffInSeconds(now());
-            
-            if ($secondsRemaining > 0) {
-                Log::info('Password recovery throttled', [
-                    'user_id' => $user->id,
-                    'seconds_remaining' => $secondsRemaining
-                ]);
-                return response()->json([
-                    'message' => "Por favor espera {$secondsRemaining} segundos antes de solicitar otro enlace de recuperación"
-                ], Response::HTTP_TOO_MANY_REQUESTS);
+        return (new \Illuminate\Support\Timebox())->call(function () use ($data) {
+            $email = mb_strtolower(trim($data['email']));
+            $user = User::whereRaw('LOWER(email) = ?', [$email])->first();
+            if ($user) {
+                try {
+                    DB::transaction(function () use ($user) {
+                        // Serializa solicitudes simultáneas de la misma cuenta.
+                        $user = User::whereKey($user->id)->lockForUpdate()->firstOrFail();
+                        $broker = Password::broker();
+                        if (!$broker->getRepository()->recentlyCreatedToken($user)) {
+                            $token = $broker->createToken($user);
+                            \App\Jobs\SendPasswordRecoveryMailJob::dispatch($user->id, $user->email, $token);
+                        }
+                    }, 3);
+                } catch (\Throwable $e) {
+                    report($e);
+                }
             }
-        }
-
-        // Generar token de restablecimiento usando el broker de password
-        $token = Password::broker()->createToken($user);
-
-        // Construir URL al frontend donde el usuario cambiará su contraseña
-        $frontend = env('FRONTEND_URL', config('app.url'));
-        $url = rtrim($frontend, '/') . '/cambiarPassword?token=' . urlencode($token) . '&email=' . urlencode($user->email);
-
-        try {
-            Mail::to($user->email)->send(new PasswordRecoveryMail($url, $user));
-            Log::info('Password recovery email sent', ['user_id' => $user->id, 'email' => $user->email]);
-        } catch (\Throwable $e) {
-            Log::error('Error sending password recovery email', ['err' => $e->getMessage()]);
-            return response()->json(['message' => 'Error al enviar el correo de recuperación'], Response::HTTP_INTERNAL_SERVER_ERROR);
-        }
-
-        return response()->json(['message' => 'Instrucciones enviadas al correo si existe la cuenta']);
+            return response()->json(['message' => 'Instrucciones enviadas al correo si existe la cuenta']);
+        }, 200000);
     }
 
     /**
@@ -381,40 +353,44 @@ class AuthController extends Controller
         $data = $request->only(['email', 'token', 'password', 'password_confirmation']);
 
         $validator = Validator::make($data, [
-            'email' => ['required', 'email'],
-            'token' => ['required', 'string'],
-            'password' => ['required', 'string', 'min:6', 'confirmed'],
+            'email' => ['required', 'email', 'max:255'],
+            'token' => ['required', 'string', 'max:100'],
+            'password' => ['required', 'string', 'max:72', new \App\Rules\PasswordStorageLimit(), \Illuminate\Validation\Rules\Password::min(8)->mixedCase()->numbers()->symbols(), 'confirmed'],
         ]);
 
         if ($validator->fails()) {
             return response()->json(['errors' => $validator->errors()], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $status = Password::broker()->reset(
-            $data,
-            function ($user, $password) {
-                // El modelo User tiene el cast 'password' => 'hashed'
-                // por lo que asignamos la contraseña en texto y el cast se encargará de hashearla.
-                $user->password = $password;
-                $user->setRememberToken(Str::random(60));
-                $user->save();
-                event(new PasswordReset($user));
+        $status = DB::transaction(function () use ($data) {
+            User::where('email', $data['email'])->lockForUpdate()->first();
+            return Password::broker()->reset(
+                $data,
+                function ($user, $password) {
+                    // El modelo User tiene el cast 'password' => 'hashed'
+                    // por lo que asignamos la contraseña en texto y el cast se encargará de hashearla.
+                    $user->password = $password;
+                    $user->password_setup_required = false;
+                    $user->setRememberToken(Str::random(60));
+                    $user->save();
+                    event(new PasswordReset($user));
                 
-                // Revoke existing personal access tokens
-                try {
-                    $user->tokens()->delete();
-                    Log::info('Tokens revoked after password reset', ['user_id' => $user->id]);
-                } catch (\Throwable $e) {
-                    Log::warning('Failed to revoke tokens after password reset', ['err' => $e->getMessage()]);
+                    // Revoke existing personal access tokens
+                    try {
+                        $user->tokens()->delete();
+                        Log::info('Tokens revoked after password reset', ['user_id' => $user->id]);
+                    } catch (\Throwable $e) {
+                        Log::warning('Failed to revoke tokens after password reset', ['err' => $e->getMessage()]);
+                    }
+                
+                    // Log successful password reset
+                    Log::info('Password reset successful', [
+                        'user_id' => $user->id,
+                        'email' => $user->email
+                    ]);
                 }
-                
-                // Log successful password reset
-                Log::info('Password reset successful', [
-                    'user_id' => $user->id,
-                    'email' => $user->email
-                ]);
-            }
-        );
+            );
+        }, 3);
 
         if ($status == Password::PASSWORD_RESET) {
             return response()->json(['message' => 'Contraseña restablecida correctamente']);
@@ -435,7 +411,7 @@ class AuthController extends Controller
 
         $validator = Validator::make($data, [
             'current_password' => ['required', 'string'],
-            'password' => ['required', 'string', 'min:6'],
+            'password' => ['required', 'string', 'max:72', new \App\Rules\PasswordStorageLimit(), \Illuminate\Validation\Rules\Password::min(8)->mixedCase()->numbers()->symbols()],
         ]);
 
         if ($validator->fails()) {

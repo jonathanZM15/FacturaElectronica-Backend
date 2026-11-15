@@ -10,7 +10,7 @@ class EnsureActiveUser
     public function handle(Request $request, Closure $next)
     {
         $user = $request->user();
-        if (!$user || !$user->estaActivo()) {
+        if (!$user || !$user->estaActivo() || $user->password_setup_required) {
             $user?->tokens()->delete();
             return response()->json(['message' => 'La cuenta no está activa. Inicia sesión con una cuenta habilitada.', 'code' => 'ACCOUNT_INACTIVE'], 403);
         }

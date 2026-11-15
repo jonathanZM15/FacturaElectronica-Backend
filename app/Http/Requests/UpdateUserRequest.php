@@ -90,6 +90,7 @@ class UpdateUserRequest extends FormRequest
                 'sometimes',
                 'string',
                 'min:8',
+                'max:72', new \App\Rules\PasswordStorageLimit(),
                 'confirmed',
                 'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/'
             ],

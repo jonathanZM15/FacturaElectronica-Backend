@@ -49,6 +49,7 @@ class User extends Authenticatable
     protected $hidden = [
         'password',
         'remember_token',
+        'password_setup_required',
     ];
 
     /**
@@ -64,6 +65,7 @@ class User extends Authenticatable
     protected $casts = [
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
+        'password_setup_required' => 'boolean',
         'role' => UserRole::class,
         'establecimientos_ids' => \App\Casts\IdList::class,
         'puntos_emision_ids' => \App\Casts\IdList::class,
@@ -80,9 +82,16 @@ class User extends Authenticatable
 
     protected static function booted(): void
     {
+        static::creating(function (User $user) {
+            if ($user->estado === 'nuevo') $user->password_setup_required = true;
+        });
         static::updated(function (User $user) {
-            if ($user->wasChanged(['estado', 'role', 'emisor_id', 'establecimientos_ids', 'puntos_emision_ids', 'password'])) {
+            if ($user->wasChanged(['estado', 'role', 'emisor_id', 'establecimientos_ids', 'puntos_emision_ids', 'password', 'email'])) {
                 $user->tokens()->delete();
+                \Illuminate\Support\Facades\DB::table('user_verification_tokens')->where('user_id', $user->id)
+                    ->where('used', false)->update(['used' => true, 'used_at' => now(), 'updated_at' => now()]);
+                \Illuminate\Support\Facades\DB::table('password_reset_tokens')
+                    ->whereIn('email', array_unique([$user->email, $user->getRawOriginal('email')]))->delete();
             }
         });
     }

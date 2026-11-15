@@ -4,10 +4,6 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\DB;
-use Intervention\Image\ImageManager;
-use Intervention\Image\Drivers\Imagick\Driver as ImagickDriver;
-use Intervention\Image\Drivers\Gd\Driver as GdDriver;
 use App\Models\Company;
 
 class LogoController extends Controller
@@ -19,7 +15,7 @@ class LogoController extends Controller
     public function show($companyId)
     {
         $company = Company::find($companyId);
-        if (!$company || !$company->logo_path) {
+        if (!$company || !$company->logo_path || !\App\Services\SafeLogoStorage::isSafePath($company->logo_path)) {
             return response()->json(['url' => null]);
         }
         // Prefer the API file route if the file exists on the public disk.
@@ -43,85 +39,14 @@ class LogoController extends Controller
             'logo' => 'required|image|mimes:jpeg,png,jpg,webp|max:2048',
         ]);
 
-        $file = $request->file('logo');
-
-        // Create ImageManager with correct v3 syntax
-        try {
-            if (extension_loaded('imagick')) {
-                $manager = new ImageManager(new ImagickDriver());
-            } else {
-                $manager = new ImageManager(new GdDriver());
-            }
-        } catch (\Exception $e) {
-            // Fallback without image processing
-            try {
-                $ext = $file->getClientOriginalExtension() ?: 'png';
-                $filename = 'logos/company_' . $company->id . '_' . time() . '.' . $ext;
-                Storage::disk('public')->putFileAs('logos', $file, basename($filename));
-
-                if ($company->logo_path && Storage::disk('public')->exists($company->logo_path)) {
-                    try { Storage::disk('public')->delete($company->logo_path); } catch (\Exception $_) {}
-                }
-
-                $company->logo_path = 'logos/' . basename($filename);
-                $company->save();
-
-                return response()->json([
-                    'message' => 'Logo uploaded without resizing (no image driver available)',
-                    'path' => $company->logo_path,
-                    'url' => asset('storage/' . $company->logo_path),
-                ]);
-            } catch (\Exception $ex) {
-                return response()->json([
-                    'message' => 'Image driver not available on server and fallback storage failed.',
-                    'error' => $e->getMessage(),
-                    'fallback_error' => $ex->getMessage(),
-                ], 500);
-            }
+        $filename = app(\App\Services\SafeLogoStorage::class)->store($request->file('logo'), 'logos', self::LOGO_TARGET_SIZE);
+        $previous = $company->logo_path;
+        $company->logo_path = $filename;
+        $company->save();
+        if ($previous && \App\Services\SafeLogoStorage::isSafePath($previous)) {
+            Storage::disk('public')->delete($previous);
         }
-
-    $targetSize = self::LOGO_TARGET_SIZE;
-
-        try {
-            // Read image with v3 syntax
-            $image = $manager->read($file->getRealPath());
-
-            // Use cover() method which crops and resizes to exact dimensions
-            $image->cover($targetSize, $targetSize);
-
-            // Generate filename
-            $filename = 'logos/company_' . $company->id . '_' . time() . '.png';
-            
-            // Encode to PNG with quality (v3 syntax)
-            $encoded = $image->toPng();
-            
-            // Save to storage
-            Storage::disk('public')->put($filename, (string) $encoded);
-
-            // Delete old logo if exists
-            if ($company->logo_path && Storage::disk('public')->exists($company->logo_path)) {
-                try {
-                    Storage::disk('public')->delete($company->logo_path);
-                } catch (\Exception $e) {
-                    // ignore deletion errors
-                }
-            }
-
-            $company->logo_path = $filename;
-            $company->save();
-
-            return response()->json([
-                'message' => 'Logo updated',
-                'path' => $filename,
-                'url' => asset('storage/' . $filename),
-            ]);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'message' => 'Error processing image',
-                'error' => $e->getMessage(),
-            ], 500);
-        }
+        return response()->json(['message' => 'Logo updated', 'path' => $filename, 'url' => asset('storage/'.$filename)]);
     }
 
     /**
@@ -132,7 +57,7 @@ class LogoController extends Controller
     public function file($companyId)
     {
         $company = Company::find($companyId);
-        if (!$company || !$company->logo_path) {
+        if (!$company || !$company->logo_path || !\App\Services\SafeLogoStorage::isSafePath($company->logo_path)) {
             return response(null, 404);
         }
 
@@ -147,6 +72,8 @@ class LogoController extends Controller
             if (function_exists('mime_content_type')) {
                 $mime = mime_content_type($disk->path($company->logo_path)) ?: 'image/png';
             }
+
+            if (!in_array($mime, ['image/png', 'image/jpeg', 'image/webp'], true)) return response(null, 404);
 
             // Generate ETag based on file contents and updated_at timestamp
             $etag = md5($contents . $company->updated_at);
@@ -170,7 +97,7 @@ class LogoController extends Controller
     public function establecimientos_file($companyId, $estId)
     {
         $est = \App\Models\Establecimiento::where('emisor_id', $companyId)->find($estId);
-        if (!$est || !$est->logo_path) {
+        if (!$est || !$est->logo_path || !\App\Services\SafeLogoStorage::isSafePath($est->logo_path)) {
             return response(null, 404);
         }
 
@@ -185,6 +112,8 @@ class LogoController extends Controller
             if (function_exists('mime_content_type')) {
                 $mime = mime_content_type($disk->path($est->logo_path)) ?: 'image/png';
             }
+
+            if (!in_array($mime, ['image/png', 'image/jpeg', 'image/webp'], true)) return response(null, 404);
 
             // Generate ETag based on file contents and updated_at timestamp
             $etag = md5($contents . $est->updated_at);
