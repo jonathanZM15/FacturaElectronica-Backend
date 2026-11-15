@@ -58,6 +58,7 @@ class SriResponseParserService
         $fechaAutorizacion = $this->stringValue($this->get($autorizacion, ['fechaAutorizacion']));
         $ambiente = $this->stringValue($this->get($autorizacion, ['ambiente']));
         $xmlAutorizado = $this->stringValue($this->get($autorizacion, ['comprobante']));
+        $claveConsultada = $this->stringValue($this->get($response, ['RespuestaAutorizacionComprobante', 'claveAccesoConsultada']));
         $errores = $this->mapMensajes($this->toArray($this->get($autorizacion, ['mensajes', 'mensaje'])));
 
         // Normalización de estados oficiales del SRI (Ficha Técnica F1 sección 7.3)
@@ -65,27 +66,24 @@ class SriResponseParserService
         $isRechazado = in_array($rawEstado, ['NO AUTORIZADO', 'NO_AUTORIZADO', 'RECHAZADO'], true);
         $isEnProceso = in_array($rawEstado, ['EN PROCESO', 'PENDIENTE'], true);
 
-        // P07: AUTORIZADO solo es válido si contiene evidencia completa y correspondiente
+        // A successful status alone is not proof of authorization of this document.
         if ($isAutorizado) {
-            if (empty($numeroAutorizacion) || empty($fechaAutorizacion)) {
+            $evidenceErrors = (new SriAuthorizationEvidence())->errors([
+                'numero_autorizacion' => $numeroAutorizacion, 'fecha_autorizacion' => $fechaAutorizacion,
+                'ambiente' => $ambiente, 'xml_autorizado' => $xmlAutorizado, 'clave_consultada' => $claveConsultada,
+            ], $expectedClaveAcceso, $expectedAmbiente);
+            if ($evidenceErrors) {
                 $isAutorizado = false;
                 $rawEstado = 'INCONSISTENTE';
-                $errores[] = [
-                    'identificador' => 'ERR_METADATOS',
-                    'mensaje' => 'La respuesta del SRI marca AUTORIZADO pero carece de número o fecha de autorización.',
-                    'informacion_adicional' => null,
-                    'tipo' => 'ERROR'
-                ];
-            } elseif ($expectedClaveAcceso !== null && $numeroAutorizacion !== $expectedClaveAcceso) {
-                $isAutorizado = false;
-                $rawEstado = 'INCONSISTENTE';
-                $errores[] = [
-                    'identificador' => 'ERR_CLAVE_DISCORDANTE',
-                    'mensaje' => "El número de autorización devuelto ({$numeroAutorizacion}) no coincide con la clave de acceso de la factura ({$expectedClaveAcceso}).",
-                    'informacion_adicional' => null,
-                    'tipo' => 'ERROR'
+                foreach ($evidenceErrors as $message) $errores[] = [
+                    'identificador' => 'ERR_EVIDENCIA', 'mensaje' => $message,
+                    'informacion_adicional' => null, 'tipo' => 'ERROR',
                 ];
             }
+        } elseif ($isRechazado && $expectedClaveAcceso !== null && $claveConsultada !== $expectedClaveAcceso) {
+            $isRechazado = false;
+            $rawEstado = 'INCONSISTENTE';
+            $errores[] = ['identificador' => 'ERR_CLAVE_DISCORDANTE', 'mensaje' => 'La respuesta de rechazo corresponde a otra clave consultada.', 'informacion_adicional' => null, 'tipo' => 'ERROR'];
         }
 
         $estadoFinal = $isAutorizado ? 'AUTORIZADO' : ($isRechazado ? 'NO_AUTORIZADO' : ($isEnProceso ? 'EN_PROCESO' : ($rawEstado ?: 'DESCONOCIDO')));
@@ -93,6 +91,7 @@ class SriResponseParserService
         return [
             'estado' => $estadoFinal,
             'success' => $isAutorizado,
+            'clave_consultada' => $claveConsultada,
             'ambiente' => $ambiente,
             'numero_autorizacion' => $numeroAutorizacion,
             'fecha_autorizacion' => $fechaAutorizacion,

@@ -189,6 +189,8 @@ class PermissionService
             'comprobantes.read' => $admin || $owner || $manager || $cashier,
             'comprobantes.update' => false,
             'comprobantes.retry' => $owner || $cashier,
+            'comprobantes.correct' => $owner,
+            'comprobantes.email' => $owner || $cashier,
             'establecimientos.read' => true,
             'puntos_emision.read' => true,
         ]);

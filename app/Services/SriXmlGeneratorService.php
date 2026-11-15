@@ -368,12 +368,22 @@ class SriXmlGeneratorService
 
         // A02: Proveedor de software según Anexo 26 Ficha Técnica SRI / Res. NAC-DGERCGC26-00000027
         $proveedorRuc = trim((string) config('sri.proveedor_ruc', ''));
+        if (config('sri.allow_network') && ($company->regimen_tributario ?? '') === 'RIMPE_POPULAR'
+            && !config('sri.rimpe_popular_habilitado')) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['regimen_tributario' => ['El perfil RIMPE Popular requiere validar la discrepancia entre el XSD publicado y el Anexo 22 antes de habilitar su emisión conectada.']]);
+        }
+        if (($proveedorRuc !== '' && !preg_match('/^(?!0{13}$)(?!9{13}$)[0-9]{13}$/D', $proveedorRuc))
+            || ($proveedorRuc === '' && config('sri.allow_network') && config('sri.proveedor_requerido', true))) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['proveedor_ruc' => ['Configura el RUC real del proveedor del software antes de emitir con conexión al SRI.']]);
+        }
         if ($proveedorRuc !== '') {
-            $additional[] = ['nombre' => 'RUC Proveedor', 'valor' => $proveedorRuc];
+            array_unshift($additional, ['nombre' => 'RUC Proveedor', 'valor' => $proveedorRuc]);
         }
 
         // SRI limita infoAdicional a máximo 15 elementos campoAdicional
-        $additional = array_slice($additional, 0, 15);
+        if (count($additional) > 15) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['informacion_adicional' => ['Se admiten 15 campos en total, incluidos correo y RUC del proveedor. Reduce los campos adicionales.']]);
+        }
 
         if ($additional) {
             $infoAdicional = $dom->createElement('infoAdicional');
@@ -957,7 +967,7 @@ class SriXmlGeneratorService
     {
         $regimen = strtoupper(trim($regimen));
         if ($regimen === 'RIMPE_POPULAR' || $regimen === 'RIMPE POPULAR' || str_contains($regimen, 'POPULAR')) {
-            return 'CONTRIBUYENTE RÉGIMEN RIMPE - NEGOCIO POPULAR';
+            return 'CONTRIBUYENTE NEGOCIO POPULAR - RÉGIMEN RIMPE';
         }
         if (str_contains($regimen, 'RIMPE')) {
             return 'CONTRIBUYENTE RÉGIMEN RIMPE';

@@ -68,9 +68,9 @@ class ClientIdentification
         $id = trim($id);
         return match ($normalized) {
             'RUC' => EcuadorIdentificationValidator::validateRuc($id),
-            'CEDULA' => EcuadorIdentificationValidator::validateCedula($id),
+            'CEDULA' => preg_match('/^[0-9]{10}$/D', $id) === 1 && EcuadorIdentificationValidator::validateCedula($id),
             'CONSUMIDOR_FINAL' => $id === '9999999999999',
-            'PASAPORTE', 'IDENTIFICACION_EXTERIOR' => $id !== '' && strlen($id) <= 13 && preg_match('/^[A-Za-z0-9\-\._]+$/', $id) === 1,
+            'PASAPORTE', 'IDENTIFICACION_EXTERIOR' => $id !== '' && strlen($id) <= 20 && preg_match('/^[A-Za-z0-9\-\._]+$/', $id) === 1,
             default => false,
         };
     }

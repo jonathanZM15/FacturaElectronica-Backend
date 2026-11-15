@@ -82,25 +82,6 @@ class SriComprobanteLifecycleService
      */
     private function sanitizePayload(mixed $payload): mixed
     {
-        if ($payload === null) {
-            return null;
-        }
-
-        if (is_string($payload)) {
-            return preg_replace('/(password|clave|contrasena|private_key)(["\']?\s*[:=]\s*["\']?)([^"\'&<\s]+)/i', '$1$2********', $payload);
-        }
-
-        if (is_array($payload)) {
-            foreach ($payload as $key => $val) {
-                if (in_array(strtolower((string) $key), ['password', 'clave', 'contrasena', 'private_key', 'cert_password', 'encrypted_password'], true)) {
-                    $payload[$key] = '********';
-                } elseif (is_array($val) || is_string($val)) {
-                    $payload[$key] = $this->sanitizePayload($val);
-                }
-            }
-            return $payload;
-        }
-
-        return $payload;
+        return SensitiveDataSanitizer::clean($payload);
     }
 }

@@ -198,10 +198,10 @@ class ClienteController extends Controller
 
         $validator = Validator::make($data, [
             'tipo_identificacion' => ['required', 'string', Rule::in(self::TIPOS_IDENTIFICACION_SRI)],
-            'identificacion'      => ['required', 'string', 'max:13', $uniqueRule],
+            'identificacion'      => ['required', 'string', 'max:20', $uniqueRule],
             'razon_social'        => ['required', 'string', 'max:255'],
             'nombre_comercial'    => ['nullable', 'string', 'max:255'],
-            'direccion'           => ['nullable', 'string', 'max:500'],
+            'direccion'           => ['nullable', 'string', 'max:300'],
             'email'               => ['nullable', 'email', 'max:255'],
             'telefono'            => ['nullable', 'string', 'max:50'],
         ], [
@@ -214,17 +214,19 @@ class ClienteController extends Controller
             $id   = (string) ($data['identificacion'] ?? '');
 
             if ($tipo === 'CEDULA') {
-                if (!EcuadorIdentificationValidator::validateCedula($id)) {
+                if (!\App\Services\ClientIdentification::valid($tipo, $id)) {
                     $v->errors()->add('identificacion', 'Cédula no válida según las reglas del Registro Civil.');
                 }
             } elseif ($tipo === 'RUC') {
                 if (!EcuadorIdentificationValidator::validateRuc($id)) {
-                    $v->errors()->add('identificacion', 'RUC no válido según las reglas del SRI.');
+                    $v->errors()->add('identificacion', 'El RUC debe tener 13 dígitos y no puede ser la identificación de consumidor final.');
                 }
             } elseif ($tipo === 'CONSUMIDOR_FINAL') {
                 if ($id !== '9999999999999') {
                     $v->errors()->add('identificacion', 'Consumidor Final debe usar 9999999999999.');
                 }
+            } elseif (in_array($tipo, ['PASAPORTE', 'IDENTIFICACION_EXTERIOR'], true) && !\App\Services\ClientIdentification::valid($tipo, $id)) {
+                $v->errors()->add('identificacion', 'La identificación admite hasta 20 caracteres alfanuméricos, punto, guion o guion bajo.');
             }
         });
 

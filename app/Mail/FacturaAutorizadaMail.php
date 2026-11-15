@@ -37,10 +37,11 @@ class FacturaAutorizadaMail extends Mailable
 
     public function attachments(): array
     {
+        $xml = app(\App\Services\AuthorizedInvoiceArtifacts::class)->get($this->comprobante)['package_xml'];
         return [
             Attachment::fromData(fn () => $this->pdfContent, $this->comprobante->clave_acceso . '.pdf')
                 ->withMime('application/pdf'),
-            Attachment::fromData(fn () => $this->comprobante->xml_autorizado, $this->comprobante->clave_acceso . '.xml')
+            Attachment::fromData(fn () => $xml, $this->comprobante->clave_acceso . '_autorizado.xml')
                 ->withMime('application/xml'),
         ];
     }

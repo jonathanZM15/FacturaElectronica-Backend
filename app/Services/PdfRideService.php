@@ -11,6 +11,7 @@ class PdfRideService
 {
     public function generateRide(Comprobante $comprobante, bool $saveToDisk = false): string
     {
+        $artifacts = app(AuthorizedInvoiceArtifacts::class)->get($comprobante);
         InvoiceSnapshots::apply($comprobante);
         $company = $comprobante->company;
         $establecimiento = $comprobante->establecimiento;
@@ -39,6 +40,7 @@ class PdfRideService
             'cliente' => $cliente,
             'logoBase64' => $logoBase64,
             'barcodeBase64' => $barcodeBase64,
+            'additionalFields' => $artifacts['additional'],
         ]);
 
         $pdf->setPaper('A4', 'portrait');

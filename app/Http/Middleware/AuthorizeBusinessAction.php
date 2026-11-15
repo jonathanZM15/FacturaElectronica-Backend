@@ -37,7 +37,13 @@ class AuthorizeBusinessAction
             'PuntoEmisionController' => $read ? 'puntos_emision.read' : 'puntos_emision.update',
             'EmisorController' => $read ? 'emisores.read' : ($action === 'store' ? 'emisores.create' : ($action === 'update' ? 'emisores.update' : 'emisores.delete')),
             'LogoController' => 'emisores.update',
-            'FacturacionController' => str_starts_with($action, 'emitir') ? 'comprobantes.create' : ($action === 'reintentarProcesamiento' ? 'comprobantes.retry' : 'comprobantes.read'),
+            'FacturacionController' => match (true) {
+                str_starts_with($action, 'emitir') => 'comprobantes.create',
+                $action === 'reintentarProcesamiento' => 'comprobantes.retry',
+                $action === 'corregirFiscal' => 'comprobantes.correct',
+                $action === 'reenviarEmail' => 'comprobantes.email',
+                default => $read ? 'comprobantes.read' : 'comprobantes.update',
+            },
         ];
         if (isset($permissions[$controller])) {
             abort_unless(PermissionService::tienePermiso($user, $permissions[$controller]), 403, 'Tu rol no permite esta operación.');

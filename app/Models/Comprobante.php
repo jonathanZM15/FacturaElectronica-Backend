@@ -13,7 +13,7 @@ class Comprobante extends Model
     protected $table = 'comprobantes';
 
     protected $fillable = [
-        'operacion_id', 'request_hash', 'created_by_id', 'bodega_id', 'registro_operativo_id',
+        'operacion_id', 'request_hash', 'created_by_id', 'bodega_id', 'registro_operativo_id', 'revision_fiscal',
         'cliente_snapshot', 'emisor_snapshot', 'establecimiento_snapshot', 'pagos', 'informacion_adicional',
         'pos_turno_id',
         'emisor_id',
@@ -72,6 +72,7 @@ class Comprobante extends Model
     ];
 
     protected $casts = [
+        'revision_fiscal' => 'integer',
         'cliente_snapshot' => 'array', 'emisor_snapshot' => 'array', 'establecimiento_snapshot' => 'array',
         'pagos' => 'array', 'informacion_adicional' => 'array',
         'fecha_emision' => 'date',
@@ -104,6 +105,15 @@ class Comprobante extends Model
         'ultima_respuesta_autorizacion' => 'string',
         'ultimo_error_sri' => 'string',
     ];
+
+    protected static function booted(): void
+    {
+        static::saving(function (self $invoice) {
+            foreach (['ultimo_error_sri', 'email_error', 'ultima_respuesta_recepcion', 'ultima_respuesta_autorizacion'] as $field) {
+                if ($invoice->isDirty($field)) $invoice->$field = \App\Services\SensitiveDataSanitizer::clean($invoice->$field);
+            }
+        });
+    }
 
     public function company()
     {

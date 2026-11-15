@@ -36,7 +36,7 @@ class SriSignatureService
             $certBase64 = base64_encode($certDer);
             $certFormatted = "\n" . chunk_split($certBase64, 76, "\n");
 
-            $issuerDN = $this->buildIssuerName($certData['issuer'] ?? []);
+            $issuerDN = htmlspecialchars($this->buildIssuerName($certData['issuer'] ?? []), ENT_XML1 | ENT_QUOTES, 'UTF-8');
             $serialNumber = $this->normalizeSerialNumber((string) ($certData['serialNumber'] ?? ''));
 
             // ── 2. Extraer datos RSA (Modulus y Exponent) ──
@@ -61,9 +61,11 @@ class SriSignatureService
             $doc = new DOMDocument('1.0', 'UTF-8');
             $doc->preserveWhiteSpace = true;
             $doc->formatOutput = false;
-            $doc->loadXML($xmlPuro);
+            if (!$doc->loadXML($xmlPuro, LIBXML_NONET) || $doc->doctype || $doc->documentElement?->getAttribute('id') !== 'comprobante') {
+                throw new SriFirmaException('XML no válido o con entidades no permitidas para la firma.');
+            }
 
-            $docDigest = base64_encode(sha1($doc->C14N(false, false), true));
+            $docDigest = base64_encode(sha1($doc->documentElement->C14N(false, false), true));
 
             // ── 5. Construir SignedProperties (con DataObjectFormat) ──
             $signingTime = date('Y-m-d\TH:i:sP');
@@ -178,7 +180,7 @@ class SriSignatureService
             $signedDoc = new DOMDocument('1.0', 'UTF-8');
             $signedDoc->preserveWhiteSpace = true;
             $signedDoc->formatOutput = false;
-            $signedDoc->loadXML($xmlPuro);
+            $signedDoc->loadXML($xmlPuro, LIBXML_NONET);
 
             $sigFragment = $signedDoc->createDocumentFragment();
             $sigFragment->appendXML($dsSignature);
@@ -212,7 +214,6 @@ class SriSignatureService
         Log::info('Intentando abrir certificado P12.', [
             'ruta' => $rutaFirmaP12,
             'tamanio_bytes' => strlen($p12),
-            'longitud_clave' => strlen($password),
             'openssl_version' => defined('OPENSSL_VERSION_TEXT') ? OPENSSL_VERSION_TEXT : 'desconocida',
         ]);
 
@@ -838,120 +839,140 @@ CNF;
      */
     public function verificarXmlFirmado(string $xmlFirmado): array
     {
-        $dom = new \DOMDocument();
-        $dom->preserveWhiteSpace = true;
-        if (!@$dom->loadXML($xmlFirmado)) {
-            return ['valida' => false, 'error' => 'El XML firmado no es un documento XML válido.'];
-        }
+        $invalid = static fn (string $message) => ['valida' => false, 'error' => $message];
+        $previous = libxml_use_internal_errors(true);
+        libxml_clear_errors();
+        try {
+            $dom = new DOMDocument();
+            $dom->preserveWhiteSpace = true;
+            if (strlen($xmlFirmado) > 320000 || !$dom->loadXML($xmlFirmado, LIBXML_NONET) || $dom->doctype) {
+                return $invalid('XML firmado inválido, demasiado grande o con entidades no permitidas.');
+            }
+            if ($dom->documentElement?->nodeName !== 'factura' || $dom->documentElement->getAttribute('id') !== 'comprobante') {
+                return $invalid('El perfil soportado exige una factura con id comprobante.');
+            }
+            $ds = 'http://www.w3.org/2000/09/xmldsig#';
+            $xades = 'http://uri.etsi.org/01903/v1.3.2#';
+            $canonical = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
+            $enveloped = $ds.'enveloped-signature';
+            $xp = new \DOMXPath($dom);
+            $xp->registerNamespace('ds', $ds);
+            $xp->registerNamespace('etsi', $xades);
+            $xp->registerNamespace('xml', 'http://www.w3.org/XML/1998/namespace');
+            $one = static function (string $path, \DOMNode $context) use ($xp): ?\DOMNode {
+                $nodes = $xp->query($path, $context);
+                return $nodes->length === 1 ? $nodes->item(0) : null;
+            };
+            $signatures = $xp->query('//ds:Signature');
+            if ($signatures->length !== 1) return $invalid('Se requiere una sola firma XML inequívoca.');
+            $signature = $signatures->item(0);
+            if (!$signature->parentNode->isSameNode($dom->documentElement)) return $invalid('La firma debe estar incluida directamente en la factura.');
+            $signedInfo = $one('./ds:SignedInfo', $signature);
+            $keyInfo = $one('./ds:KeyInfo', $signature);
+            $properties = $one('./ds:Object/etsi:QualifyingProperties/etsi:SignedProperties', $signature);
+            $qualifying = $one('./ds:Object/etsi:QualifyingProperties', $signature);
+            $signatureValue = $one('./ds:SignatureValue', $signature);
+            if (!$signedInfo || !$keyInfo || !$properties || !$signatureValue || !$qualifying) return $invalid('Faltan elementos obligatorios del perfil XAdES BES.');
+            if (!$signature->getAttribute('Id') || $qualifying->getAttribute('Target') !== '#'.$signature->getAttribute('Id')) {
+                return $invalid('QualifyingProperties no identifica la firma correspondiente.');
+            }
+            if ($one('./ds:CanonicalizationMethod', $signedInfo)?->getAttribute('Algorithm') !== $canonical
+                || $one('./ds:SignatureMethod', $signedInfo)?->getAttribute('Algorithm') !== $ds.'rsa-sha1') {
+                return $invalid('Algoritmo o canonicalización fuera del perfil soportado.');
+            }
 
-        $xpath = new \DOMXPath($dom);
-        $xpath->registerNamespace('ds', 'http://www.w3.org/2000/09/xmldsig#');
-        $xpath->registerNamespace('etsi', 'http://uri.etsi.org/01903/v1.3.2#');
-
-        $signatureNodes = $xpath->query('//ds:Signature');
-        if ($signatureNodes->length === 0) {
-            return ['valida' => false, 'error' => 'No se encontró el elemento ds:Signature en el documento.'];
-        }
-
-        $signatureNode = $signatureNodes->item(0);
-
-        // 1. Extraer certificado público X509 embebido
-        $x509CertNodes = $xpath->query('.//ds:KeyInfo/ds:X509Data/ds:X509Certificate', $signatureNode);
-        if ($x509CertNodes->length === 0) {
-            return ['valida' => false, 'error' => 'No se encontró ds:X509Certificate en KeyInfo.'];
-        }
-        $certBase64 = preg_replace('/\s+/', '', $x509CertNodes->item(0)->textContent);
-        $certPem = "-----BEGIN CERTIFICATE-----\n" . chunk_split($certBase64, 64, "\n") . "-----END CERTIFICATE-----\n";
-        $publicKey = openssl_pkey_get_public($certPem);
-        if (!$publicKey) {
-            return ['valida' => false, 'error' => 'No se pudo extraer la clave pública del certificado X509 embebido.'];
-        }
-
-        // 2. Extraer SignatureValue
-        $sigValueNodes = $xpath->query('.//ds:SignatureValue', $signatureNode);
-        if ($sigValueNodes->length === 0) {
-            return ['valida' => false, 'error' => 'No se encontró el elemento ds:SignatureValue.'];
-        }
-        $signatureValue = base64_decode(preg_replace('/\s+/', '', $sigValueNodes->item(0)->textContent));
-
-        // 3. Extraer SignedInfo y verificar firma criptográfica RSA-SHA1
-        $signedInfoNodes = $xpath->query('.//ds:SignedInfo', $signatureNode);
-        if ($signedInfoNodes->length === 0) {
-            return ['valida' => false, 'error' => 'No se encontró el elemento ds:SignedInfo.'];
-        }
-        $signedInfoNode = $signedInfoNodes->item(0);
-        $c14nSignedInfo = $signedInfoNode->C14N();
-
-        $verifyResult = openssl_verify($c14nSignedInfo, $signatureValue, $publicKey, OPENSSL_ALGO_SHA1);
-        if ($verifyResult !== 1) {
-            return [
-                'valida' => false,
-                'error' => 'La firma digital (SignatureValue) no corresponde criptográficamente al contenido de SignedInfo (firma alterada o clave no coincidente).'
-            ];
-        }
-
-        // 4. Verificar referencias y sus DigestValues
-        $referenceNodes = $xpath->query('.//ds:Reference', $signedInfoNode);
-        if ($referenceNodes->length === 0) {
-            return ['valida' => false, 'error' => 'SignedInfo no contiene referencias de verificación.'];
-        }
-
-        foreach ($referenceNodes as $refNode) {
-            $uri = $refNode->getAttribute('URI');
-            $expectedDigest = trim($xpath->query('.//ds:DigestValue', $refNode)->item(0)?->textContent ?? '');
-
-            if ($uri === '' || str_starts_with($uri, '#')) {
-                $targetId = ltrim($uri, '#');
-                $targetElement = null;
-
-                if ($targetId === '') {
-                    $targetElement = $dom->documentElement;
-                } else {
-                    $elements = $xpath->query("//*[@Id='{$targetId}'] | //*[@id='{$targetId}']");
-                    if ($elements->length > 0) {
-                        $targetElement = $elements->item(0);
-                    }
-                }
-
-                if ($targetElement) {
-                    $hasEnveloped = false;
-                    $transforms = $xpath->query('.//ds:Transforms/ds:Transform', $refNode);
-                    foreach ($transforms as $t) {
-                        if ($t->getAttribute('Algorithm') === 'http://www.w3.org/2000/09/xmldsig#enveloped-signature') {
-                            $hasEnveloped = true;
-                            break;
-                        }
-                    }
-
-                    if ($hasEnveloped) {
-                        $cloneDoc = new \DOMDocument();
-                        $cloneDoc->preserveWhiteSpace = true;
-                        $cloneDoc->loadXML($dom->saveXML());
-                        $cloneXpath = new \DOMXPath($cloneDoc);
-                        $cloneXpath->registerNamespace('ds', 'http://www.w3.org/2000/09/xmldsig#');
-                        foreach ($cloneXpath->query('//ds:Signature') as $sigToRemove) {
-                            $sigToRemove->parentNode->removeChild($sigToRemove);
-                        }
-                        $targetXmlC14n = $cloneDoc->documentElement->C14N();
-                    } else {
-                        $targetXmlC14n = $targetElement->C14N();
-                    }
-
-                    $calculatedDigest = base64_encode(sha1($targetXmlC14n, true));
-                    if ($calculatedDigest !== $expectedDigest) {
-                        return [
-                            'valida' => false,
-                            'error' => "El resumen digest del elemento con ID '{$targetId}' no coincide (el contenido fue alterado tras la firma)."
-                        ];
-                    }
+            $ids = [];
+            foreach ($xp->query('//*[@Id or @id or @ID or @xml:id]') as $element) {
+                foreach ($element->attributes as $attribute) {
+                    if (!in_array($attribute->nodeName, ['Id', 'id', 'ID', 'xml:id'], true)) continue;
+                    $id = $attribute->nodeValue;
+                    if ($id === '' || isset($ids[$id])) return $invalid('Existen identificadores vacíos o duplicados en el XML.');
+                    $ids[$id] = $element;
                 }
             }
-        }
+            $expectedTargets = ['comprobante' => $dom->documentElement,
+                $properties->getAttribute('Id') => $properties, $keyInfo->getAttribute('Id') => $keyInfo];
+            if (count($expectedTargets) !== 3 || isset($expectedTargets[''])) return $invalid('Los identificadores del perfil están incompletos.');
+            $references = $xp->query('./ds:Reference', $signedInfo);
+            if ($references->length !== 3) return $invalid('Se requieren las referencias al comprobante, SignedProperties y KeyInfo.');
+            $seen = [];
+            $documentReference = null;
+            foreach ($references as $reference) {
+                $uri = $reference->getAttribute('URI');
+                if (!preg_match('/^#[A-Za-z_][A-Za-z0-9_.:-]*$/D', $uri)) return $invalid('Referencia vacía, externa o no soportada.');
+                $id = substr($uri, 1);
+                $target = $ids[$id] ?? null;
+                if (!$target || !isset($expectedTargets[$id]) || !$target->isSameNode($expectedTargets[$id]) || isset($seen[$id])) {
+                    return $invalid('Referencia ausente, duplicada o ajena a los elementos exigidos por el perfil.');
+                }
+                $seen[$id] = true;
+                if ($target->isSameNode($properties) && $reference->getAttribute('Type') !== 'http://uri.etsi.org/01903#SignedProperties') {
+                    return $invalid('La referencia de SignedProperties no declara su tipo.');
+                }
+                $method = $one('./ds:DigestMethod', $reference);
+                $digest = $one('./ds:DigestValue', $reference);
+                $digestValue = $digest ? base64_decode(preg_replace('/\s+/', '', $digest->textContent), true) : false;
+                if ($method?->getAttribute('Algorithm') !== $ds.'sha1' || $digestValue === false || strlen($digestValue) !== 20) {
+                    return $invalid('Método de resumen o DigestValue inválido.');
+                }
+                $transforms = [];
+                foreach ($xp->query('./ds:Transforms/ds:Transform', $reference) as $transform) $transforms[] = $transform->getAttribute('Algorithm');
+                if ($id === 'comprobante') {
+                    if ($transforms !== [$enveloped] && $transforms !== [$enveloped, $canonical]) return $invalid('Transformaciones inválidas para el comprobante.');
+                    $documentReference = $reference;
+                    $clone = new DOMDocument();
+                    $clone->preserveWhiteSpace = true;
+                    $clone->loadXML($dom->saveXML(), LIBXML_NONET);
+                    $copySignature = $clone->getElementsByTagNameNS($ds, 'Signature')->item(0);
+                    $copySignature->parentNode->removeChild($copySignature);
+                    $content = $clone->documentElement->C14N(false, false);
+                } else {
+                    if ($transforms !== [] && $transforms !== [$canonical]) return $invalid('Transformación interna no soportada.');
+                    $content = $target->C14N(false, false);
+                }
+                if (!hash_equals(sha1($content, true), $digestValue)) return $invalid('El resumen de una referencia no coincide con su contenido.');
+            }
+            if (!$documentReference) return $invalid('No se firma el comprobante completo.');
+            $format = $one('./etsi:SignedDataObjectProperties/etsi:DataObjectFormat', $properties);
+            if (!$documentReference->getAttribute('Id') || !$format
+                || $format->getAttribute('ObjectReference') !== '#'.$documentReference->getAttribute('Id')
+                || trim($one('./etsi:MimeType', $format)?->textContent ?? '') !== 'text/xml') {
+                return $invalid('DataObjectFormat no identifica el comprobante firmado.');
+            }
+            $time = trim($one('./etsi:SignedSignatureProperties/etsi:SigningTime', $properties)?->textContent ?? '');
+            if (!preg_match('/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:Z|[+-][0-9]{2}:[0-9]{2})$/D', $time)) {
+                return $invalid('SigningTime está ausente o tiene formato incorrecto.');
+            }
 
-        return [
-            'valida' => true,
-            'mensaje' => 'Firma XAdES-BES criptográficamente íntegra y verificada según la normativa del SRI.',
-            'algoritmo' => 'RSA-SHA1',
-        ];
+            $certificateNode = $one('./ds:X509Data/ds:X509Certificate', $keyInfo);
+            $certificateDer = $certificateNode ? base64_decode(preg_replace('/\s+/', '', $certificateNode->textContent), true) : false;
+            if (!$certificateDer) return $invalid('No se encontró un certificado X509 válido.');
+            $certificate = "-----BEGIN CERTIFICATE-----\n".chunk_split(base64_encode($certificateDer), 64, "\n")."-----END CERTIFICATE-----\n";
+            $certificateData = @openssl_x509_parse($certificate);
+            $publicKey = @openssl_pkey_get_public($certificate);
+            if (!$certificateData || !$publicKey) return $invalid('No se puede leer la clave pública del certificado.');
+            $certPath = './etsi:SignedSignatureProperties/etsi:SigningCertificate/etsi:Cert';
+            $certDigest = $one($certPath.'/etsi:CertDigest/ds:DigestValue', $properties);
+            $certMethod = $one($certPath.'/etsi:CertDigest/ds:DigestMethod', $properties);
+            $issuer = $one($certPath.'/etsi:IssuerSerial/ds:X509IssuerName', $properties);
+            $serial = $one($certPath.'/etsi:IssuerSerial/ds:X509SerialNumber', $properties);
+            if ($certMethod?->getAttribute('Algorithm') !== $ds.'sha1' || !$certDigest
+                || !hash_equals(base64_encode(sha1($certificateDer, true)), trim($certDigest->textContent))
+                || $issuer?->textContent !== $this->buildIssuerName($certificateData['issuer'] ?? [])
+                || trim($serial?->textContent ?? '') !== $this->normalizeSerialNumber((string) ($certificateData['serialNumber'] ?? ''))) {
+                return $invalid('SigningCertificate no corresponde al certificado incluido en KeyInfo.');
+            }
+            $value = base64_decode(preg_replace('/\s+/', '', $signatureValue->textContent), true);
+            if ($value === false || @openssl_verify($signedInfo->C14N(false, false), $value, $publicKey, OPENSSL_ALGO_SHA1) !== 1) {
+                return $invalid('SignatureValue no corresponde a SignedInfo.');
+            }
+            return ['valida' => true, 'mensaje' => 'Firma y referencias verificadas en el perfil soportado. La confianza del certificado y la aceptación del SRI se comprueban por separado.', 'algoritmo' => 'RSA-SHA1'];
+        } catch (\Throwable $e) {
+            return $invalid('No se pudo verificar la estructura de la firma XML.');
+        } finally {
+            libxml_clear_errors();
+            libxml_use_internal_errors($previous);
+        }
     }
+
 }

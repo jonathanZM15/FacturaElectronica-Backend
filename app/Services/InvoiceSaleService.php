@@ -25,9 +25,9 @@ class InvoiceSaleService
             'pos_turno_id' => ['required', 'integer', 'exists:pos_turnos,id'],
             'bodega_id' => ['nullable', 'integer', 'exists:bodegas,id'],
             'cliente.tipo_identificacion' => ['required', Rule::in(array_values(ClientIdentification::FACTURA_CODES))],
-            'cliente.identificacion' => ['required', 'string', 'max:13'],
+            'cliente.identificacion' => ['required', 'string', 'max:20'],
             'cliente.razon_social' => ['required', 'string', 'max:255'],
-            'cliente.direccion' => ['required', 'string', 'max:500'],
+            'cliente.direccion' => ['required', 'string', 'max:300'],
             'cliente.email' => ['required', 'email', 'max:255'],
             'cliente.telefono' => ['nullable', 'string', 'max:50'],
             'detalles' => ['required', 'array', 'min:1', 'max:500'],
@@ -74,27 +74,31 @@ class InvoiceSaleService
     }
 
     /** Invoice, payment data, MOV03 and stock commit together; no external I/O here. */
-    public function confirm(User $actor, array $data): array
+    public function confirm(User $actor, array $data, ?int $signatureOverhead = null): array
     {
-        return DB::transaction(function () use ($actor, $data) {
+        return DB::transaction(function () use ($actor, $data, $signatureOverhead) {
             $company = Company::whereKey($data['emisor_id'])->lockForUpdate()->firstOrFail();
             $actor = User::whereKey($actor->id)->lockForUpdate()->firstOrFail();
             abort_unless($actor->estaActivo() && $actor->role === UserRole::CAJERO, 403, 'Solo Cajero activo puede confirmar ventas.');
             BusinessAccess::company($actor, (int) $company->id);
-            if (!$company->ruc || !$company->razon_social || !$company->direccion_matriz) $this->invalid('emisor_id', 'Completa los datos fiscales del emisor antes de vender.');
-            $branch = BusinessAccess::establishment($actor, (int) $data['establecimiento_id'], $company->id);
-            $point = BusinessAccess::point($actor, (int) $data['punto_emision_id'], $company->id);
-            abort_unless((int) $point->establecimiento_id === (int) $branch->id && $branch->estado === 'ABIERTO' && $point->estado === 'ACTIVO' && $company->estado === 'ACTIVO', 422, 'Empresa, sucursal y punto deben estar activos y relacionados.');
             $hash = hash('sha256', json_encode($data, JSON_THROW_ON_ERROR));
             $existing = Comprobante::where('emisor_id', $company->id)->where('operacion_id', $data['operacion_id'])->first();
             if ($existing) {
                 BusinessAccess::invoice($actor, $existing);
+                abort_unless((int) $existing->created_by_id === (int) $actor->id, 403, 'La operación pertenece a otro cajero.');
                 if (!hash_equals((string) $existing->request_hash, $hash)) $this->invalid('operacion_id', 'La operación ya existe con otros datos.');
                 return ['comprobante' => $existing, 'created' => false];
             }
+            // Recover an already committed sale before checking conditions for a new sale.
+            // A branch, turn or certificate may have changed after its response was lost.
+            if (!$company->ruc || !$company->razon_social || !$company->direccion_matriz) $this->invalid('emisor_id', 'Completa los datos fiscales del emisor antes de vender.');
+            $branch = BusinessAccess::establishment($actor, (int) $data['establecimiento_id'], $company->id);
+            $point = BusinessAccess::point($actor, (int) $data['punto_emision_id'], $company->id);
+            abort_unless((int) $point->establecimiento_id === (int) $branch->id && $branch->estado === 'ABIERTO' && $point->estado === 'ACTIVO' && $company->estado === 'ACTIVO', 422, 'Empresa, sucursal y punto deben estar activos y relacionados.');
             $turn = PosTurno::whereKey($data['pos_turno_id'])->lockForUpdate()->firstOrFail();
             abort_unless((int) $turn->usuario_id === (int) $actor->id && (int) $turn->punto_emision_id === (int) $point->id && $turn->estado === 'Abierto', 403, 'Debes operar tu propio turno abierto y punto asignado.');
             $details = []; $physical = [];
+            $issueDate = now('America/Guayaquil')->toDateString();
             foreach ($data['detalles'] as $index => $detail) {
                 $product = Producto::where('emisor_id', $company->id)->find($detail['producto_id']);
                 if (!$product || !$product->permite_venta || $product->uso_interno) $this->invalid("detalles.$index.producto_id", 'Producto no disponible para venta en esta empresa.');
@@ -108,6 +112,9 @@ class InvoiceSaleService
                     $this->invalid("detalles.$index.impuesto", "La combinación de código ({$tax->codigo_porcentaje}) y tarifa ({$tax->valor_tarifa}%) de IVA no es válida según la normativa del SRI.");
                 }
                 $requested = $detail['impuesto'] ?? [];
+                if ($taxError = app(TaxValidityService::class)->error($tax, $issueDate, $product)) {
+                    $this->invalid("detalles.$index.impuesto", $taxError);
+                }
                 if ((isset($requested['tipo_impuesto_id']) && (int) $requested['tipo_impuesto_id'] !== (int) $tax->id) || (isset($requested['tarifa']) && abs((float) $requested['tarifa'] - (float) $tax->valor_tarifa) > .000001)) $this->invalid("detalles.$index.impuesto", 'El impuesto no coincide con el catálogo del producto.');
                 $detail['precio_unitario'] = (float) $price;
                 $detail['descripcion'] = $product->nombre;
@@ -138,7 +145,13 @@ class InvoiceSaleService
             }
             $clientData = $data['cliente'];
             $client = Cliente::firstOrNew(['emisor_id' => $company->id, 'tipo_identificacion' => $clientData['tipo_identificacion'], 'identificacion' => $clientData['identificacion']]);
-            $client->fill($clientData);
+            $masterData = $clientData;
+            if ($clientData['tipo_identificacion'] === 'CONSUMIDOR_FINAL') {
+                // Each anonymous sale has its own contact in the invoice snapshot.
+                // Do not expose the last purchaser's address through the shared CF master.
+                $masterData = array_merge($masterData, ['razon_social' => 'CONSUMIDOR FINAL', 'direccion' => 'S/N', 'email' => '', 'telefono' => null]);
+            }
+            $client->fill($masterData);
             if (!$client->exists) $client->created_by = $actor->id;
             $client->updated_by = $actor->id;
             $client->save();
@@ -154,11 +167,11 @@ class InvoiceSaleService
                 'pos_turno_id' => $turn->id, 'cliente_id' => $client->id, 'bodega_id' => $warehouse?->id,
                 'operacion_id' => $data['operacion_id'], 'request_hash' => $hash, 'created_by_id' => $actor->id,
                 'tipo_comprobante' => 'FACTURA', 'secuencial' => $sequence['secuencial'], 'secuencial_formateado' => $sequence['secuencial_formateado'],
-                'codigo_establecimiento' => $branch->codigo, 'punto_emision_codigo' => $point->codigo, 'fecha_emision' => now()->toDateString(),
+                'codigo_establecimiento' => $branch->codigo, 'punto_emision_codigo' => $point->codigo, 'fecha_emision' => $issueDate,
                 'subtotal_sin_impuestos' => $calculation['totales']['subtotal_sin_impuestos'], 'total_descuento' => $calculation['totales']['total_descuento'],
                 'total_iva' => $calculation['totales']['total_iva'], 'total_impuestos' => $calculation['totales']['total_iva'], 'total' => $total,
                 'estado_sri' => 'BORRADOR', 'ambiente' => $company->ambiente, 'tipo_emision' => $company->tipo_emision,
-                'cliente_snapshot' => $client->getAttributes(), 'emisor_snapshot' => $company->getAttributes(), 'establecimiento_snapshot' => $branch->getAttributes(),
+                'cliente_snapshot' => array_merge($client->getAttributes(), $clientData), 'emisor_snapshot' => $company->getAttributes(), 'establecimiento_snapshot' => $branch->getAttributes(),
                 'pagos' => $data['pagos'], 'informacion_adicional' => $data['informacion_adicional'] ?? [],
             ]));
             foreach ($calculation['detalles'] as $detail) {
@@ -166,6 +179,19 @@ class InvoiceSaleService
                 $this->tax($invoice, $line->id, $detail['impuesto'], $detail['precio_total_sin_impuesto'], round($detail['precio_total_sin_impuesto'] * $detail['impuesto']['tarifa'] / 100, 2));
             }
             foreach ($calculation['impuestos'] as $tax) $this->tax($invoice, null, $tax, $tax['base_imponible'], $tax['valor']);
+            // Validate the complete local fiscal document inside the sale transaction.
+            // A deterministic XML error rolls back invoice, payment data, customer and sequence.
+            $generated = app(SriXmlGeneratorService::class)->generarXmlFactura(
+                $invoice->load(['detalles.impuestos.tipoImpuesto', 'impuestos.tipoImpuesto'])
+            );
+            if (strlen($generated['xml']) + max(0, $signatureOverhead ?? 20000) > 320000) {
+                $this->invalid('factura', 'El comprobante firmado supera el límite de 320 KB del envío individual. Reduce el detalle antes de confirmar.');
+            }
+            $validation = app(SriXmlValidatorService::class)->validateFactura($generated['xml']);
+            if (!$validation['valid']) {
+                throw ValidationException::withMessages(['factura' => $validation['errors']]);
+            }
+            $invoice->update(['clave_acceso' => $generated['clave_acceso'], 'xml_generado' => $generated['xml']]);
             if ($physical) {
                 $movement = $this->inventory->ventaInmediata($warehouse, $physical, 'Venta '.$invoice->codigo_establecimiento.'-'.$invoice->punto_emision_codigo.'-'.$invoice->secuencial_formateado, $actor->id);
                 $invoice->update(['registro_operativo_id' => $movement->id]);

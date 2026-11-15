@@ -51,7 +51,7 @@
                         $regimen = strtoupper($company->regimen_tributario ?? '');
                     @endphp
                     @if($regimen === 'RIMPE_POPULAR' || str_contains($regimen, 'POPULAR'))
-                        <div><strong>CONTRIBUYENTE RÉGIMEN RIMPE - NEGOCIO POPULAR</strong></div>
+                        <div><strong>CONTRIBUYENTE NEGOCIO POPULAR - RÉGIMEN RIMPE</strong></div>
                     @elseif(str_contains($regimen, 'RIMPE'))
                         <div><strong>CONTRIBUYENTE RÉGIMEN RIMPE</strong></div>
                     @elseif($regimen === 'MICRO_EMPRESA' || str_contains($regimen, 'MICRO'))
@@ -68,7 +68,7 @@
                 <div class="mb-2">No. {{ $comprobante->codigo_establecimiento }}-{{ $comprobante->punto_emision_codigo }}-{{ $comprobante->secuencial_formateado }}</div>
                 
                 <div class="fw-bold">NÚMERO DE AUTORIZACIÓN</div>
-                <div class="mb-2" style="font-size: 11px;">{{ $comprobante->numero_autorizacion ?: $comprobante->clave_acceso }}</div>
+                <div class="mb-2" style="font-size: 11px;">{{ $comprobante->numero_autorizacion }}</div>
                 
                 <table class="w-100 mb-2">
                     <tr>
@@ -161,12 +161,9 @@
                             <td style="padding: 2px;">{{ $cliente->email }}</td>
                         </tr>
                         @endif
-                        @foreach($comprobante->informacion_adicional ?? [] as $item)
+                        @foreach($additionalFields as $item)
                         <tr><td style="padding: 2px;">{{ $item['nombre'] }}</td><td style="padding: 2px;">{{ $item['valor'] }}</td></tr>
                         @endforeach
-                        @if(config('sri.proveedor_ruc'))
-                        <tr><td style="padding: 2px;">RUC Proveedor</td><td style="padding: 2px;">{{ config('sri.proveedor_ruc') }}</td></tr>
-                        @endif
                     </table>
                 </div>
                 

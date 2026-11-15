@@ -295,7 +295,8 @@ class FacturacionController extends Controller
         $exists = Comprobante::where('emisor_id', $data['emisor_id'])->where('operacion_id', $data['operacion_id'])->exists();
         try {
             $certificate = $exists ? null : $processing->certificate((int) $data['emisor_id']);
-            $result = $sales->confirm($request->user(), $data);
+            $signatureOverhead = $certificate ? $processing->signatureOverhead($certificate) : null;
+            $result = $sales->confirm($request->user(), $data, $signatureOverhead);
         } catch (SriFirmaException $e) {
             return response()->json(['message' => $e->getMessage(), 'errors' => ['firma' => [$e->getMessage()]]], 422);
         } catch (\App\Exceptions\InvalidWarehouseOperationException $e) {
@@ -321,7 +322,7 @@ class FacturacionController extends Controller
                     Log::warning('No se pudo despachar comprobante repetido pendiente.', ['comprobante_id' => $invoice->id, 'error' => $e->getMessage()]);
                 }
             } elseif (in_array($invoice->estado_sri, ['RECIBIDA', 'ENVIADO', 'ERROR_AUTORIZACION'], true) && $invoice->clave_acceso) {
-                \App\Jobs\ConsultarAutorizacionSriJob::dispatch($invoice->id)->afterCommit();
+                $processing->dispatchAuthorization($invoice);
             }
         }
         return response()->json([
@@ -1149,11 +1150,13 @@ class FacturacionController extends Controller
             return response()->json(['message' => 'El comprobante tiene una respuesta final del SRI. Si presenta inconsistencias en datos fiscales, utilice la opción de corrección fiscal controlada.'], 409);
         }
         if (in_array($comprobante->estado_sri, ['RECIBIDA', 'ENVIADO', 'ERROR_AUTORIZACION'], true) && $comprobante->clave_acceso) {
-            ConsultarAutorizacionSriJob::dispatch($comprobante->id)->afterCommit();
+            $created = app(\App\Services\InvoiceProcessingService::class)->dispatchAuthorization($comprobante, 0, true);
         } else {
-            app(\App\Services\InvoiceProcessingService::class)->dispatch($comprobante);
+            $created = app(\App\Services\InvoiceProcessingService::class)->dispatch($comprobante, null, true);
         }
-        return response()->json(['message' => 'Procesamiento del mismo comprobante programado. No se repite el cobro ni el movimiento de inventario.'], 202);
+        return response()->json(['message' => $created
+            ? 'Procesamiento del mismo comprobante programado. No se repite el cobro ni el movimiento de inventario.'
+            : 'El comprobante ya tiene una tarea programada o en ejecución. Consulta su estado.'], 202);
     }
 
     /**
@@ -1162,146 +1165,20 @@ class FacturacionController extends Controller
      */
     public function corregirFiscal(Request $request, Comprobante $comprobante): JsonResponse
     {
-        \App\Services\BusinessAccess::invoice($request->user(), $comprobante);
-
-        if ($comprobante->estado_sri === 'AUTORIZADO') {
-            return response()->json(['message' => 'Una factura AUTORIZADA por el SRI no puede ser modificada.'], 422);
-        }
-
-        if (!in_array($comprobante->estado_sri, ['DEVUELTA', 'NO_AUTORIZADO', 'ERROR_ENVIO', 'ERROR_FIRMA', 'ERROR_AUTORIZACION'], true)) {
-            return response()->json(['message' => 'Solo se pueden corregir facturas en estado DEVUELTA, NO_AUTORIZADO o con error de procesamiento.'], 422);
-        }
-
-        $validator = Validator::make($request->all(), [
+        $data = $request->validate([
             'cliente' => ['required', 'array'],
             'cliente.tipo_identificacion' => ['required', 'string'],
-            'cliente.identificacion' => ['required', 'string', 'max:13'],
+            'cliente.identificacion' => ['required', 'string', 'max:20'],
             'cliente.razon_social' => ['required', 'string', 'max:255'],
-            'cliente.direccion' => ['required', 'string', 'max:500'],
+            'cliente.direccion' => ['required', 'string', 'max:300'],
             'cliente.email' => ['required', 'email', 'max:255'],
             'cliente.telefono' => ['nullable', 'string', 'max:50'],
             'motivo_correccion' => ['required', 'string', 'min:5', 'max:500'],
         ]);
 
-        if ($validator->fails()) {
-            return response()->json([
-                'message' => 'Datos de corrección inválidos.',
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
-        $clientData = $request->input('cliente');
-        $tipoId = (string) $clientData['tipo_identificacion'];
-        $idNum = trim((string) $clientData['identificacion']);
-
-        if (!\App\Services\ClientIdentification::valid($tipoId, $idNum)) {
-            return response()->json([
-                'message' => 'La identificación ingresada no es válida para el tipo seleccionado según las reglas del SRI.',
-                'errors' => ['cliente.identificacion' => ['Identificación no válida.']]
-            ], 422);
-        }
-
-        // Validación P02: Consumidor final no permitido si el total supera $50.00
-        $normTipo = \App\Services\ClientIdentification::normalize($tipoId);
-        if (($normTipo === 'CONSUMIDOR_FINAL' || $idNum === '9999999999999') && (float) $comprobante->total > 50.00) {
-            return response()->json([
-                'message' => 'Por normativa del SRI, en facturas superiores a $50.00 no se admite Consumidor Final.',
-                'errors' => ['cliente.identificacion' => ['Monto superior a $50.00 requiere cliente identificado.']]
-            ], 422);
-        }
-
-        return DB::transaction(function () use ($request, $comprobante, $clientData, $normTipo, $idNum) {
-            $clienteAnterior = $comprobante->cliente ? [
-                'tipo_identificacion' => $comprobante->cliente->tipo_identificacion,
-                'identificacion' => $comprobante->cliente->identificacion,
-                'razon_social' => $comprobante->cliente->razon_social,
-            ] : null;
-
-            // Actualizar o asociar cliente corregido
-            $cliente = Cliente::where('emisor_id', $comprobante->emisor_id)
-                ->where('identificacion', $idNum)
-                ->first();
-
-            if ($cliente) {
-                $cliente->update([
-                    'tipo_identificacion' => $clientData['tipo_identificacion'],
-                    'razon_social' => $clientData['razon_social'],
-                    'direccion' => $clientData['direccion'],
-                    'email' => $clientData['email'],
-                    'telefono' => $clientData['telefono'] ?? null,
-                ]);
-            } else {
-                $cliente = Cliente::create([
-                    'emisor_id' => $comprobante->emisor_id,
-                    'tipo_identificacion' => $clientData['tipo_identificacion'],
-                    'identificacion' => $idNum,
-                    'razon_social' => $clientData['razon_social'],
-                    'direccion' => $clientData['direccion'],
-                    'email' => $clientData['email'],
-                    'telefono' => $clientData['telefono'] ?? null,
-                    'estado' => 'ACTIVO',
-                ]);
-            }
-
-            $comprobante->cliente_id = $cliente->id;
-            $comprobante->setRelation('cliente', $cliente);
-
-            // Regenerar XML manteniendo secuencial, emisor y montos
-            $xmlService = app(\App\Services\SriXmlGeneratorService::class);
-            $generated = $xmlService->generarXmlFactura($comprobante);
-
-            $comprobante->xml_generado = $generated['xml'];
-            $comprobante->clave_acceso = $generated['clave_acceso'];
-            $comprobante->xml_firmado = null;
-            $comprobante->sri_intentos_envio = 0;
-            $comprobante->sri_intentos_autorizacion = 0;
-            $comprobante->ultimo_error_sri = null;
-            $comprobante->save();
-
-            // Transicionar estado y registrar evento auditado en el historial
-            $lifecycle = app(\App\Services\SriComprobanteLifecycleService::class);
-            $user = $request->user();
-            $motivo = $request->input('motivo_correccion');
-
-            $lifecycle->transition($comprobante, 'PROCESANDO', [], [
-                'etapa' => 'correccion_fiscal',
-                'codigo' => 'CORRECCION_FISCAL_CONTROLADA',
-                'mensaje' => "Corrección fiscal controlada por {$user->username}: {$motivo}",
-                'detalles' => [
-                    'cliente_anterior' => $clienteAnterior,
-                    'cliente_nuevo' => [
-                        'tipo_identificacion' => $clientData['tipo_identificacion'],
-                        'identificacion' => $idNum,
-                        'razon_social' => $clientData['razon_social'],
-                    ],
-                    'motivo' => $motivo,
-                    'usuario_id' => $user->id,
-                    'ip' => $request->ip(),
-                ]
-            ]);
-
-            // Reprogramar despacho durable sin afectar stock ni caja si la empresa tiene firma configurada
-            $despachado = false;
-            try {
-                app(\App\Services\InvoiceProcessingService::class)->dispatch($comprobante);
-                $despachado = true;
-            } catch (\Illuminate\Validation\ValidationException $e) {
-                // Si la empresa aún no tiene certificado digital configurado en el sistema,
-                // la factura queda actualizada con los nuevos datos fiscales y en estado PROCESANDO lista para firmarse cuando se cargue el certificado.
-                \Illuminate\Support\Facades\Log::warning("Comprobante {$comprobante->id} corregido fiscalmente pero no despachado por falta de firma: " . $e->getMessage());
-            }
-
-            return response()->json([
-                'success' => true,
-                'message' => $despachado 
-                    ? 'Comprobante corregido fiscalmente y reprogramado para autorización. No se repitió el cobro ni el movimiento de inventario.'
-                    : 'Comprobante corregido fiscalmente. Se firmará y enviará cuando el emisor configure su firma electrónica.',
-                'despachado' => $despachado,
-                'comprobante_id' => $comprobante->id,
-                'clave_acceso' => $comprobante->clave_acceso,
-                'estado_sri' => $comprobante->fresh()->estado_sri,
-            ], 200);
-        });
+        return response()->json(app(\App\Services\InvoiceCorrectionService::class)->correct(
+            $request->user(), $comprobante, $data['cliente'], $data['motivo_correccion'], $request->ip()
+        ));
     }
 
     private function buildSubtotales(array $detalles): array
@@ -1425,7 +1302,11 @@ class FacturacionController extends Controller
             $query->where(function ($q) use ($search) {
                 $q->where('secuencial_formateado', 'ilike', $search)->orWhere('clave_acceso', 'ilike', $search)
                     ->orWhereRaw("(codigo_establecimiento || '-' || punto_emision_codigo || '-' || secuencial_formateado) ILIKE ?", [$search])
-                    ->orWhereHas('cliente', fn ($c) => $c->where('razon_social', 'ilike', $search)->orWhere('identificacion', 'ilike', $search));
+                    ->orWhereRaw("cliente_snapshot->>'razon_social' ILIKE ?", [$search])
+                    ->orWhereRaw("cliente_snapshot->>'identificacion' ILIKE ?", [$search])
+                    ->orWhere(function ($legacy) use ($search) {
+                        $legacy->whereNull('cliente_snapshot')->whereHas('cliente', fn ($c) => $c->where('razon_social', 'ilike', $search)->orWhere('identificacion', 'ilike', $search));
+                    });
             });
         }
         $paginator = $query->paginate(max(1, min(100, (int) $request->input('per_page', 20))));
@@ -1449,6 +1330,10 @@ class FacturacionController extends Controller
                 'fecha_emision'         => $c->fecha_emision?->format('Y-m-d'),
                 'cliente_razon_social'  => $c->cliente_snapshot['razon_social'] ?? $c->cliente?->razon_social ?? 'CONSUMIDOR FINAL',
                 'cliente_identificacion'=> $c->cliente_snapshot['identificacion'] ?? $c->cliente?->identificacion ?? '9999999999999',
+                'cliente_tipo_identificacion' => $c->cliente_snapshot['tipo_identificacion'] ?? $c->cliente?->tipo_identificacion,
+                'cliente_direccion' => $c->cliente_snapshot['direccion'] ?? $c->cliente?->direccion,
+                'cliente_email' => $c->cliente_snapshot['email'] ?? $c->cliente?->email,
+                'cliente_telefono' => $c->cliente_snapshot['telefono'] ?? $c->cliente?->telefono,
                 'total'                 => (float) $c->total,
                 'subtotal_sin_impuestos'=> (float) $c->subtotal_sin_impuestos,
                 'total_iva'             => (float) $c->total_iva,
@@ -1486,7 +1371,9 @@ class FacturacionController extends Controller
         }
 
         $formato = strtolower((string) $request->query('formato', 'paquete'));
-        $innerXml = $comprobante->xml_autorizado ?: $comprobante->xml_firmado;
+        abort_unless(in_array($formato, ['paquete', 'firmado', 'comprobante'], true), 422, 'Formato XML no permitido.');
+        $artifacts = app(\App\Services\AuthorizedInvoiceArtifacts::class)->get($comprobante);
+        $innerXml = $artifacts['signed_xml'];
 
         if ($formato === 'firmado' || $formato === 'comprobante') {
             return response($innerXml)
@@ -1494,24 +1381,7 @@ class FacturacionController extends Controller
                 ->header('Content-Disposition', 'attachment; filename="' . $comprobante->clave_acceso . '.xml"');
         }
 
-        // A03: Generar paquete XML oficial de autorización del SRI (Ficha Técnica esquema fuera de línea)
-        if (str_contains($innerXml, '<autorizacion>') || str_contains($innerXml, '<autorizacion ')) {
-            $paqueteXml = $innerXml;
-        } else {
-            $fechaAut = $comprobante->fecha_autorizacion ? $comprobante->fecha_autorizacion->toIso8601String() : now()->toIso8601String();
-            $numAut = $comprobante->numero_autorizacion ?: $comprobante->clave_acceso;
-            $ambiente = $comprobante->ambiente ?: 'PRUEBAS';
-
-            $paqueteXml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" .
-                "<autorizacion>\n" .
-                "    <estado>AUTORIZADO</estado>\n" .
-                "    <numeroAutorizacion>{$numAut}</numeroAutorizacion>\n" .
-                "    <fechaAutorizacion class=\"fechaAutorizacion\">{$fechaAut}</fechaAutorizacion>\n" .
-                "    <ambiente>{$ambiente}</ambiente>\n" .
-                "    <comprobante><![CDATA[{$innerXml}]]></comprobante>\n" .
-                "    <mensajes/>\n" .
-                "</autorizacion>";
-        }
+        $paqueteXml = $artifacts['package_xml'];
 
         return response($paqueteXml)
             ->header('Content-Type', 'application/xml')

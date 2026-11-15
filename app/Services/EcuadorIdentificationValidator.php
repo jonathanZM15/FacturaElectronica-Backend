@@ -111,23 +111,12 @@ class EcuadorIdentificationValidator
 
     public static function validateRuc(string $ruc): bool
     {
-        $ruc = self::onlyDigits($ruc);
-        if (strlen($ruc) !== 13) {
-            return false;
-        }
-
-        $third = (int) $ruc[2];
-        if ($third >= 0 && $third <= 5) {
-            return self::validateRucPersonaNatural($ruc);
-        }
-        if ($third === 6) {
-            return self::validateRucSociedadPublica($ruc);
-        }
-        if ($third === 9) {
-            return self::validateRucSociedadPrivada($ruc);
-        }
-
-        return false;
+        // Format is not proof of registration. The SRI explicitly warns that
+        // corporate and foreign-person RUCs have no universal check algorithm.
+        // Never reject an assigned RUC solely because a conventional checksum fails.
+        $ruc = trim($ruc);
+        return preg_match('/^[0-9]{13}$/D', $ruc) === 1
+            && $ruc !== '0000000000000' && $ruc !== '9999999999999';
     }
 
     private static function onlyDigits(string $value): string

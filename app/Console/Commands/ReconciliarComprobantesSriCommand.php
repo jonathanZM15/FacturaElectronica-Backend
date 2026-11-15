@@ -35,6 +35,7 @@ class ReconciliarComprobantesSriCommand extends Command
 
         $comprobantes = Comprobante::whereIn('estado_sri', [
             'BORRADOR',
+            'PROCESANDO',
             'FIRMADO',
             'ENVIADO',
             'RECIBIDA',
@@ -67,14 +68,20 @@ class ReconciliarComprobantesSriCommand extends Command
                 }
 
                 if (in_array($comprobante->estado_sri, ['RECIBIDA', 'ENVIADO', 'ERROR_AUTORIZACION'], true) && $comprobante->clave_acceso) {
-                    ConsultarAutorizacionSriJob::dispatch($comprobante->id);
-                    $this->info("Comprobante {$comprobante->id} [{$comprobante->estado_sri}]: Reprogramada consulta de autorización.");
-                    $reconciliados++;
+                    if ($processingService->dispatchAuthorization($comprobante)) {
+                        $this->info("Comprobante {$comprobante->id} [{$comprobante->estado_sri}]: Reprogramada consulta de autorización.");
+                        $reconciliados++;
+                    } else {
+                        $this->line("Comprobante {$comprobante->id}: Ya programado o requiere reintento manual tras un fallo.");
+                    }
                 } else {
                     try {
-                        $processingService->dispatch($comprobante);
-                        $this->info("Comprobante {$comprobante->id} [{$comprobante->estado_sri}]: Reprogramado despacho a proceso y firma.");
-                        $reconciliados++;
+                        if ($processingService->dispatch($comprobante)) {
+                            $this->info("Comprobante {$comprobante->id} [{$comprobante->estado_sri}]: Reprogramado despacho a proceso y firma.");
+                            $reconciliados++;
+                        } else {
+                            $this->line("Comprobante {$comprobante->id}: Ya programado o requiere reintento manual tras un fallo.");
+                        }
                     } catch (\Illuminate\Validation\ValidationException $e) {
                         $this->warn("Comprobante {$comprobante->id}: Emisor sin firma configurada todavía.");
                     } catch (\Throwable $e) {
@@ -110,8 +117,7 @@ class ReconciliarComprobantesSriCommand extends Command
 
         foreach ($files as $file) {
             try {
-                if ($disk->lastModified($file) < $limiteTiempo) {
-                    $disk->delete($file);
+                if ($disk->lastModified($file) < $limiteTiempo && app(\App\Services\SriTaskRegistry::class)->deleteCertificateIfUnused($file, 3600)) {
                     $eliminados++;
                 }
             } catch (\Throwable $e) {

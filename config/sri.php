@@ -11,8 +11,14 @@ return [
     'recepcion_wsdl_produccion' => env('SRI_RECEPCION_WSDL_PRODUCCION', 'https://cel.sri.gob.ec/comprobantes-electronicos-ws/RecepcionComprobantesOffline?wsdl'),
     'autorizacion_wsdl_produccion' => env('SRI_AUTORIZACION_WSDL_PRODUCCION', 'https://cel.sri.gob.ec/comprobantes-electronicos-ws/AutorizacionComprobantesOffline?wsdl'),
     'retry_after_seconds' => (int) env('SRI_RETRY_AFTER_SECONDS', 300),
-    'max_authorization_attempts' => (int) env('SRI_MAX_AUTHORIZATION_ATTEMPTS', 10),
+    'max_authorization_attempts' => (int) env('SRI_MAX_AUTHORIZATION_ATTEMPTS', 300),
+    'authorization_window_seconds' => (int) env('SRI_AUTHORIZATION_WINDOW_SECONDS', 86400),
+    'queue_connection' => env('SRI_QUEUE_CONNECTION', 'database'),
+    'queue' => env('SRI_QUEUE', 'default'),
+    'lock_retry_after_seconds' => (int) env('SRI_LOCK_RETRY_AFTER_SECONDS', 180),
     // A02: Identificación del proveedor de facturación (Anexo 26 Ficha Técnica SRI / Res. NAC-DGERCGC26-00000027)
     'proveedor_ruc' => env('SRI_PROVEEDOR_RUC', null),
     'proveedor_nombre' => env('SRI_PROVEEDOR_NOMBRE', null),
+    'proveedor_requerido' => (bool) env('SRI_PROVEEDOR_REQUERIDO', true),
+    'rimpe_popular_habilitado' => (bool) env('SRI_RIMPE_POPULAR_HABILITADO', false),
 ];

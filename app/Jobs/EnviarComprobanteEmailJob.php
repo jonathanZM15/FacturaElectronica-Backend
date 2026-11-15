@@ -95,7 +95,7 @@ class EnviarComprobanteEmailJob implements ShouldQueue
             Log::error('Fallo en la entrega de correo para comprobante.', [
                 'comprobante_id' => $comprobante->id,
                 'email' => $email,
-                'error' => $e->getMessage(),
+                'error' => \App\Services\SensitiveDataSanitizer::clean($e->getMessage()),
             ]);
 
             throw $e;
