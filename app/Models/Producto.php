@@ -76,6 +76,9 @@ class Producto extends Model
 
     protected $appends = ['impuesto'];
 
+    // Resultado calculado para esta colección, nunca incluido como relación en el JSON.
+    protected $hidden = ['resolvedImpuesto'];
+
     public function getImpuestoAttribute(): ?array
     {
         $tax = \App\Services\ProductTaxService::resolve($this);

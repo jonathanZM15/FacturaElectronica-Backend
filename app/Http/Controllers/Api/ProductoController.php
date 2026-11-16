@@ -12,18 +12,47 @@ use App\Enums\TipoBodega;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use App\Exceptions\InvalidInventoryControlException;
+use App\Services\ProductTaxService;
+use Illuminate\Http\Request;
 
 class ProductoController extends Controller
 {
     use \App\Traits\ResolvesEmisor;
 
-    public function index(string $emisorId): JsonResponse
+    public function index(Request $request, string $emisorId): JsonResponse
     {
         $resolvedId = $this->resolveEmisorId($emisorId);
-        \Illuminate\Support\Facades\Log::info("ProductoController::index called with emisorId: " . $emisorId . " resolved to: " . $resolvedId);
-        $productos = Producto::with(['categoria', 'bodegas' => fn ($q) => \App\Services\BusinessAccess::scopeWarehouses($q, request()->user())])->where('emisor_id', $resolvedId)->get();
-        \Illuminate\Support\Facades\Log::info("ProductoController::index returning count: " . $productos->count());
-        return response()->json(['data' => $productos]);
+        $request->validate([
+            'page' => ['sometimes', 'integer', 'min:1'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+            'search' => ['nullable', 'string', 'max:150'],
+            'vista' => ['sometimes', 'in:selector'],
+        ]);
+        $query = Producto::where('emisor_id', $resolvedId)->orderBy('id');
+        $search = trim((string) $request->input('search', ''));
+        if ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                foreach (['codigo', 'codigo_auxiliar', 'nombre'] as $column) {
+                    $q->orWhereRaw('LOWER('.$column.') LIKE ?', ['%'.mb_strtolower($search).'%']);
+                }
+            });
+        }
+        $paginated = $request->hasAny(['page', 'per_page']);
+        if ($request->input('vista') !== 'selector') {
+            $query->with('categoria');
+            if (!$paginated) {
+                $query->with(['bodegas' => fn ($q) => \App\Services\BusinessAccess::scopeWarehouses($q, $request->user())->with('establecimiento')]);
+            }
+        }
+        // Los clientes anteriores conservan el listado completo; la interfaz de gestión solicita páginas.
+        if ($paginated) {
+            $paginator = $query->paginate($request->integer('per_page', 10));
+            $products = $paginator->getCollection();
+        } else {
+            $products = $query->get();
+        }
+        ProductTaxService::preload($products);
+        return response()->json(isset($paginator) ? $paginator : ['data' => $products]);
     }
 
     public function store(StoreProductoRequest $request, string $emisorId, ProductoStockService $stockService): JsonResponse
@@ -58,7 +87,8 @@ class ProductoController extends Controller
     public function show(string $emisorId, string $id): JsonResponse
     {
         $resolvedId = $this->resolveEmisorId($emisorId);
-        $producto = Producto::with(['categoria', 'bodegas' => fn ($q) => \App\Services\BusinessAccess::scopeWarehouses($q, request()->user())])->where('emisor_id', $resolvedId)->findOrFail($id);
+        $producto = Producto::with(['categoria', 'bodegas' => fn ($q) => \App\Services\BusinessAccess::scopeWarehouses($q, request()->user())->with('establecimiento')])->where('emisor_id', $resolvedId)->findOrFail($id);
+        ProductTaxService::preload([$producto]);
         return response()->json(['data' => $producto]);
     }
 
