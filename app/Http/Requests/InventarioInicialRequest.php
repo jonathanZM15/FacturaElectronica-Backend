@@ -16,11 +16,15 @@ class InventarioInicialRequest extends FormRequest
             'motivo_id' => ['required', 'integer', 'exists:motivos_movimiento,id'],
             'observacion' => ['nullable', 'string', 'max:255'],
             'detalles' => ['required', 'array', 'min:1'],
-            'detalles.*.producto_id' => ['required', 'integer', 'exists:productos,id'],
-            'detalles.*.cantidad' => ['required', 'numeric', 'gt:0'],
+            'detalles.*' => ['required', 'array'],
+            'detalles.*.costo_unitario' => ['nullable', 'numeric', new \App\Rules\DecimalValue()],
+            'detalles.*.lotes.*' => ['required', 'array'],
+            'detalles.*.series.*' => ['required', 'array'],
+            'detalles.*.producto_id' => ['bail', 'required', 'integer', 'distinct', 'exists:productos,id'],
+            'detalles.*.cantidad' => ['required', 'numeric', new \App\Rules\DecimalValue(6, '99999999.999999', '0.000001')],
             'detalles.*.lotes' => ['nullable', 'array'],
             'detalles.*.lotes.*.numero_lote' => ['required_with:detalles.*.lotes', 'string', 'max:100'],
-            'detalles.*.lotes.*.cantidad' => ['required_with:detalles.*.lotes', 'numeric', 'gt:0'],
+            'detalles.*.lotes.*.cantidad' => ['required', 'numeric', new \App\Rules\DecimalValue(6, '99999999.999999', '0.000001')],
             'detalles.*.series' => ['nullable', 'array'],
             'detalles.*.series.*.numero_serie' => ['required_with:detalles.*.series', 'string', 'max:100'],
         ];
@@ -37,6 +41,7 @@ class InventarioInicialRequest extends FormRequest
     public function withValidator(Validator $validator): void
     {
         $validator->after(function ($validator) {
+            if ($validator->errors()->isNotEmpty()) return;
             // Validación de Motivo MOV-01 (v6)
             $motivoId = $this->input('motivo_id');
             if ($motivoId) {

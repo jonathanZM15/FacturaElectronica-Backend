@@ -24,6 +24,13 @@ class VerificarPrimeraVersionCommand extends Command
         $add('Bloqueos compartidos', !in_array(config('cache.default'), ['array', 'null'], true), 'API, scheduler y workers deben compartir almacenamiento de bloqueos.');
         $add('Registro de tareas', Schema::hasTable('sri_tareas') && Schema::hasColumn('comprobantes', 'revision_fiscal'), 'Aplicar migraciones después de respaldar y ensayar la restauración.');
         $add('Revisión de IVA', now('America/Guayaquil')->toDateString() <= (config('iva.reviewed_until') ?: ''), 'Revisar las normas antes del límite operativo configurado; no equivale a caducidad legal.');
+        $reviewUntil = config('iva.reviewed_until');
+        if (is_string($reviewUntil) && preg_match('/^\d{4}-\d{2}-\d{2}$/D', $reviewUntil) && $reviewUntil <= now('America/Guayaquil')->addDays(30)->toDateString()) {
+            $add('Programar revisión tributaria', false, 'La fecha de revisión operativa vence dentro de 30 días o ya venció. Revisar la norma antes de actualizar la configuración.');
+        }
+        foreach (['openssl', 'soap', 'curl', 'dom'] as $extension) {
+            $add('Extensión '.$extension, extension_loaded($extension), 'Comprobar también esta extensión en el proceso que atiende HTTP y en el worker.');
+        }
         $provider = trim((string) config('sri.proveedor_ruc'));
         $add('Proveedor del software', !config('sri.proveedor_requerido', true) || preg_match('/^(?!0{13}$)(?!9{13}$)[0-9]{13}$/D', $provider) === 1, 'Pendiente de dato real y comprobación registral; el formato por sí solo no acredita registro.');
         $add('Correo configurado', !in_array(config('mail.default'), ['array', 'log', null], true) && filled(config('mail.from.address'))

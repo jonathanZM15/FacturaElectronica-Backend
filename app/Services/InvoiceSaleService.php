@@ -16,7 +16,9 @@ class InvoiceSaleService
         if (!isset($payload['cliente']) || !is_array($payload['cliente'])) {
             throw ValidationException::withMessages(['cliente' => ['Cliente debe ser un objeto.']]);
         }
-        $payload['cliente']['tipo_identificacion'] = ClientIdentification::normalize((string) ($payload['cliente']['tipo_identificacion'] ?? ''));
+        if (is_string($payload['cliente']['tipo_identificacion'] ?? null)) {
+            $payload['cliente']['tipo_identificacion'] = ClientIdentification::normalize($payload['cliente']['tipo_identificacion']);
+        }
         $validator = Validator::make($payload, [
             'operacion_id' => ['required', 'uuid'],
             'emisor_id' => ['required', 'integer', 'exists:emisores,id'],
@@ -24,40 +26,48 @@ class InvoiceSaleService
             'punto_emision_id' => ['required', 'integer', 'exists:puntos_emision,id'],
             'pos_turno_id' => ['required', 'integer', 'exists:pos_turnos,id'],
             'bodega_id' => ['nullable', 'integer', 'exists:bodegas,id'],
-            'cliente.tipo_identificacion' => ['required', Rule::in(array_values(ClientIdentification::FACTURA_CODES))],
+            'cliente.id' => ['nullable', 'integer', 'min:1'],
+            'cliente.tipo_identificacion' => ['required', 'string', Rule::in(array_values(ClientIdentification::FACTURA_CODES))],
             'cliente.identificacion' => ['required', 'string', 'max:20'],
             'cliente.razon_social' => ['required', 'string', 'max:255'],
             'cliente.direccion' => ['required', 'string', 'max:300'],
             'cliente.email' => ['required', 'email', 'max:255'],
             'cliente.telefono' => ['nullable', 'string', 'max:50'],
             'detalles' => ['required', 'array', 'min:1', 'max:500'],
+            'detalles.*' => ['required', 'array'],
+            'detalles.*.lotes.*' => ['required', 'array'],
+            'detalles.*.series.*' => ['required', 'array'],
+            'pagos.*' => ['required', 'array'],
+            'informacion_adicional.*' => ['required', 'array'],
             'detalles.*.producto_id' => ['required', 'integer', 'distinct'],
-            'detalles.*.cantidad' => ['required', 'numeric', 'min:0.000001', 'max:999999999'],
-            'detalles.*.precio_unitario' => ['required', 'numeric', 'min:0', 'max:999999999'],
-            'detalles.*.descuento' => ['nullable', 'numeric', 'min:0'],
+            'detalles.*.cantidad' => ['required', 'numeric', new \App\Rules\DecimalValue(6, '99999999.999999', '0.000001')],
+            'detalles.*.precio_unitario' => ['required', 'numeric', new \App\Rules\DecimalValue()],
+            'detalles.*.descuento' => ['nullable', 'numeric', new \App\Rules\DecimalValue(6, '999999999999.999999')],
             'detalles.*.impuesto' => ['nullable', 'array'],
             'detalles.*.impuesto.tipo_impuesto_id' => ['nullable', 'integer'],
             'detalles.*.impuesto.tarifa' => ['nullable', 'numeric'],
             'detalles.*.lotes' => ['nullable', 'array'],
             'detalles.*.lotes.*.numero_lote' => ['required', 'string'],
-            'detalles.*.lotes.*.cantidad' => ['required', 'numeric', 'min:0.000001'],
+            'detalles.*.lotes.*.cantidad' => ['required', 'numeric', new \App\Rules\DecimalValue(6, '99999999.999999', '0.000001')],
             'detalles.*.series' => ['nullable', 'array'],
             'detalles.*.series.*.numero_serie' => ['required', 'string'],
             'pagos' => ['required', 'array', 'min:1', 'max:10'],
             'pagos.*.forma_pago' => ['required', Rule::in(['01', '15', '16', '17', '18', '19', '20', '21'])],
-            'pagos.*.total' => ['required', 'numeric', 'min:0'],
-            'pagos.*.efectivo_recibido' => ['nullable', 'numeric', 'min:0'],
+            'pagos.*.total' => ['required', 'numeric', new \App\Rules\DecimalValue(2, '999999999999.99')],
+            'pagos.*.efectivo_recibido' => ['nullable', 'numeric', new \App\Rules\DecimalValue(2, '999999999999.99')],
             'informacion_adicional' => ['nullable', 'array', config('sri.proveedor_ruc') ? 'max:13' : 'max:14'],
             'informacion_adicional.*.nombre' => ['required', 'string', 'max:300'],
             'informacion_adicional.*.valor' => ['required', 'string', 'max:300'],
         ]);
         $validator->after(function ($v) use ($payload) {
             $client = $payload['cliente'] ?? [];
+            if (!is_string($client['tipo_identificacion'] ?? null) || !is_string($client['identificacion'] ?? null)) return;
             $tipo = (string) ($client['tipo_identificacion'] ?? '');
             $id = (string) ($client['identificacion'] ?? '');
             if (!ClientIdentification::valid($tipo, $id)) {
                 $v->errors()->add('cliente.identificacion', 'Identificación inválida para el tipo indicado.');
             }
+            if ($v->errors()->isNotEmpty()) return;
             // P02: SRI sección 9.10 - Si pagos superan $50.00, no se admite Consumidor Final
             $normTipo = ClientIdentification::normalize($tipo);
             if ($normTipo === 'CONSUMIDOR_FINAL' || $id === '9999999999999') {
@@ -144,8 +154,15 @@ class InvoiceSaleService
                 app(BodegaValidationService::class)->validateSale($warehouse);
             }
             $clientData = $data['cliente'];
+            if (isset($clientData['id'])) {
+                $selected = Cliente::where('emisor_id', $company->id)->find($clientData['id']);
+                if (!$selected || $selected->tipo_identificacion !== $clientData['tipo_identificacion'] || $selected->identificacion !== $clientData['identificacion']) {
+                    $this->invalid('cliente', 'El cliente seleccionado no coincide con el tipo y número de identificación. Vuelve a buscarlo.');
+                }
+            }
             $client = Cliente::firstOrNew(['emisor_id' => $company->id, 'tipo_identificacion' => $clientData['tipo_identificacion'], 'identificacion' => $clientData['identificacion']]);
             $masterData = $clientData;
+            unset($masterData['id']);
             if ($clientData['tipo_identificacion'] === 'CONSUMIDOR_FINAL') {
                 // Each anonymous sale has its own contact in the invoice snapshot.
                 // Do not expose the last purchaser's address through the shared CF master.

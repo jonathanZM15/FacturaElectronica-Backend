@@ -19,22 +19,22 @@ class UpdateProductoRequest extends FormRequest
     public function rules()
     {
         return [
-            'codigo' => ['sometimes', 'required', 'string', 'max:255', \Illuminate\Validation\Rule::unique('productos', 'codigo')->where('emisor_id', $this->route('emisorId'))->ignore($this->route('id'))],
-            'codigo_auxiliar' => 'nullable|string|max:255',
+            'codigo' => ['sometimes', 'required', 'string', 'max:25', \Illuminate\Validation\Rule::unique('productos', 'codigo')->where('emisor_id', $this->route('emisorId'))->ignore($this->route('id'))],
+            'codigo_auxiliar' => 'nullable|string|max:25',
             'nombre' => 'sometimes|required|string|max:255',
             'descripcion' => 'nullable|string',
             'foto' => 'nullable|string',
             
-            'precio_1' => 'sometimes|required|numeric|min:0',
-            'precio_2' => 'nullable|numeric|min:0',
-            'precio_3' => 'nullable|numeric|min:0',
+            'precio_1' => ['sometimes', 'required', 'numeric', 'min:0', new \App\Rules\DecimalValue()],
+            'precio_2' => ['nullable', 'numeric', 'min:0', new \App\Rules\DecimalValue()],
+            'precio_3' => ['nullable', 'numeric', 'min:0', new \App\Rules\DecimalValue()],
             'precio_por_defecto' => 'nullable|integer|in:1,2,3',
             
             'tipo_impuesto_id' => ['nullable', 'integer', \Illuminate\Validation\Rule::exists('tipos_impuesto', 'id')->where('estado', 'Activo')->where('tipo_impuesto', 'IVA')],
             'tipo_iva' => 'sometimes|required|string',
             'impuesto_ice' => 'nullable|boolean',
-            'porcentaje_ice' => 'nullable|numeric|min:0',
-            'irbpnr' => 'nullable|numeric|min:0',
+            'porcentaje_ice' => ['nullable', 'numeric', 'min:0', new \App\Rules\DecimalValue()],
+            'irbpnr' => ['nullable', 'numeric', 'min:0', new \App\Rules\DecimalValue()],
             
             'tipo' => ['sometimes', 'required', new Enum(TipoProducto::class)],
             'tipo_control_inventario' => [
@@ -55,7 +55,7 @@ class UpdateProductoRequest extends FormRequest
             'permite_exhibicion' => 'sometimes|required|boolean',
             'categoria_id' => ['nullable', \Illuminate\Validation\Rule::exists('categorias', 'id')->where('emisor_id', $this->route('emisorId'))],
             'unidad_medida' => 'nullable|string|max:255',
-            'subsidio_unitario' => 'nullable|numeric|min:0',
+            'subsidio_unitario' => ['nullable', 'numeric', 'min:0', new \App\Rules\DecimalValue()],
             'ubicacion_referencial' => 'nullable|string|max:255',
             
             'seleccionable_venta_suspendida' => 'nullable|boolean',

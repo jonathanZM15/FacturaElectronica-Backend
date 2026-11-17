@@ -21,7 +21,7 @@ class PosTurnoController extends Controller
 
     public function aperturar(Request $request, string $emisorId): JsonResponse
     {
-        $data = $request->validate(['punto_emision_id' => ['required', 'integer'], 'saldo_inicial' => ['required', 'numeric', 'min:0'], 'observaciones' => ['nullable', 'string', 'max:1000']]);
+        $data = $request->validate(['punto_emision_id' => ['required', 'integer'], 'saldo_inicial' => ['required', 'numeric', new \App\Rules\DecimalValue(2, '99999999.99')], 'observaciones' => ['nullable', 'string', 'max:1000']]);
         return DB::transaction(function () use ($request, $emisorId, $data) {
             $user = User::whereKey($request->user()->id)->lockForUpdate()->firstOrFail();
             $point = BusinessAccess::point($user, (int) $data['punto_emision_id'], (int) $emisorId);
@@ -36,7 +36,7 @@ class PosTurnoController extends Controller
 
     public function cerrar(Request $request, string $emisorId, int $turnoId): JsonResponse
     {
-        $data = $request->validate(['saldo_final' => ['required', 'numeric', 'min:0'], 'observaciones' => ['nullable', 'string', 'max:1000']]);
+        $data = $request->validate(['saldo_final' => ['required', 'numeric', new \App\Rules\DecimalValue(2, '99999999.99')], 'observaciones' => ['nullable', 'string', 'max:1000']]);
         return DB::transaction(function () use ($request, $emisorId, $turnoId, $data) {
             $user = User::whereKey($request->user()->id)->lockForUpdate()->firstOrFail();
             $turn = PosTurno::whereKey($turnoId)->lockForUpdate()->firstOrFail();

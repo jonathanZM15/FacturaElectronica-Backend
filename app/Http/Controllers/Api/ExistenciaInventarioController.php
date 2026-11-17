@@ -18,6 +18,7 @@ class ExistenciaInventarioController extends Controller
      */
     public function consolidado(Request $request, string $emisorId): JsonResponse
     {
+        \App\Services\InventoryQueryValidation::validate($request);
         $resolvedId = $this->resolveEmisorId($emisorId);
         $query = ProductoBodegaStock::with(['producto', 'bodega'])
             ->whereHas('bodega.establecimiento', function ($q) use ($resolvedId) {
@@ -26,11 +27,11 @@ class ExistenciaInventarioController extends Controller
 
         \App\Services\BusinessAccess::scopeStock($query, $request->user());
 
-        if ($request->has('producto_id')) {
+        if ($request->filled('producto_id')) {
             $query->where('producto_id', $request->producto_id);
         }
 
-        if ($request->has('bodega_id')) {
+        if ($request->filled('bodega_id')) {
             $query->where('bodega_id', $request->bodega_id);
         }
 
@@ -48,6 +49,7 @@ class ExistenciaInventarioController extends Controller
      */
     public function lotes(Request $request, string $emisorId): JsonResponse
     {
+        \App\Services\InventoryQueryValidation::validate($request);
         $resolvedId = $this->resolveEmisorId($emisorId);
         $query = ExistenciaLote::with(['producto', 'bodega', 'lote'])
             ->whereHas('bodega.establecimiento', function ($q) use ($resolvedId) {
@@ -56,19 +58,19 @@ class ExistenciaInventarioController extends Controller
 
         \App\Services\BusinessAccess::scopeStock($query, $request->user());
 
-        if ($request->has('producto_id')) {
+        if ($request->filled('producto_id')) {
             $query->where('producto_id', $request->producto_id);
         }
 
-        if ($request->has('bodega_id')) {
+        if ($request->filled('bodega_id')) {
             $query->where('bodega_id', $request->bodega_id);
         }
 
-        if ($request->has('lote_id')) {
+        if ($request->filled('lote_id')) {
             $query->where('lote_id', $request->lote_id);
         }
 
-        if ($request->has('numero_lote')) {
+        if ($request->filled('numero_lote')) {
             $query->whereHas('lote', function ($q) use ($request) {
                 $q->where('numero_lote', 'ilike', '%' . $request->numero_lote . '%');
             });
@@ -87,6 +89,7 @@ class ExistenciaInventarioController extends Controller
      */
     public function series(Request $request, string $emisorId): JsonResponse
     {
+        \App\Services\InventoryQueryValidation::validate($request);
         $resolvedId = $this->resolveEmisorId($emisorId);
         $query = Serie::with(['producto', 'bodegaActual'])
             ->whereHas('producto', function ($q) use ($resolvedId) {
@@ -95,24 +98,24 @@ class ExistenciaInventarioController extends Controller
 
         \App\Services\BusinessAccess::scopeStock($query, $request->user(), 'bodegaActual');
 
-        if ($request->has('producto_id')) {
+        if ($request->filled('producto_id')) {
             $query->where('producto_id', $request->producto_id);
         }
 
-        if ($request->has('bodega_id')) {
+        if ($request->filled('bodega_id')) {
             $query->where('bodega_actual_id', $request->bodega_id);
         }
 
-        if ($request->has('numero_serie')) {
+        if ($request->filled('numero_serie')) {
             $query->where('numero_serie', 'ilike', '%' . $request->numero_serie . '%');
         }
 
-        if ($request->has('estado')) {
+        if ($request->filled('estado')) {
             $query->where('estado', $request->estado);
         }
         
         // Si no mandamos estado, por defecto filtramos lo que esté en inventario si se pide
-        if (!$request->has('estado') && $request->boolean('solo_en_bodega', false)) {
+        if (!$request->filled('estado') && $request->boolean('solo_en_bodega', false)) {
             $query->whereIn('estado', ['DISPONIBLE', 'BLOQUEADA', 'RESERVADA', 'DAÑADA', 'EN_TRANSITO']);
         }
 

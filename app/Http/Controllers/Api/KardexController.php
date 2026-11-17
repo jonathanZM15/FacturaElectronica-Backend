@@ -13,6 +13,7 @@ class KardexController extends Controller
 
     public function index(Request $request, string $emisorId): JsonResponse
     {
+        \App\Services\InventoryQueryValidation::validate($request);
         $resolvedId = $this->resolveEmisorId($emisorId);
 
         // Solo traemos Kardex de las bodegas que pertenecen al Emisor actual

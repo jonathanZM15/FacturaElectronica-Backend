@@ -18,6 +18,7 @@ class BodegaController extends Controller
 
     public function index(Request $request, string $emisorId): JsonResponse
     {
+        $request->validate(['establecimiento_id' => ['nullable', 'integer', 'min:1']]);
         $resolvedId = $this->resolveEmisorId($emisorId);
         \Illuminate\Support\Facades\Log::info("BodegaController::index called with emisorId: {$emisorId} resolved: " . ($resolvedId ?? 'NULL'));
         if (!$resolvedId) {
@@ -54,6 +55,7 @@ class BodegaController extends Controller
         $emisorId = (string) $resolvedId;
 
         // 1. Resolver establecimiento_id
+        $request->validate(['establecimiento_id' => ['nullable', 'integer', 'min:1'], 'tipo' => ['required', new Enum(TipoBodega::class)]]);
         $establecimientoId = $request->input('establecimiento_id');
         if ($establecimientoId) {
             $establecimiento = Establecimiento::where('emisor_id', $emisorId)->findOrFail($establecimientoId);
@@ -83,6 +85,9 @@ class BodegaController extends Controller
             'nombre.unique' => 'Ya existe una bodega con este nombre y tipo en este establecimiento.'
         ]);
 
+        $validated['permite_venta'] = $validated['permite_venta'] ?? in_array($validated['tipo'], ['VENTA', 'ALMACEN'], true);
+        $this->validateConfiguration($validated['tipo'], (bool) $validated['permite_venta']);
+
         // 3. Generar código si no viene
         $bodega = \Illuminate\Support\Facades\DB::transaction(function () use ($establecimientoId, $validated, $request, $emisorId) {
             Company::whereKey($emisorId)->lockForUpdate()->firstOrFail();
@@ -94,7 +99,7 @@ class BodegaController extends Controller
             'codigo' => $codigo,
             'nombre' => $validated['nombre'],
             'tipo' => $validated['tipo'],
-            'permite_venta' => $request->input('permite_venta', true),
+            'permite_venta' => $validated['permite_venta'],
             'creador_id' => auth()->id(),
             ]);
         });
@@ -136,6 +141,7 @@ class BodegaController extends Controller
         })->findOrFail($id);
 
         $establecimientoId = $bodega->establecimiento_id;
+        $request->validate(['tipo' => ['sometimes', 'required', new Enum(TipoBodega::class)]]);
 
         $validated = $request->validate([
             'nombre' => [
@@ -156,7 +162,23 @@ class BodegaController extends Controller
             'nombre.unique' => 'Ya existe una bodega con este nombre y tipo en este establecimiento.'
         ]);
 
-        $bodega->update($validated);
+        \Illuminate\Support\Facades\DB::transaction(function () use ($bodega, $resolvedId, $validated) {
+            Company::whereKey($resolvedId)->lockForUpdate()->firstOrFail();
+            $bodega->refresh();
+            $type = $validated['tipo'] ?? $bodega->tipo->value;
+            $validated['permite_venta'] = $validated['permite_venta'] ?? ($type !== $bodega->tipo->value ? in_array($type, ['VENTA', 'ALMACEN'], true) : $bodega->permite_venta);
+            $this->validateConfiguration($type, (bool) $validated['permite_venta']);
+            if ($type !== $bodega->tipo->value) {
+                $hasStock = \App\Models\ProductoBodegaStock::where('bodega_id', $bodega->id)->where(fn ($q) => $q->where('stock_fisico', '!=', 0)->orWhere('stock_reservado', '!=', 0))->exists();
+                if ($hasStock || \App\Models\Kardex::where('bodega_id', $bodega->id)->exists() || $bodega->tipo === TipoBodega::TRANSITO) {
+                    throw \Illuminate\Validation\ValidationException::withMessages(['tipo' => ['No se puede cambiar el tipo de una bodega interna, con existencias o historial.']]);
+                }
+            }
+            if (Bodega::where('establecimiento_id', $bodega->establecimiento_id)->where('tipo', $type)->where('nombre', $validated['nombre'] ?? $bodega->nombre)->whereKeyNot($bodega->id)->exists()) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['nombre' => ['Ya existe una bodega con este nombre y tipo en este establecimiento.']]);
+            }
+            $bodega->update($validated);
+        });
         $bodega->load(['creador:id,nombres,apellidos,username', 'establecimiento:id,codigo,nombre,emisor_id']);
 
         return response()->json(['message' => 'Bodega actualizada', 'data' => $bodega]);
@@ -187,5 +209,15 @@ class BodegaController extends Controller
         $bodega->delete();
 
         return response()->json(['message' => 'Bodega eliminada exitosamente']);
+    }
+
+    private function validateConfiguration(string $type, bool $allowsSales): void
+    {
+        if ($type === TipoBodega::TRANSITO->value) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['tipo' => ['La bodega de tránsito se administra únicamente mediante procesos internos.']]);
+        }
+        if ($allowsSales && !in_array($type, ['VENTA', 'ALMACEN'], true)) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['permite_venta' => ['Solo bodegas de venta o almacén pueden permitir ventas.']]);
+        }
     }
 }

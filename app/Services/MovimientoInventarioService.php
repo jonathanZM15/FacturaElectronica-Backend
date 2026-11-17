@@ -24,19 +24,25 @@ class MovimientoInventarioService
         if (!$details) throw new InvalidWarehouseOperationException('Incluye al menos un producto.');
         $products = [];
         foreach ($details as $detail) {
+            if (!is_array($detail)) throw new InvalidWarehouseOperationException('Cada detalle debe ser un objeto.');
             $id = $detail['producto_id'] ?? null;
-            $quantity = (float) ($detail['cantidad'] ?? 0);
-            if (!$id || isset($products[$id]) || !is_finite($quantity) || $quantity <= 0) {
-                throw new InvalidWarehouseOperationException('Cada producto debe aparecer una vez y tener cantidad positiva.');
+            if (!is_scalar($id) || !ctype_digit((string) $id) || !$id || isset($products[$id]) || !\App\Rules\DecimalValue::accepts($detail['cantidad'] ?? null, 6, '99999999.999999', '0.000001')) {
+                throw new InvalidWarehouseOperationException('Cada producto debe aparecer una vez y tener cantidad positiva, con hasta 6 decimales y máximo 99999999.999999.');
+            }
+            $cost = $detail['costo_unitario'] ?? 0;
+            if (!\App\Rules\DecimalValue::accepts($cost) || \Brick\Math\BigDecimal::of((string) $detail['cantidad'])->multipliedBy((string) $cost)->isGreaterThan('999999999999.999999')) {
+                throw new InvalidWarehouseOperationException('Costo unitario o costo total fuera del rango admitido.');
             }
             $products[$id] = true;
             foreach (['lotes' => 'numero_lote', 'series' => 'numero_serie'] as $field => $identifier) {
+                if (isset($detail[$field]) && !is_array($detail[$field])) throw new InvalidWarehouseOperationException('Lotes y series deben ser listas.');
                 $seen = [];
                 foreach ($detail[$field] ?? [] as $item) {
+                    if (!is_array($item) || !is_string($item[$identifier] ?? null)) throw new InvalidWarehouseOperationException('Lote o serie inválidos.');
                     $number = trim((string) ($item[$identifier] ?? ''));
                     if ($number === '' || isset($seen[$number])) throw new InvalidWarehouseOperationException('No se permiten lotes o series vacíos o repetidos dentro del producto.');
                     $seen[$number] = true;
-                    if ($field === 'lotes' && (!is_numeric($item['cantidad'] ?? null) || (float) $item['cantidad'] <= 0)) {
+                    if ($field === 'lotes' && !\App\Rules\DecimalValue::accepts($item['cantidad'] ?? null, 6, '99999999.999999', '0.000001')) {
                         throw new InvalidWarehouseOperationException('Cada lote requiere una cantidad positiva.');
                     }
                 }
@@ -77,6 +83,9 @@ class MovimientoInventarioService
 
         return DB::transaction(function () use ($origen, $destino, $detalles, $justificacion, $usuarioId, $motivoId) {
             $emisorId = $origen->establecimiento->emisor_id;
+            \App\Models\Company::whereKey($emisorId)->lockForUpdate()->firstOrFail();
+            $origen->refresh();
+            app(BodegaValidationService::class)->validateManualOperation($origen);
             $destinoTipo = $destino->tipo instanceof \BackedEnum ? $destino->tipo->value : $destino->tipo;
             $tipoEnum = ($destinoTipo === 'MERMAS') 
                 ? TipoMovimientoInventario::MOV_11_ENVIO_MERMAS 
@@ -123,7 +132,7 @@ class MovimientoInventarioService
                 $this->incrementarStock($destino, $producto->id, $detalle['cantidad']);
                 
                 $costoUnitario = isset($detalle['costo_unitario']) ? floatval($detalle['costo_unitario']) : 0;
-                $costoTotal = round(floatval($detalle['cantidad']) * $costoUnitario, 6);
+                $costoTotal = (string) \Brick\Math\BigDecimal::of((string) $detalle['cantidad'])->multipliedBy((string) $costoUnitario)->toScale(6, \Brick\Math\RoundingMode::HalfUp);
 
                 $registroDetalle = $movimiento->detalles()->create([
                     'producto_id' => $producto->id,
@@ -250,6 +259,9 @@ class MovimientoInventarioService
 
         return DB::transaction(function () use ($origen, $destino, $detalles, $justificacion, $usuarioId, $motivoId) {
             $emisorId = $origen->establecimiento->emisor_id;
+            \App\Models\Company::whereKey($emisorId)->lockForUpdate()->firstOrFail();
+            $origen->refresh();
+            app(BodegaValidationService::class)->validateManualOperation($origen);
             $tipoEnum = TipoMovimientoInventario::MOV_12_REACONDICIONAMIENTO_MERMAS;
             
             $movimiento = RegistroOperativoMovimiento::create([
@@ -293,7 +305,7 @@ class MovimientoInventarioService
                 $this->incrementarStock($destino, $producto->id, $detalle['cantidad']);
                 
                 $costoUnitario = isset($detalle['costo_unitario']) ? floatval($detalle['costo_unitario']) : 0;
-                $costoTotal = round(floatval($detalle['cantidad']) * $costoUnitario, 6);
+                $costoTotal = (string) \Brick\Math\BigDecimal::of((string) $detalle['cantidad'])->multipliedBy((string) $costoUnitario)->toScale(6, \Brick\Math\RoundingMode::HalfUp);
 
                 $registroDetalle = $movimiento->detalles()->create([
                     'producto_id' => $producto->id,
@@ -415,6 +427,9 @@ class MovimientoInventarioService
 
         return DB::transaction(function () use ($tipoEnum, $destino, $detalles, $justificacion, $usuarioId, $motivoId) {
             $emisorId = $destino->establecimiento->emisor_id;
+            \App\Models\Company::whereKey($emisorId)->lockForUpdate()->firstOrFail();
+            $destino->refresh();
+            app(BodegaValidationService::class)->validateManualOperation($destino);
             
             $movimiento = RegistroOperativoMovimiento::create([
                 'emisor_id' => $emisorId,
@@ -466,7 +481,7 @@ class MovimientoInventarioService
                 $cantidadActual = ProductoBodegaStock::where('producto_id', $producto->id)->where('bodega_id', $destino->id)->value('stock_disponible') ?? 0;
                 $cantidadFinal = floatval($cantidadActual) + floatval($detalle['cantidad']);
                 $costoUnitario = isset($detalle['costo_unitario']) ? floatval($detalle['costo_unitario']) : 0;
-                $costoTotal = round(floatval($detalle['cantidad']) * $costoUnitario, 6);
+                $costoTotal = (string) \Brick\Math\BigDecimal::of((string) $detalle['cantidad'])->multipliedBy((string) $costoUnitario)->toScale(6, \Brick\Math\RoundingMode::HalfUp);
 
                 // 1. Stock General
                 $this->incrementarStock($destino, $producto->id, $detalle['cantidad']);
@@ -567,6 +582,9 @@ class MovimientoInventarioService
 
         return DB::transaction(function () use ($origen, $detalles, $justificacion, $usuarioId, $motivoId, $tipoEnum) {
             $emisorId = $origen->establecimiento->emisor_id;
+            \App\Models\Company::whereKey($emisorId)->lockForUpdate()->firstOrFail();
+            $origen->refresh();
+            app(BodegaValidationService::class)->validateManualOperation($origen);
             
             $movimiento = RegistroOperativoMovimiento::create([
                 'emisor_id' => $emisorId,
@@ -606,7 +624,7 @@ class MovimientoInventarioService
                 $cantidadActual = ProductoBodegaStock::where('producto_id', $producto->id)->where('bodega_id', $origen->id)->value('stock_disponible') ?? 0;
                 $cantidadFinal = floatval($cantidadActual) - floatval($detalle['cantidad']);
                 $costoUnitario = isset($detalle['costo_unitario']) ? floatval($detalle['costo_unitario']) : 0;
-                $costoTotal = round(floatval($detalle['cantidad']) * $costoUnitario, 6);
+                $costoTotal = (string) \Brick\Math\BigDecimal::of((string) $detalle['cantidad'])->multipliedBy((string) $costoUnitario)->toScale(6, \Brick\Math\RoundingMode::HalfUp);
 
                 // 1. Stock General
                 $this->descontarStock($origen, $producto->id, $detalle['cantidad']);
@@ -697,8 +715,8 @@ class MovimientoInventarioService
             throw new InvalidWarehouseOperationException("Stock disponible insuficiente.");
         }
 
-        $stock->stock_fisico -= $cantidad;
-        $stock->stock_disponible = max(0, $stock->stock_fisico - $stock->stock_reservado);
+        $stock->stock_fisico = (string) \Brick\Math\BigDecimal::of($stock->stock_fisico)->minus((string) $cantidad);
+        $stock->stock_disponible = (string) \Brick\Math\BigDecimal::max(0, \Brick\Math\BigDecimal::of($stock->stock_fisico)->minus($stock->stock_reservado));
         $stock->save();
     }
 
@@ -713,8 +731,12 @@ class MovimientoInventarioService
             ->lockForUpdate()
             ->first();
 
-        $stock->stock_fisico += $cantidad;
-        $stock->stock_disponible = max(0, $stock->stock_fisico - $stock->stock_reservado);
+        $newStock = \Brick\Math\BigDecimal::of($stock->stock_fisico)->plus((string) $cantidad);
+        if ($newStock->isGreaterThan('99999999.999999')) {
+            throw new InvalidWarehouseOperationException('El saldo de la bodega superaría el máximo 99999999.999999.');
+        }
+        $stock->stock_fisico = (string) $newStock;
+        $stock->stock_disponible = (string) \Brick\Math\BigDecimal::max(0, $newStock->minus($stock->stock_reservado));
         $stock->save();
     }
     /**
@@ -767,6 +789,9 @@ class MovimientoInventarioService
 
         return DB::transaction(function () use ($origen, $destino, $detalles, $justificacion, $usuarioId, $motivoId) {
             $emisorId = $origen->establecimiento->emisor_id;
+            \App\Models\Company::whereKey($emisorId)->lockForUpdate()->firstOrFail();
+            $origen->refresh();
+            app(BodegaValidationService::class)->validateManualOperation($origen);
             
             // Buscar Bodega Tránsito del emisor
             $bodegaTransito = Bodega::whereHas('establecimiento', function($q) use ($emisorId) {

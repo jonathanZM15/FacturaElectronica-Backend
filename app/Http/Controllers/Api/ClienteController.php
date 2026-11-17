@@ -30,6 +30,13 @@ class ClienteController extends Controller
      */
     public function index(Request $request, string $emisorId): JsonResponse
     {
+        $request->validate([
+            'search' => ['nullable', 'string', 'max:255'],
+            'tipo_identificacion' => ['nullable', 'string', Rule::in(self::TIPOS_IDENTIFICACION_SRI)],
+            'page' => ['sometimes', 'integer', 'min:1', 'max:1000000'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+            'all' => ['sometimes', Rule::in(['true', 'false', '1', '0', true, false])],
+        ]);
         $resolvedId = $this->resolveEmisorId($emisorId);
 
         $query = Cliente::where('emisor_id', $resolvedId)
@@ -64,7 +71,7 @@ class ClienteController extends Controller
      */
     public function store(Request $request, string $emisorId): JsonResponse
     {
-        if ($request->has('tipo_identificacion')) $request->merge(['tipo_identificacion' => \App\Services\ClientIdentification::normalize((string) $request->input('tipo_identificacion'))]);
+        if (is_string($request->input('tipo_identificacion'))) $request->merge(['tipo_identificacion' => \App\Services\ClientIdentification::normalize($request->input('tipo_identificacion'))]);
         $resolvedId = $this->resolveEmisorId($emisorId);
 
         $validator = $this->buildValidator($request->all(), $resolvedId);
@@ -111,7 +118,7 @@ class ClienteController extends Controller
      */
     public function update(Request $request, string $emisorId, int $cliente): JsonResponse
     {
-        if ($request->has('tipo_identificacion')) $request->merge(['tipo_identificacion' => \App\Services\ClientIdentification::normalize((string) $request->input('tipo_identificacion'))]);
+        if (is_string($request->input('tipo_identificacion'))) $request->merge(['tipo_identificacion' => \App\Services\ClientIdentification::normalize($request->input('tipo_identificacion'))]);
         $resolvedId = $this->resolveEmisorId($emisorId);
 
         $clienteModel = Cliente::where('emisor_id', $resolvedId)
@@ -172,12 +179,18 @@ class ClienteController extends Controller
         $resolvedId = $this->resolveEmisorId($emisorId);
 
         $request->validate([
-            'identificacion' => ['required', 'string'],
+            'identificacion' => ['required', 'string', 'max:20'],
+            'tipo_identificacion' => ['nullable', 'string', Rule::in(self::TIPOS_IDENTIFICACION_SRI)],
         ]);
 
-        $clienteModel = Cliente::where('emisor_id', $resolvedId)
+        $matches = Cliente::where('emisor_id', $resolvedId)
             ->where('identificacion', $request->query('identificacion'))
-            ->first();
+            ->when($request->filled('tipo_identificacion'), fn ($q) => $q->where('tipo_identificacion', $request->query('tipo_identificacion')))
+            ->limit(2)->get();
+        if ($matches->count() > 1) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['tipo_identificacion' => ['Selecciona el tipo de identificación: este número corresponde a más de un cliente.']]);
+        }
+        $clienteModel = $matches->first();
 
         return response()->json(['data' => $clienteModel]);
     }
@@ -190,7 +203,7 @@ class ClienteController extends Controller
     {
         $uniqueRule = Rule::unique('clientes')
             ->where('emisor_id', $emisorId)
-            ->where('tipo_identificacion', $data['tipo_identificacion'] ?? '');
+            ->where('tipo_identificacion', is_string($data['tipo_identificacion'] ?? null) ? $data['tipo_identificacion'] : '');
 
         if ($excludeId) {
             $uniqueRule->ignore($excludeId);
@@ -198,7 +211,7 @@ class ClienteController extends Controller
 
         $validator = Validator::make($data, [
             'tipo_identificacion' => ['required', 'string', Rule::in(self::TIPOS_IDENTIFICACION_SRI)],
-            'identificacion'      => ['required', 'string', 'max:20', $uniqueRule],
+            'identificacion'      => ['bail', 'required', 'string', 'max:20', $uniqueRule],
             'razon_social'        => ['required', 'string', 'max:255'],
             'nombre_comercial'    => ['nullable', 'string', 'max:255'],
             'direccion'           => ['nullable', 'string', 'max:300'],
@@ -210,6 +223,7 @@ class ClienteController extends Controller
         ]);
 
         $validator->after(function ($v) use ($data) {
+            if ($v->errors()->isNotEmpty()) return;
             $tipo = strtoupper((string) ($data['tipo_identificacion'] ?? ''));
             $id   = (string) ($data['identificacion'] ?? '');
 

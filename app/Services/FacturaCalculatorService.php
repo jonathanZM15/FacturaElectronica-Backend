@@ -2,11 +2,15 @@
 
 namespace App\Services;
 
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
+
 class FacturaCalculatorService
 {
     /**
      * Calcula totales, detalles y agrupacion de impuestos para un comprobante.
-     * Usa PHP_ROUND_HALF_UP por exigencia del SRI.
+     * Aritmética decimal exacta: base por línea e impuesto por base agrupada,
+     * con redondeo HalfUp a centavos, igual que el carrito del POS.
      *
      * @param array $detalles
      * @return array{detalles: array, impuestos: array, totales: array}
@@ -16,28 +20,29 @@ class FacturaCalculatorService
         $detallesCalculados = [];
         $impuestosAgrupados = [];
 
-        $totalDescuento = 0.0;
-        $subtotalSinImpuestos = 0.0;
+        $totalDescuento = BigDecimal::zero();
+        $subtotalSinImpuestos = BigDecimal::zero();
 
         foreach ($detalles as $index => $detalle) {
-            $cantidad = $this->toFloat($detalle['cantidad'] ?? 0);
-            $precioUnitario = $this->toFloat($detalle['precio_unitario'] ?? 0);
-            $descuento = $this->toFloat($detalle['descuento'] ?? 0);
+            $cantidad = $this->toDecimal($detalle['cantidad'] ?? 0);
+            $precioUnitario = $this->toDecimal($detalle['precio_unitario'] ?? 0);
+            $descuento = $this->toDecimal($detalle['descuento'] ?? 0);
+            $baseBruta = $cantidad->multipliedBy($precioUnitario);
 
-            if (!is_finite($cantidad) || !is_finite($precioUnitario) || !is_finite($descuento) || $cantidad <= 0 || $precioUnitario < 0 || $descuento < 0 || $descuento > round($cantidad * $precioUnitario, 6)) {
+            if ($cantidad->isLessThanOrEqualTo(0) || $precioUnitario->isNegative() || $descuento->isNegative() || $descuento->isGreaterThan($baseBruta)) {
                 throw \Illuminate\Validation\ValidationException::withMessages(["detalles.$index" => ['Cantidad, precio o descuento inválidos. El descuento no puede superar la base.']]);
             }
 
-            $lineaBase = ($cantidad * $precioUnitario) - $descuento;
+            $lineaBase = $baseBruta->minus($descuento);
 
             // Redondeo por linea a 2 decimales (Half-Up) segun SRI
-            $precioTotalSinImpuesto = round($lineaBase, 2, PHP_ROUND_HALF_UP);
+            $precioTotalSinImpuesto = $lineaBase->toScale(2, RoundingMode::HalfUp);
 
-            $totalDescuento += $descuento;
-            $subtotalSinImpuestos += $precioTotalSinImpuesto;
+            $totalDescuento = $totalDescuento->plus((string) $descuento);
+            $subtotalSinImpuestos = $subtotalSinImpuestos->plus($precioTotalSinImpuesto);
 
             $detalleCalculado = $detalle;
-            $detalleCalculado['precio_total_sin_impuesto'] = $precioTotalSinImpuesto;
+            $detalleCalculado['precio_total_sin_impuesto'] = $precioTotalSinImpuesto->toFloat();
             $detallesCalculados[] = $detalleCalculado;
 
             $impuestoInfo = $detalle['impuesto'] ?? null;
@@ -51,41 +56,41 @@ class FacturaCalculatorService
                         'codigo_porcentaje' => $impuestoInfo['codigo_porcentaje'] ?? $impuestoInfo['codigo'] ?? null,
                         'tipo' => $impuestoInfo['tipo'] ?? null,
                         'tarifa' => $this->toFloat($impuestoInfo['tarifa'] ?? 0),
-                        'base_imponible' => 0.0,
+                        'base_imponible' => BigDecimal::zero(),
                         'valor' => 0.0,
                     ];
                 }
-                $impuestosAgrupados[$grupoKey]['base_imponible'] += $precioTotalSinImpuesto;
+                $impuestosAgrupados[$grupoKey]['base_imponible'] = $impuestosAgrupados[$grupoKey]['base_imponible']->plus($precioTotalSinImpuesto);
             }
         }
 
-        $totalIva = 0.0;
+        $totalIva = BigDecimal::zero();
         foreach ($impuestosAgrupados as $key => $grupo) {
             $base = $grupo['base_imponible'];
             $tarifa = $this->toFloat($grupo['tarifa']);
 
             // Calculo del impuesto por base agrupada, con Half-Up
-            $valor = round($base * ($tarifa / 100), 2, PHP_ROUND_HALF_UP);
+            $valor = $base->multipliedBy((string) $tarifa)->dividedBy(100, 2, RoundingMode::HalfUp);
 
-            $impuestosAgrupados[$key]['base_imponible'] = round($base, 2, PHP_ROUND_HALF_UP);
-            $impuestosAgrupados[$key]['valor'] = $valor;
+            $impuestosAgrupados[$key]['base_imponible'] = $base->toFloat();
+            $impuestosAgrupados[$key]['valor'] = $valor->toFloat();
 
-            $totalIva += $valor;
+            $totalIva = $totalIva->plus($valor);
         }
 
-        $subtotalSinImpuestos = round($subtotalSinImpuestos, 2, PHP_ROUND_HALF_UP);
-        $totalDescuento = round($totalDescuento, 2, PHP_ROUND_HALF_UP);
-        $totalIva = round($totalIva, 2, PHP_ROUND_HALF_UP);
-        $importeTotal = round($subtotalSinImpuestos + $totalIva, 2, PHP_ROUND_HALF_UP);
+        $importeTotal = $subtotalSinImpuestos->plus($totalIva);
+        if ($importeTotal->isGreaterThan('999999999999.99')) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['detalles' => ['El importe total excede el límite admitido por el sistema.']]);
+        }
 
         return [
             'detalles' => $detallesCalculados,
             'impuestos' => array_values($impuestosAgrupados),
             'totales' => [
-                'subtotal_sin_impuestos' => $subtotalSinImpuestos,
-                'total_descuento' => $totalDescuento,
-                'total_iva' => $totalIva,
-                'importe_total' => $importeTotal,
+                'subtotal_sin_impuestos' => $subtotalSinImpuestos->toFloat(),
+                'total_descuento' => $totalDescuento->toScale(2, RoundingMode::HalfUp)->toFloat(),
+                'total_iva' => $totalIva->toFloat(),
+                'importe_total' => $importeTotal->toFloat(),
             ],
         ];
     }
@@ -104,5 +109,14 @@ class FacturaCalculatorService
             $value = str_replace(',', '.', $value);
         }
         return (float) $value;
+    }
+
+    private function toDecimal(mixed $value): BigDecimal
+    {
+        if (is_string($value)) $value = str_replace(',', '.', $value);
+        if (!\App\Rules\DecimalValue::accepts($value, 6, '999999999999.999999')) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['detalles' => ['Importe o cantidad fuera del rango o precisión admitidos.']]);
+        }
+        return BigDecimal::of((string) $value);
     }
 }

@@ -19,13 +19,17 @@ class StoreAjusteRequest extends FormRequest
             'tipo' => 'required|string|in:AJUSTE_POSITIVO,AJUSTE_NEGATIVO',
             'observacion' => 'required|string|max:1000',
             'detalles' => 'required|array|min:1',
-            'detalles.*.producto_id' => 'required|exists:productos,id',
-            'detalles.*.cantidad' => 'required|numeric|min:0.000001',
+            'detalles.*' => ['required', 'array'],
+            'detalles.*.costo_unitario' => ['nullable', 'numeric', new \App\Rules\DecimalValue()],
+            'detalles.*.lotes.*' => ['required', 'array'],
+            'detalles.*.series.*' => ['required', 'array'],
+            'detalles.*.producto_id' => ['bail', 'required', 'integer', 'distinct', 'exists:productos,id'],
+            'detalles.*.cantidad' => ['required', 'numeric', new \App\Rules\DecimalValue(6, '99999999.999999', '0.000001')],
             
             // Lotes
             'detalles.*.lotes' => 'nullable|array',
             'detalles.*.lotes.*.numero_lote' => 'required_with:detalles.*.lotes|string|max:100',
-            'detalles.*.lotes.*.cantidad' => 'required_with:detalles.*.lotes|numeric|min:0.000001',
+            'detalles.*.lotes.*.cantidad' => ['required', 'numeric', new \App\Rules\DecimalValue(6, '99999999.999999', '0.000001')],
             'detalles.*.lotes.*.fecha_fabricacion' => 'nullable|date',
             'detalles.*.lotes.*.fecha_vencimiento' => 'nullable|date',
             
@@ -46,6 +50,7 @@ class StoreAjusteRequest extends FormRequest
     public function withValidator(\Illuminate\Validation\Validator $validator): void
     {
         $validator->after(function ($validator) {
+            if ($validator->errors()->isNotEmpty()) return;
             $motivoId = $this->input('motivo_id');
             $tipo = $this->input('tipo');
             if ($motivoId) {
