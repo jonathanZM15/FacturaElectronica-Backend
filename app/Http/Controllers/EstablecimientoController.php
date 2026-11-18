@@ -276,7 +276,7 @@ class EstablecimientoController extends Controller
             'updated_by_name' => $est->updated_by_name,
             'created_by_info' => $est->created_by_info,
             'updated_by_info' => $est->updated_by_info,
-            'usuarios' => $this->getUsuariosAsociados($est->id),
+            'usuarios' => $this->getUsuariosAsociados($est->id, $est->emisor_id),
         ]);
 
         return response()->json(['data' => $payload]);
@@ -498,10 +498,19 @@ class EstablecimientoController extends Controller
     /**
      * Get users associated with an establecimiento
      */
-    private function getUsuariosAsociados($establecimientoId): array
+    private function getUsuariosAsociados($establecimientoId, $emisorId = null): array
     {
-        $usuarios = \App\Models\User::where('emisor_id', $item->emisor_id)->whereNotNull('establecimientos_ids')
-            ->get()
+        $query = \App\Models\User::whereNotNull('establecimientos_ids');
+        if ($emisorId) {
+            $query->where('emisor_id', $emisorId);
+        } else {
+            $est = Establecimiento::find($establecimientoId);
+            if ($est) {
+                $query->where('emisor_id', $est->emisor_id);
+            }
+        }
+
+        $usuarios = $query->get()
             ->filter(function ($user) use ($establecimientoId) {
                 $estIds = $user->establecimientos_ids;
                 if (is_string($estIds)) {
@@ -520,7 +529,7 @@ class EstablecimientoController extends Controller
                 return [
                     'id' => $user->id,
                     'username' => $user->username,
-                    'role' => $user->role,
+                    'role' => $user->role instanceof \App\Enums\UserRole ? $user->role->value : $user->role,
                     'nombres' => $user->nombres,
                     'apellidos' => $user->apellidos,
                 ];
