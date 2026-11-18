@@ -72,9 +72,11 @@ class EstablecimientoController extends Controller
                     return [
                         'id' => $user->id,
                         'username' => $user->username,
-                        'role' => $user->role,
+                        'email' => $user->email,
+                        'role' => $user->role instanceof \App\Enums\UserRole ? $user->role->value : (string)$user->role,
                         'nombres' => $user->nombres,
                         'apellidos' => $user->apellidos,
+                        'estado' => $user->estado,
                     ];
                 })
                 ->values()
@@ -529,9 +531,11 @@ class EstablecimientoController extends Controller
                 return [
                     'id' => $user->id,
                     'username' => $user->username,
+                    'email' => $user->email,
                     'role' => $user->role instanceof \App\Enums\UserRole ? $user->role->value : $user->role,
                     'nombres' => $user->nombres,
                     'apellidos' => $user->apellidos,
+                    'estado' => $user->estado,
                 ];
             })
             ->values()
