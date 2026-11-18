@@ -40,7 +40,13 @@ class SuscripcionController extends Controller
             }
 
             // Verificar permisos
-            if (!in_array($currentUser->role, [UserRole::ADMINISTRADOR, UserRole::DISTRIBUIDOR])) {
+            if (in_array($currentUser->role, [UserRole::EMISOR, UserRole::GERENTE])) {
+                if ((int)$currentUser->emisor_id !== (int)$emisorId) {
+                    return response()->json([
+                        'message' => 'No tienes acceso a este emisor'
+                    ], Response::HTTP_FORBIDDEN);
+                }
+            } elseif (!in_array($currentUser->role, [UserRole::ADMINISTRADOR, UserRole::DISTRIBUIDOR])) {
                 return response()->json([
                     'message' => 'No tienes permiso para ver suscripciones'
                 ], Response::HTTP_FORBIDDEN);
@@ -73,7 +79,7 @@ class SuscripcionController extends Controller
                 ->where('emisor_id', $emisorId)
                 ->with([
                     'plan:id,nombre,periodo,cantidad_comprobantes,precio,comprobantes_minimos,dias_minimos',
-                    'createdBy:id,username,nombres,apellidos,role',
+                    'createdBy:id,username,nombres,apellidos,role,email',
                     'updatedBy:id,username,nombres,apellidos'
                 ]);
 
@@ -365,13 +371,23 @@ class SuscripcionController extends Controller
                 ->firstOrFail();
 
             // Verificar permisos
-            if ($currentUser->role === UserRole::DISTRIBUIDOR) {
+            if (in_array($currentUser->role, [UserRole::EMISOR, UserRole::GERENTE])) {
+                if ((int)$currentUser->emisor_id !== (int)$emisorId) {
+                    return response()->json([
+                        'message' => 'No tienes acceso a esta suscripción'
+                    ], Response::HTTP_FORBIDDEN);
+                }
+            } elseif ($currentUser->role === UserRole::DISTRIBUIDOR) {
                 $emisor = Company::findOrFail($emisorId);
                 if ($emisor->created_by !== $currentUser->id) {
                     return response()->json([
                         'message' => 'No tienes acceso a esta suscripción'
                     ], Response::HTTP_FORBIDDEN);
                 }
+            } elseif ($currentUser->role !== UserRole::ADMINISTRADOR) {
+                return response()->json([
+                    'message' => 'No tienes permiso para ver suscripciones'
+                ], Response::HTTP_FORBIDDEN);
             }
 
             // Actualizar estado automático
@@ -762,6 +778,26 @@ class SuscripcionController extends Controller
                 ->where('id', $id)
                 ->firstOrFail();
 
+            // Verificar acceso
+            $emisor = Company::findOrFail($emisorId);
+            if (in_array($currentUser->role, [UserRole::EMISOR, UserRole::GERENTE])) {
+                if ((int)$currentUser->emisor_id !== (int)$emisorId) {
+                    return response()->json([
+                        'message' => 'No tienes acceso a este emisor'
+                    ], Response::HTTP_FORBIDDEN);
+                }
+            } elseif ($currentUser->role === UserRole::DISTRIBUIDOR) {
+                if ($emisor->created_by !== $currentUser->id) {
+                    return response()->json([
+                        'message' => 'No tienes acceso a este emisor'
+                    ], Response::HTTP_FORBIDDEN);
+                }
+            } elseif ($currentUser->role !== UserRole::ADMINISTRADOR) {
+                return response()->json([
+                    'message' => 'No tienes permiso para ver campos editables'
+                ], Response::HTTP_FORBIDDEN);
+            }
+
             $isAdmin = $currentUser->role === UserRole::ADMINISTRADOR;
             $isDistribuidor = $currentUser->role === UserRole::DISTRIBUIDOR;
             $estado = $suscripcion->estado_suscripcion;
@@ -1087,12 +1123,22 @@ class SuscripcionController extends Controller
 
             // Verificar acceso
             $emisor = Company::findOrFail($emisorId);
-            if ($currentUser->role === UserRole::DISTRIBUIDOR) {
+            if (in_array($currentUser->role, [UserRole::EMISOR, UserRole::GERENTE])) {
+                if ((int)$currentUser->emisor_id !== (int)$emisorId) {
+                    return response()->json([
+                        'message' => 'No tienes acceso a este emisor'
+                    ], Response::HTTP_FORBIDDEN);
+                }
+            } elseif ($currentUser->role === UserRole::DISTRIBUIDOR) {
                 if ($emisor->created_by !== $currentUser->id) {
                     return response()->json([
                         'message' => 'No tienes acceso a este emisor'
                     ], Response::HTTP_FORBIDDEN);
                 }
+            } elseif ($currentUser->role !== UserRole::ADMINISTRADOR) {
+                return response()->json([
+                    'message' => 'No tienes permiso para ver transiciones'
+                ], Response::HTTP_FORBIDDEN);
             }
 
             $estadoService = new SuscripcionEstadoService();
@@ -1329,12 +1375,22 @@ class SuscripcionController extends Controller
 
             // Verificar acceso al emisor
             $emisor = Company::findOrFail($emisorId);
-            if ($currentUser->role === UserRole::DISTRIBUIDOR) {
+            if (in_array($currentUser->role, [UserRole::EMISOR, UserRole::GERENTE])) {
+                if ((int)$currentUser->emisor_id !== (int)$emisorId) {
+                    return response()->json([
+                        'message' => 'No tienes acceso a este emisor'
+                    ], Response::HTTP_FORBIDDEN);
+                }
+            } elseif ($currentUser->role === UserRole::DISTRIBUIDOR) {
                 if ($emisor->created_by !== $currentUser->id) {
                     return response()->json([
                         'message' => 'No tienes acceso a este emisor'
                     ], Response::HTTP_FORBIDDEN);
                 }
+            } elseif ($currentUser->role !== UserRole::ADMINISTRADOR) {
+                return response()->json([
+                    'message' => 'No tienes permiso para evaluar estados'
+                ], Response::HTTP_FORBIDDEN);
             }
 
             $estadoService = new SuscripcionEstadoService();
